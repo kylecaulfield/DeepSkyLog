@@ -24,8 +24,36 @@ const telescopeHint = document.getElementById('telescope-hint');
 const notesInput = document.getElementById('notes-input');
 const ratingEl = document.getElementById('rating');
 const ratingValue = document.getElementById('rating-value');
+const seeingInput = document.getElementById('seeing-input');
+const transparencyInput = document.getElementById('transparency-input');
+const bortleInput = document.getElementById('bortle-input');
+const moonDisplay = document.getElementById('moon-display');
 const statusEl = document.getElementById('form-status');
 const saveBtn = document.getElementById('save-btn');
+
+const SYNODIC = 29.530588853;
+function moonPreview(date) {
+  if (!date || Number.isNaN(date.getTime())) return '—';
+  const jd = date.getTime() / 86_400_000 + 2_440_587.5;
+  const phase = (((jd - 2_451_550.1) / SYNODIC) % 1 + 1) % 1;
+  const illum = (1 - Math.cos(2 * Math.PI * phase)) / 2;
+  let name;
+  if (phase < 0.03 || phase >= 0.97) name = 'New';
+  else if (phase < 0.22) name = 'Waxing Crescent';
+  else if (phase < 0.28) name = 'First Quarter';
+  else if (phase < 0.47) name = 'Waxing Gibbous';
+  else if (phase < 0.53) name = 'Full';
+  else if (phase < 0.72) name = 'Waning Gibbous';
+  else if (phase < 0.78) name = 'Last Quarter';
+  else name = 'Waning Crescent';
+  return `${name} · ${(illum * 100).toFixed(0)}% illuminated`;
+}
+
+function updateMoonPreview() {
+  moonDisplay.value = dateInput.value
+    ? moonPreview(new Date(dateInput.value))
+    : '';
+}
 
 const objectCache = new Map();
 let currentStage = null;
@@ -179,6 +207,7 @@ function onStaged(res) {
   dateInput.value = res.exif?.captured_at
     ? toLocalDatetimeValue(res.exif.captured_at)
     : toLocalDatetimeValue(null);
+  updateMoonPreview();
 
   if (res.telescope_match) {
     telescopeSelect.value = res.telescope_match;
@@ -258,8 +287,12 @@ function resetForm() {
   objectIdField.value = '';
   objectHint.textContent = '';
   telescopeHint.textContent = '';
+  moonDisplay.value = '';
   setStatus('');
 }
+
+dateInput.addEventListener('change', updateMoonPreview);
+dateInput.addEventListener('input', updateMoonPreview);
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -279,6 +312,9 @@ form.addEventListener('submit', async (e) => {
     telescope: telescopeSelect.value,
     notes: notesInput.value.trim(),
     rating: ratingValue.value || null,
+    seeing: seeingInput.value || null,
+    transparency: transparencyInput.value || null,
+    bortle: bortleInput.value || null,
   };
 
   if (!payload.telescope) {

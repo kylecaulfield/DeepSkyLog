@@ -9,6 +9,7 @@ const sharp = require('sharp');
 const exifr = require('exifr');
 
 const { getDb, DB_PATH } = require('./db');
+const { altAz, moonPhase } = require('./lib/astro');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -223,6 +224,65 @@ app.get('/api/observations', (req, res) => {
   res.json(rows);
 });
 
+app.get('/api/tonight', (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: 'lat and lon query params are required (decimal degrees)' });
+  }
+  const minAlt = Number.isFinite(Number(req.query.min_alt))
+    ? Number(req.query.min_alt) : 20;
+  const includeObserved = req.query.include_observed === '1';
+  const limit = Math.min(Number(req.query.limit) || 200, 500);
+  const date = new Date();
+
+  const rows = db
+    .prepare(
+      `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
+              lo.constellation, lo.ra_hours, lo.dec_degrees, lo.magnitude,
+              l.slug AS list_slug, l.name AS list_name,
+              EXISTS(SELECT 1 FROM list_completions lc
+                       WHERE lc.list_object_id = lo.id) AS observed
+         FROM list_objects lo
+         JOIN lists l ON l.id = lo.list_id
+         WHERE lo.ra_hours IS NOT NULL AND lo.dec_degrees IS NOT NULL`,
+    )
+    .all();
+
+  const enriched = [];
+  for (const row of rows) {
+    if (!includeObserved && row.observed) continue;
+    const pos = altAz({
+      raHours: row.ra_hours,
+      decDeg: row.dec_degrees,
+      lat,
+      lon,
+      date,
+    });
+    if (!pos || pos.altitude < minAlt) continue;
+    enriched.push({
+      ...row,
+      altitude: pos.altitude,
+      azimuth: pos.azimuth,
+    });
+  }
+
+  enriched.sort((a, b) => b.altitude - a.altitude);
+  const moon = moonPhase(date);
+
+  res.json({
+    computed_at: date.toISOString(),
+    location: { lat, lon },
+    min_altitude: minAlt,
+    moon: {
+      phase: moon.phase,
+      illumination: moon.illumination,
+      name: moon.name,
+    },
+    targets: enriched.slice(0, limit),
+  });
+});
+
 app.get('/api/observations/map', (_req, res) => {
   const rows = db
     .prepare(
@@ -245,7 +305,9 @@ app.get('/api/observations.csv', (_req, res) => {
               lo.name AS object_name, lo.object_type, lo.constellation,
               o.telescope, o.camera, o.location, o.latitude, o.longitude,
               o.exposure_seconds, o.iso, o.focal_length_mm, o.aperture,
-              o.rating, o.description, o.image_path
+              o.rating, o.seeing, o.transparency, o.bortle,
+              o.moon_phase, o.moon_phase_name,
+              o.description, o.image_path
          FROM observations o
          LEFT JOIN list_objects lo ON lo.id = o.object_id
          ORDER BY COALESCE(o.observed_at, o.created_at) DESC`,
@@ -256,7 +318,8 @@ app.get('/api/observations.csv', (_req, res) => {
     'id', 'observed_at', 'created_at', 'title', 'catalog', 'catalog_number',
     'object_name', 'object_type', 'constellation', 'telescope', 'camera',
     'location', 'latitude', 'longitude', 'exposure_seconds', 'iso',
-    'focal_length_mm', 'aperture', 'rating', 'description', 'image_path',
+    'focal_length_mm', 'aperture', 'rating', 'seeing', 'transparency',
+    'bortle', 'moon_phase', 'moon_phase_name', 'description', 'image_path',
   ];
 
   const esc = (v) => {
@@ -488,9 +551,12 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const notes = body.notes ? String(body.notes).trim() : null;
   const observedAt = body.observed_at ? String(body.observed_at).trim() : null;
   const title = body.title ? String(body.title).trim() : null;
-  const rating = body.rating != null && body.rating !== ''
-    ? Math.max(1, Math.min(5, Number(body.rating)))
-    : null;
+  const clamp = (v, lo, hi) =>
+    v == null || v === '' ? null : Math.max(lo, Math.min(hi, Number(v)));
+  const rating = clamp(body.rating, 1, 5);
+  const seeing = clamp(body.seeing, 1, 5);
+  const transparency = clamp(body.transparency, 1, 5);
+  const bortle = clamp(body.bortle, 1, 9);
 
   const rawObjectId = body.object_id ? Number(body.object_id) : null;
   let matchedObject = null;
@@ -512,6 +578,8 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
     : new Date();
   const yyyy = String(dateForPath.getFullYear());
   const mm = String(dateForPath.getMonth() + 1).padStart(2, '0');
+
+  const moon = moonPhase(dateForPath);
 
   const dirSlug = slugify(objectName
     || (catalog && catalogNumber ? `${catalog}${catalogNumber}` : 'misc'));
@@ -573,11 +641,13 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
        (object_id, catalog, catalog_number, title, description, observed_at,
         location, telescope, camera, exposure_seconds, iso, focal_length_mm,
         aperture, image_path, thumbnail_path, exif_json, rating,
-        latitude, longitude)
+        latitude, longitude, seeing, transparency, moon_phase,
+        moon_phase_name, bortle)
      VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
              @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
              @aperture, @image_path, @thumbnail_path, @exif_json, @rating,
-             @latitude, @longitude)`,
+             @latitude, @longitude, @seeing, @transparency, @moon_phase,
+             @moon_phase_name, @bortle)`,
   );
 
   const completeList = db.prepare(
@@ -606,6 +676,11 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       rating,
       latitude,
       longitude,
+      seeing,
+      transparency,
+      moon_phase: moon.phase,
+      moon_phase_name: moon.name,
+      bortle,
     });
 
     const observationId = Number(result.lastInsertRowid);

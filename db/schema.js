@@ -91,6 +91,17 @@ const MIGRATIONS = [
         ON observations(latitude, longitude);
     `,
   },
+  {
+    id: 4,
+    name: 'add_observation_conditions',
+    up: `
+      ALTER TABLE observations ADD COLUMN seeing INTEGER;
+      ALTER TABLE observations ADD COLUMN transparency INTEGER;
+      ALTER TABLE observations ADD COLUMN moon_phase REAL;
+      ALTER TABLE observations ADD COLUMN moon_phase_name TEXT;
+      ALTER TABLE observations ADD COLUMN bortle INTEGER;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

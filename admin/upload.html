@@ -103,6 +103,53 @@
               </div>
             </label>
 
+            <div class="row">
+              <label class="field">
+                <span>Seeing (1–5)</span>
+                <select id="seeing-input" name="seeing">
+                  <option value="">—</option>
+                  <option value="1">1 — terrible</option>
+                  <option value="2">2</option>
+                  <option value="3">3 — average</option>
+                  <option value="4">4</option>
+                  <option value="5">5 — excellent</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Transparency (1–5)</span>
+                <select id="transparency-input" name="transparency">
+                  <option value="">—</option>
+                  <option value="1">1 — hazy</option>
+                  <option value="2">2</option>
+                  <option value="3">3 — average</option>
+                  <option value="4">4</option>
+                  <option value="5">5 — pristine</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="row">
+              <label class="field">
+                <span>Bortle (1–9)</span>
+                <select id="bortle-input" name="bortle">
+                  <option value="">—</option>
+                  <option value="1">1 — Excellent dark sky</option>
+                  <option value="2">2 — Typical truly dark</option>
+                  <option value="3">3 — Rural</option>
+                  <option value="4">4 — Rural / suburban</option>
+                  <option value="5">5 — Suburban</option>
+                  <option value="6">6 — Bright suburban</option>
+                  <option value="7">7 — Suburban / urban</option>
+                  <option value="8">8 — City</option>
+                  <option value="9">9 — Inner city</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Moon phase</span>
+                <input id="moon-display" type="text" readonly placeholder="auto from date" />
+              </label>
+            </div>
+
             <label class="field">
               <span>Notes</span>
               <textarea name="notes" id="notes-input" rows="4"

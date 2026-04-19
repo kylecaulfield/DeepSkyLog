@@ -89,12 +89,26 @@ async function render() {
         ? el('span', { class: 'thumb',
             style: `background-image: url("/uploads/${o.thumbnail_path}")` })
         : el('span', { class: 'thumb empty', text: 'no image' });
+      const conditionBits = [];
+      if (o.seeing != null) conditionBits.push(`Seeing ${o.seeing}/5`);
+      if (o.transparency != null) conditionBits.push(`Transparency ${o.transparency}/5`);
+      if (o.bortle != null) conditionBits.push(`Bortle ${o.bortle}`);
+      if (o.moon_phase_name) {
+        const illum = o.moon_phase != null
+          ? Math.round((1 - Math.cos(2 * Math.PI * o.moon_phase)) / 2 * 100)
+          : null;
+        conditionBits.push(illum != null ? `Moon: ${o.moon_phase_name} (${illum}%)` : `Moon: ${o.moon_phase_name}`);
+      }
+      const captionChildren = [
+        el('h4', { text: o.title || (o.observed_at || o.created_at || 'Observation') }),
+        el('small', { text: [o.telescope, o.camera].filter(Boolean).join(' · ') || '—' }),
+      ];
+      if (conditionBits.length) {
+        captionChildren.push(el('small', { class: 'dim', text: conditionBits.join(' · ') }));
+      }
       grid.appendChild(el('div', { class: 'gallery-item' },
         thumb,
-        el('div', { class: 'caption' },
-          el('h4', { text: o.title || (o.observed_at || o.created_at || 'Observation') }),
-          el('small', { text: [o.telescope, o.camera].filter(Boolean).join(' · ') || '—' }),
-        ),
+        el('div', { class: 'caption' }, ...captionChildren),
       ));
     }
     obsSection.appendChild(grid);
