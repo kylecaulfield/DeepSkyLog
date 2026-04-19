@@ -13,41 +13,78 @@ const { getDb, DB_PATH } = require('./db');
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './uploads');
-const THUMB_DIR = path.join(UPLOAD_DIR, 'thumbnails');
+const STAGE_DIR = path.join(UPLOAD_DIR, '.stage');
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-fs.mkdirSync(THUMB_DIR, { recursive: true });
+fs.mkdirSync(STAGE_DIR, { recursive: true });
 
 const db = getDb();
 const app = express();
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(UPLOAD_DIR));
 
-function requireAdmin(req, res, next) {
-  if (!ADMIN_PASSWORD) {
-    return res.status(503).json({ error: 'ADMIN_PASSWORD not configured' });
-  }
-  const header = req.get('X-Admin-Password') || req.body?.password;
-  if (header !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  return next();
+const TELESCOPE_OPTIONS = ['Seestar S50', 'Seestar S30 Pro', 'Seestar S30', '12" Dobsonian'];
+
+function matchTelescope(exif) {
+  if (!exif) return null;
+  const parts = [
+    exif.Make, exif.Model, exif.CameraModel, exif.CameraModelName,
+    exif.LensMake, exif.LensModel, exif.UniqueCameraModel, exif.Software,
+  ].filter(Boolean).map(String);
+  const hay = parts.join(' ').toLowerCase();
+  if (!hay) return null;
+  if (/seestar\s*s\s*30\s*pro/i.test(hay)) return 'Seestar S30 Pro';
+  if (/seestar\s*s\s*50/i.test(hay)) return 'Seestar S50';
+  if (/seestar\s*s\s*30/i.test(hay)) return 'Seestar S30';
+  return null;
 }
 
-const upload = multer({
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/["'`’]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'misc';
+}
+
+function basicAuth(req, res, next) {
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).json({ error: 'ADMIN_PASSWORD not configured on server' });
+  }
+  const header = req.headers.authorization || '';
+  const [scheme, encoded] = header.split(' ');
+  if (scheme === 'Basic' && encoded) {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+    const colon = decoded.indexOf(':');
+    const pass = colon >= 0 ? decoded.slice(colon + 1) : '';
+    if (pass === ADMIN_PASSWORD) return next();
+  }
+  res.set('WWW-Authenticate', 'Basic realm="DeepSkyLog admin", charset="UTF-8"');
+  return res.status(401).json({ error: 'Unauthorized' });
+}
+
+const stageUpload = multer({
   storage: multer.diskStorage({
-    destination: UPLOAD_DIR,
+    destination: STAGE_DIR,
     filename: (_req, file, cb) => {
-      const id = crypto.randomBytes(8).toString('hex');
-      const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
-      cb(null, `${Date.now()}-${id}${ext}`);
+      const id = crypto.randomBytes(10).toString('hex');
+      const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
+      cb(null, `${id}${ext}`);
     },
   }),
   limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/^image\//i.test(file.mimetype)) return cb(null, true);
+    cb(new Error('Only image uploads are supported'));
+  },
 });
+
+app.use('/admin', basicAuth, express.static(path.join(__dirname, 'admin')));
+app.use('/uploads', express.static(UPLOAD_DIR));
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, db: path.basename(DB_PATH) });
@@ -179,92 +216,241 @@ app.get('/api/objects/:id', (req, res) => {
   res.json({ ...object, memberships, observations, completions });
 });
 
-app.get('/api/observations/:id', (req, res) => {
-  const row = db.prepare('SELECT * FROM observations WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: 'Observation not found' });
-  res.json(row);
+app.get('/api/admin/config', basicAuth, (_req, res) => {
+  res.json({ telescopes: TELESCOPE_OPTIONS });
 });
 
-app.post('/api/observations', requireAdmin, upload.single('image'), async (req, res) => {
+app.get('/api/admin/objects', basicAuth, (req, res) => {
+  const q = (req.query.q || '').trim();
+  const limit = Math.min(Number(req.query.limit) || 25, 200);
+
+  if (!q) {
+    const rows = db
+      .prepare(
+        `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type, lo.constellation,
+                l.slug AS list_slug, l.name AS list_name
+           FROM list_objects lo JOIN lists l ON l.id = lo.list_id
+           ORDER BY l.builtin DESC, lo.catalog, CAST(lo.catalog_number AS INTEGER)
+           LIMIT ?`,
+      )
+      .all(limit);
+    return res.json(rows);
+  }
+
+  const like = `%${q}%`;
+  const rows = db
+    .prepare(
+      `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type, lo.constellation,
+              l.slug AS list_slug, l.name AS list_name
+         FROM list_objects lo JOIN lists l ON l.id = lo.list_id
+         WHERE lo.name LIKE @like COLLATE NOCASE
+            OR (lo.catalog || lo.catalog_number) LIKE @like COLLATE NOCASE
+            OR lo.constellation LIKE @like COLLATE NOCASE
+         ORDER BY CASE WHEN lo.name LIKE @exact THEN 0 ELSE 1 END,
+                  l.builtin DESC, CAST(lo.catalog_number AS INTEGER)
+         LIMIT @limit`,
+    )
+    .all({ like, exact: `${q}%`, limit });
+  res.json(rows);
+});
+
+app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+
+  let exif = null;
   try {
-    const body = req.body || {};
-    let thumbPath = null;
-    let exifJson = null;
-    let imagePath = null;
+    exif = await exifr.parse(req.file.path, { gps: true, tiff: true, ifd0: true, exif: true });
+  } catch {
+    exif = null;
+  }
 
-    if (req.file) {
-      imagePath = path.relative(UPLOAD_DIR, req.file.path);
-      const thumbFile = path.join(THUMB_DIR, `thumb-${req.file.filename}.jpg`);
-      await sharp(req.file.path)
-        .rotate()
-        .resize({ width: 480, withoutEnlargement: true })
-        .jpeg({ quality: 82 })
-        .toFile(thumbFile);
-      thumbPath = path.relative(UPLOAD_DIR, thumbFile);
+  const captured =
+    exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate || null;
+  const capturedIso = captured instanceof Date ? captured.toISOString() : null;
 
-      try {
-        const exif = await exifr.parse(req.file.path);
-        if (exif) exifJson = JSON.stringify(exif);
-      } catch {
-        exifJson = null;
+  const telescopeGuess = matchTelescope(exif);
+  const device = [exif?.Make, exif?.Model].filter(Boolean).join(' ') || null;
+
+  res.status(201).json({
+    stage_id: req.file.filename,
+    original_name: req.file.originalname,
+    size: req.file.size,
+    mime: req.file.mimetype,
+    preview_url: `/api/admin/stage/${encodeURIComponent(req.file.filename)}/preview`,
+    exif: {
+      captured_at: capturedIso,
+      device,
+      latitude: typeof exif?.latitude === 'number' ? exif.latitude : null,
+      longitude: typeof exif?.longitude === 'number' ? exif.longitude : null,
+      iso: exif?.ISO ?? exif?.ISOSpeedRatings ?? null,
+      exposure_seconds: exif?.ExposureTime ?? null,
+      focal_length_mm: exif?.FocalLength ?? null,
+      aperture: exif?.FNumber ?? exif?.ApertureValue ?? null,
+    },
+    telescope_match: telescopeGuess,
+    telescope_options: TELESCOPE_OPTIONS,
+  });
+});
+
+app.get('/api/admin/stage/:id/preview', basicAuth, (req, res) => {
+  const safe = path.basename(req.params.id);
+  const full = path.join(STAGE_DIR, safe);
+  if (!full.startsWith(STAGE_DIR + path.sep) || !fs.existsSync(full)) {
+    return res.status(404).end();
+  }
+  res.sendFile(full);
+});
+
+app.post('/api/admin/observations', basicAuth, async (req, res) => {
+  const body = req.body || {};
+  const stageId = body.stage_id ? path.basename(String(body.stage_id)) : null;
+  if (!stageId) return res.status(400).json({ error: 'stage_id required' });
+
+  const stagePath = path.join(STAGE_DIR, stageId);
+  if (!stagePath.startsWith(STAGE_DIR + path.sep) || !fs.existsSync(stagePath)) {
+    return res.status(404).json({ error: 'Staged file not found' });
+  }
+
+  const telescope = String(body.telescope || '').trim() || null;
+  const location = body.location ? String(body.location).trim() : null;
+  const notes = body.notes ? String(body.notes).trim() : null;
+  const observedAt = body.observed_at ? String(body.observed_at).trim() : null;
+  const title = body.title ? String(body.title).trim() : null;
+  const rating = body.rating != null && body.rating !== ''
+    ? Math.max(1, Math.min(5, Number(body.rating)))
+    : null;
+
+  const rawObjectId = body.object_id ? Number(body.object_id) : null;
+  let matchedObject = null;
+  if (rawObjectId) {
+    matchedObject = db
+      .prepare('SELECT * FROM list_objects WHERE id = ?')
+      .get(rawObjectId);
+  }
+
+  const catalog = matchedObject?.catalog
+    || (body.catalog ? String(body.catalog).trim() : null);
+  const catalogNumber = matchedObject?.catalog_number
+    || (body.catalog_number ? String(body.catalog_number).trim() : null);
+  const objectName = matchedObject?.name
+    || (body.object_name ? String(body.object_name).trim() : null);
+
+  const dateForPath = observedAt && !Number.isNaN(Date.parse(observedAt))
+    ? new Date(observedAt)
+    : new Date();
+  const yyyy = String(dateForPath.getUTCFullYear());
+  const mm = String(dateForPath.getUTCMonth() + 1).padStart(2, '0');
+
+  const dirSlug = slugify(objectName
+    || (catalog && catalogNumber ? `${catalog}${catalogNumber}` : 'misc'));
+  const destDir = path.join(UPLOAD_DIR, yyyy, mm, dirSlug);
+  fs.mkdirSync(destDir, { recursive: true });
+
+  const ext = path.extname(stageId).toLowerCase() || '.jpg';
+  const baseName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const finalName = `${baseName}${ext}`;
+  const finalPath = path.join(destDir, finalName);
+  const thumbPath = path.join(destDir, `thumb-${baseName}.jpg`);
+
+  try {
+    fs.renameSync(stagePath, finalPath);
+  } catch (err) {
+    if (err.code === 'EXDEV') {
+      fs.copyFileSync(stagePath, finalPath);
+      fs.unlinkSync(stagePath);
+    } else {
+      throw err;
+    }
+  }
+
+  await sharp(finalPath)
+    .rotate()
+    .resize({ width: 640, withoutEnlargement: true })
+    .jpeg({ quality: 82 })
+    .toFile(thumbPath);
+
+  let exif = null;
+  try {
+    exif = await exifr.parse(finalPath, { gps: true });
+  } catch {
+    exif = null;
+  }
+
+  const relImage = path.relative(UPLOAD_DIR, finalPath).split(path.sep).join('/');
+  const relThumb = path.relative(UPLOAD_DIR, thumbPath).split(path.sep).join('/');
+
+  const insert = db.prepare(
+    `INSERT INTO observations
+       (object_id, catalog, catalog_number, title, description, observed_at,
+        location, telescope, camera, exposure_seconds, iso, focal_length_mm,
+        aperture, image_path, thumbnail_path, exif_json, rating)
+     VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
+             @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
+             @aperture, @image_path, @thumbnail_path, @exif_json, @rating)`,
+  );
+
+  const completeList = db.prepare(
+    `INSERT OR IGNORE INTO list_completions (list_object_id, observation_id, notes)
+     VALUES (?, ?, ?)`,
+  );
+
+  const tx = db.transaction(() => {
+    const result = insert.run({
+      object_id: matchedObject ? matchedObject.id : null,
+      catalog,
+      catalog_number: catalogNumber,
+      title,
+      description: notes,
+      observed_at: observedAt,
+      location,
+      telescope,
+      camera: exif?.Model ? String(exif.Model) : null,
+      exposure_seconds: exif?.ExposureTime ?? null,
+      iso: exif?.ISO ?? exif?.ISOSpeedRatings ?? null,
+      focal_length_mm: exif?.FocalLength ?? null,
+      aperture: exif?.FNumber ?? exif?.ApertureValue ?? null,
+      image_path: relImage,
+      thumbnail_path: relThumb,
+      exif_json: exif ? JSON.stringify(exif) : null,
+      rating,
+    });
+
+    const observationId = Number(result.lastInsertRowid);
+
+    if (catalog && catalogNumber) {
+      const peers = db
+        .prepare('SELECT id FROM list_objects WHERE catalog = ? AND catalog_number = ?')
+        .all(catalog, catalogNumber);
+      for (const peer of peers) {
+        completeList.run(peer.id, observationId, notes);
       }
     }
 
-    const result = db
-      .prepare(
-        `INSERT INTO observations
-           (object_id, catalog, catalog_number, title, description, observed_at,
-            location, telescope, camera, exposure_seconds, iso, focal_length_mm,
-            aperture, image_path, thumbnail_path, exif_json)
-         VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
-                 @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
-                 @aperture, @image_path, @thumbnail_path, @exif_json)`,
-      )
-      .run({
-        object_id: body.object_id ? Number(body.object_id) : null,
-        catalog: body.catalog || null,
-        catalog_number: body.catalog_number || null,
-        title: body.title || null,
-        description: body.description || null,
-        observed_at: body.observed_at || null,
-        location: body.location || null,
-        telescope: body.telescope || null,
-        camera: body.camera || null,
-        exposure_seconds: body.exposure_seconds ? Number(body.exposure_seconds) : null,
-        iso: body.iso ? Number(body.iso) : null,
-        focal_length_mm: body.focal_length_mm ? Number(body.focal_length_mm) : null,
-        aperture: body.aperture ? Number(body.aperture) : null,
-        image_path: imagePath,
-        thumbnail_path: thumbPath,
-        exif_json: exifJson,
-      });
+    return observationId;
+  });
 
-    res.status(201).json({ id: result.lastInsertRowid });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to create observation' });
-  }
+  const observationId = tx();
+
+  res.status(201).json({
+    id: observationId,
+    image_path: relImage,
+    thumbnail_path: relThumb,
+  });
 });
 
-app.post('/api/lists/:slug/complete', requireAdmin, (req, res) => {
-  const list = db.prepare('SELECT id FROM lists WHERE slug = ?').get(req.params.slug);
-  if (!list) return res.status(404).json({ error: 'List not found' });
-  const { list_object_id, observation_id, notes } = req.body || {};
-  if (!list_object_id) return res.status(400).json({ error: 'list_object_id required' });
-
-  const result = db
-    .prepare(
-      `INSERT OR IGNORE INTO list_completions (list_object_id, observation_id, notes)
-       VALUES (?, ?, ?)`,
-    )
-    .run(list_object_id, observation_id || null, notes || null);
-
-  res.status(201).json({ id: result.lastInsertRowid });
+app.delete('/api/admin/stage/:id', basicAuth, (req, res) => {
+  const safe = path.basename(req.params.id);
+  const full = path.join(STAGE_DIR, safe);
+  if (full.startsWith(STAGE_DIR + path.sep) && fs.existsSync(full)) {
+    fs.unlinkSync(full);
+  }
+  res.status(204).end();
 });
 
 app.use((err, _req, res, _next) => {
   console.error(err);
-  res.status(500).json({ error: 'Internal server error' });
+  const status = err.status || 500;
+  res.status(status).json({ error: err.message || 'Internal server error' });
 });
 
 app.listen(PORT, () => {
@@ -272,6 +458,6 @@ app.listen(PORT, () => {
   console.log(`Database: ${DB_PATH}`);
   console.log(`Upload dir: ${UPLOAD_DIR}`);
   if (!ADMIN_PASSWORD) {
-    console.warn('WARNING: ADMIN_PASSWORD is not set — write endpoints are disabled.');
+    console.warn('WARNING: ADMIN_PASSWORD is not set — /admin is disabled.');
   }
 });

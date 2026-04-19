@@ -74,6 +74,13 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_list_completions_object ON list_completions(list_object_id);
     `,
   },
+  {
+    id: 2,
+    name: 'add_observation_rating',
+    up: `
+      ALTER TABLE observations ADD COLUMN rating INTEGER;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };
