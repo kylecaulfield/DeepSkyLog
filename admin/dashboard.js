@@ -80,9 +80,13 @@ function renderRecent(rows) {
     const objectId = r.catalog && r.catalog_number ? `${r.catalog}${r.catalog_number}` : '—';
     const stars = r.rating ? '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating) : '—';
 
+    const idCell = r.object_list_id
+      ? el('a', { href: `/object.html?id=${r.object_list_id}`, text: objectId })
+      : document.createTextNode(objectId);
+
     tbody.appendChild(el('tr', {},
       el('td', {}, thumb),
-      el('td', {}, el('a', { href: `/object.html?id=${r.id}`, text: objectId })),
+      el('td', {}, idCell),
       el('td', { text: r.title || r.object_name || '—' }),
       el('td', { text: r.telescope || '—' }),
       el('td', { text: r.observed_at || r.created_at || '—' }),

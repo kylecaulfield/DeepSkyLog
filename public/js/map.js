@@ -1,4 +1,4 @@
-import { fetchJson, highlightNav } from './common.js';
+import { fetchJson, highlightNav, el } from './common.js';
 
 highlightNav('map');
 
@@ -9,7 +9,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors',
 }).addTo(map);
 
-function popupHtml(pin) {
+function popupNode(pin) {
   const objId = pin.object_catalog && pin.object_catalog_number
     ? `${pin.object_catalog}${pin.object_catalog_number}`
     : '';
@@ -17,17 +17,23 @@ function popupHtml(pin) {
     || [objId, pin.object_name].filter(Boolean).join(' · ')
     || `Observation #${pin.id}`;
   const meta = [pin.telescope, pin.observed_at, pin.location].filter(Boolean).join(' · ');
-  const href = pin.object_id ? `/object.html?id=${pin.object_id}` : '#';
-  const thumb = pin.thumbnail_path
-    ? `<img src="/uploads/${pin.thumbnail_path}" alt="" loading="lazy">`
-    : '';
-  return `
-    <div class="pin-popup">
-      ${thumb}
-      <h4><a href="${href}">${heading}</a></h4>
-      <small>${meta || '—'}</small>
-    </div>
-  `;
+  const href = pin.object_id ? `/object.html?id=${encodeURIComponent(pin.object_id)}` : null;
+
+  const children = [];
+  if (pin.thumbnail_path) {
+    children.push(el('img', {
+      src: `/uploads/${encodeURI(pin.thumbnail_path)}`,
+      alt: '',
+      loading: 'lazy',
+    }));
+  }
+  const titleNode = href
+    ? el('a', { href }, heading)
+    : document.createTextNode(heading);
+  children.push(el('h4', {}, titleNode));
+  children.push(el('small', { text: meta || '—' }));
+
+  return el('div', { class: 'pin-popup' }, ...children);
 }
 
 async function render() {
@@ -49,7 +55,7 @@ async function render() {
   const bounds = [];
   for (const pin of pins) {
     const marker = L.marker([pin.latitude, pin.longitude]).addTo(map);
-    marker.bindPopup(popupHtml(pin));
+    marker.bindPopup(popupNode(pin));
     bounds.push([pin.latitude, pin.longitude]);
   }
   if (bounds.length === 1) map.setView(bounds[0], 10);

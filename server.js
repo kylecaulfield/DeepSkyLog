@@ -13,7 +13,10 @@ const { getDb, DB_PATH } = require('./db');
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './uploads');
-const STAGE_DIR = path.join(UPLOAD_DIR, '.stage');
+const STAGE_DIR = path.resolve(
+  process.env.STAGE_DIR || path.join(path.dirname(DB_PATH), 'stage'),
+);
+const STAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(STAGE_DIR, { recursive: true });
@@ -41,30 +44,93 @@ function matchTelescope(exif) {
 }
 
 function slugify(value) {
-  return String(value || '')
+  const raw = String(value || '')
     .toLowerCase()
     .normalize('NFKD')
     .replace(/["'`’]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'misc';
+    .replace(/[^a-z0-9]+/g, '-');
+  const trimmed = raw.slice(0, 80).replace(/^-+|-+$/g, '');
+  return trimmed || 'misc';
+}
+
+function escapeLike(value) {
+  return String(value).replace(/[\\_%]/g, (ch) => `\\${ch}`);
+}
+
+const AUTH_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_FAIL_MAX = 20;
+const authFailures = new Map();
+
+function clientIp(req) {
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+function recentFailures(ip, now) {
+  const fails = (authFailures.get(ip) || []).filter((t) => now - t < AUTH_FAIL_WINDOW_MS);
+  authFailures.set(ip, fails);
+  return fails;
+}
+
+function timingSafeCompare(a, b) {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) {
+    // Still touch timingSafeEqual to keep timing noise closer to the equal-length path.
+    crypto.timingSafeEqual(bb, bb);
+    return false;
+  }
+  return crypto.timingSafeEqual(ab, bb);
 }
 
 function basicAuth(req, res, next) {
   if (!ADMIN_PASSWORD) {
     return res.status(503).json({ error: 'ADMIN_PASSWORD not configured on server' });
   }
+
+  const ip = clientIp(req);
+  const now = Date.now();
+  const fails = recentFailures(ip, now);
+  if (fails.length >= AUTH_FAIL_MAX) {
+    res.set('Retry-After', String(Math.ceil(AUTH_FAIL_WINDOW_MS / 1000)));
+    return res.status(429).json({ error: 'Too many authentication attempts' });
+  }
+
   const header = req.headers.authorization || '';
   const [scheme, encoded] = header.split(' ');
+  let ok = false;
   if (scheme === 'Basic' && encoded) {
     const decoded = Buffer.from(encoded, 'base64').toString('utf8');
     const colon = decoded.indexOf(':');
     const pass = colon >= 0 ? decoded.slice(colon + 1) : '';
-    if (pass === ADMIN_PASSWORD) return next();
+    ok = timingSafeCompare(pass, ADMIN_PASSWORD);
   }
+
+  if (ok) return next();
+
+  fails.push(now);
+  authFailures.set(ip, fails);
   res.set('WWW-Authenticate', 'Basic realm="DeepSkyLog admin", charset="UTF-8"');
   return res.status(401).json({ error: 'Unauthorized' });
 }
+
+function sweepStageDir() {
+  try {
+    const now = Date.now();
+    for (const entry of fs.readdirSync(STAGE_DIR, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const full = path.join(STAGE_DIR, entry.name);
+      try {
+        const stat = fs.statSync(full);
+        if (now - stat.mtimeMs > STAGE_TTL_MS) fs.unlinkSync(full);
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('stage sweep failed:', err.message);
+  }
+}
+
+sweepStageDir();
+setInterval(sweepStageDir, 60 * 60 * 1000).unref();
 
 const stageUpload = multer({
   storage: multer.diskStorage({
@@ -279,7 +345,7 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
       `SELECT COUNT(*) AS observations,
               COUNT(image_path) AS photos,
               COUNT(DISTINCT object_id) AS distinct_objects,
-              COUNT(DISTINCT telescope) AS distinct_telescopes,
+              COUNT(DISTINCT NULLIF(telescope, '')) AS distinct_telescopes,
               ROUND(AVG(rating), 2) AS avg_rating
          FROM observations`,
     )
@@ -300,7 +366,8 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
 
   const recent = db
     .prepare(
-      `SELECT o.id, o.title, o.observed_at, o.created_at, o.telescope,
+      `SELECT o.id AS observation_id, o.object_id AS object_list_id,
+              o.title, o.observed_at, o.created_at, o.telescope,
               o.rating, o.thumbnail_path, o.image_path, o.catalog, o.catalog_number,
               lo.name AS object_name
          FROM observations o
@@ -340,20 +407,22 @@ app.get('/api/admin/objects', basicAuth, (req, res) => {
     return res.json(rows);
   }
 
-  const like = `%${q}%`;
+  const escaped = escapeLike(q);
+  const like = `%${escaped}%`;
+  const exact = `${escaped}%`;
   const rows = db
     .prepare(
       `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type, lo.constellation,
               l.slug AS list_slug, l.name AS list_name
          FROM list_objects lo JOIN lists l ON l.id = lo.list_id
-         WHERE lo.name LIKE @like COLLATE NOCASE
-            OR (lo.catalog || lo.catalog_number) LIKE @like COLLATE NOCASE
-            OR lo.constellation LIKE @like COLLATE NOCASE
-         ORDER BY CASE WHEN lo.name LIKE @exact THEN 0 ELSE 1 END,
+         WHERE lo.name LIKE @like ESCAPE '\\' COLLATE NOCASE
+            OR (lo.catalog || lo.catalog_number) LIKE @like ESCAPE '\\' COLLATE NOCASE
+            OR lo.constellation LIKE @like ESCAPE '\\' COLLATE NOCASE
+         ORDER BY CASE WHEN lo.name LIKE @exact ESCAPE '\\' THEN 0 ELSE 1 END,
                   l.builtin DESC, CAST(lo.catalog_number AS INTEGER)
          LIMIT @limit`,
     )
-    .all({ like, exact: `${q}%`, limit });
+    .all({ like, exact, limit });
   res.json(rows);
 });
 
@@ -441,8 +510,8 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const dateForPath = observedAt && !Number.isNaN(Date.parse(observedAt))
     ? new Date(observedAt)
     : new Date();
-  const yyyy = String(dateForPath.getUTCFullYear());
-  const mm = String(dateForPath.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = String(dateForPath.getFullYear());
+  const mm = String(dateForPath.getMonth() + 1).padStart(2, '0');
 
   const dirSlug = slugify(objectName
     || (catalog && catalogNumber ? `${catalog}${catalogNumber}` : 'misc'));
@@ -455,32 +524,46 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const finalPath = path.join(destDir, finalName);
   const thumbPath = path.join(destDir, `thumb-${baseName}.jpg`);
 
-  try {
-    fs.renameSync(stagePath, finalPath);
-  } catch (err) {
-    if (err.code === 'EXDEV') {
-      fs.copyFileSync(stagePath, finalPath);
-      fs.unlinkSync(stagePath);
-    } else {
-      throw err;
-    }
-  }
-
-  await sharp(finalPath)
-    .rotate()
-    .resize({ width: 640, withoutEnlargement: true })
-    .jpeg({ quality: 82 })
-    .toFile(thumbPath);
-
+  let finalMoved = false;
+  let thumbWritten = false;
   let exif = null;
-  try {
-    exif = await exifr.parse(finalPath, { gps: true });
-  } catch {
-    exif = null;
-  }
+  let relImage;
+  let relThumb;
 
-  const relImage = path.relative(UPLOAD_DIR, finalPath).split(path.sep).join('/');
-  const relThumb = path.relative(UPLOAD_DIR, thumbPath).split(path.sep).join('/');
+  try {
+    try {
+      fs.renameSync(stagePath, finalPath);
+    } catch (err) {
+      if (err.code === 'EXDEV') {
+        fs.copyFileSync(stagePath, finalPath);
+        fs.unlinkSync(stagePath);
+      } else {
+        throw err;
+      }
+    }
+    finalMoved = true;
+
+    await sharp(finalPath)
+      .rotate()
+      .resize({ width: 640, withoutEnlargement: true })
+      .jpeg({ quality: 82 })
+      .toFile(thumbPath);
+    thumbWritten = true;
+
+    try {
+      exif = await exifr.parse(finalPath, { gps: true });
+    } catch {
+      exif = null;
+    }
+
+    relImage = path.relative(UPLOAD_DIR, finalPath).split(path.sep).join('/');
+    relThumb = path.relative(UPLOAD_DIR, thumbPath).split(path.sep).join('/');
+  } catch (err) {
+    if (thumbWritten) { try { fs.unlinkSync(thumbPath); } catch {} }
+    if (finalMoved) { try { fs.unlinkSync(finalPath); } catch {} }
+    console.error('Finalize failed:', err);
+    return res.status(500).json({ error: 'Failed to process upload' });
+  }
 
   const latitude = typeof exif?.latitude === 'number' ? exif.latitude : null;
   const longitude = typeof exif?.longitude === 'number' ? exif.longitude : null;
@@ -539,7 +622,15 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
     return observationId;
   });
 
-  const observationId = tx();
+  let observationId;
+  try {
+    observationId = tx();
+  } catch (err) {
+    try { fs.unlinkSync(thumbPath); } catch {}
+    try { fs.unlinkSync(finalPath); } catch {}
+    console.error('Finalize DB write failed:', err);
+    return res.status(500).json({ error: 'Failed to record observation' });
+  }
 
   res.status(201).json({
     id: observationId,
