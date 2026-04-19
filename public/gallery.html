@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; Gallery</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/" data-nav="home">Dashboard</a>
+        <a href="/gallery.html" data-nav="gallery">Gallery</a>
+      </nav>
+    </header>
+    <main>
+      <h1 class="page-title">Photo gallery</h1>
+      <p class="page-subtitle">Every observation you have logged.</p>
+
+      <div class="toolbar">
+        <label>
+          Telescope
+          <select id="filter-telescope"><option value="">All telescopes</option></select>
+        </label>
+        <label>
+          Object type
+          <select id="filter-type"><option value="">All types</option></select>
+        </label>
+        <label>
+          <input type="checkbox" id="filter-image" />
+          Photo required
+        </label>
+        <span id="count" class="dim" style="margin-left: auto;"></span>
+      </div>
+
+      <div id="gallery" class="gallery">
+        <p class="muted">Loading observations&hellip;</p>
+      </div>
+    </main>
+    <script type="module" src="/js/gallery.js"></script>
+  </body>
+</html>

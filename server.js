@@ -87,17 +87,96 @@ app.get('/api/lists/:slug', (req, res) => {
   res.json({ ...list, objects });
 });
 
-app.get('/api/observations', (_req, res) => {
+app.get('/api/observations', (req, res) => {
+  const telescope = (req.query.telescope || '').trim();
+  const objectType = (req.query.object_type || '').trim();
+  const hasImage = req.query.has_image === '1';
+
+  const clauses = [];
+  const params = {};
+  if (telescope) {
+    clauses.push('o.telescope = @telescope');
+    params.telescope = telescope;
+  }
+  if (objectType) {
+    clauses.push('lo.object_type = @object_type');
+    params.object_type = objectType;
+  }
+  if (hasImage) {
+    clauses.push('o.image_path IS NOT NULL');
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = db
     .prepare(
       `SELECT o.*, lo.catalog AS object_catalog, lo.catalog_number AS object_catalog_number,
-              lo.name AS object_name
+              lo.name AS object_name, lo.object_type AS object_type, lo.constellation AS constellation
          FROM observations o
          LEFT JOIN list_objects lo ON lo.id = o.object_id
+         ${where}
          ORDER BY COALESCE(o.observed_at, o.created_at) DESC`,
     )
-    .all();
+    .all(params);
   res.json(rows);
+});
+
+app.get('/api/filters', (_req, res) => {
+  const telescopes = db
+    .prepare(
+      `SELECT DISTINCT telescope FROM observations
+         WHERE telescope IS NOT NULL AND telescope != ''
+         ORDER BY telescope COLLATE NOCASE`,
+    )
+    .all()
+    .map((r) => r.telescope);
+
+  const objectTypes = db
+    .prepare(
+      `SELECT DISTINCT object_type FROM list_objects
+         WHERE object_type IS NOT NULL AND object_type != ''
+         ORDER BY object_type`,
+    )
+    .all()
+    .map((r) => r.object_type);
+
+  res.json({ telescopes, objectTypes });
+});
+
+app.get('/api/objects/:id', (req, res) => {
+  const object = db
+    .prepare(
+      `SELECT lo.*, l.slug AS list_slug, l.name AS list_name
+         FROM list_objects lo
+         JOIN lists l ON l.id = lo.list_id
+         WHERE lo.id = ?`,
+    )
+    .get(req.params.id);
+  if (!object) return res.status(404).json({ error: 'Object not found' });
+
+  const memberships = db
+    .prepare(
+      `SELECT lo.id, l.slug, l.name AS list_name, lo.catalog, lo.catalog_number
+         FROM list_objects lo
+         JOIN lists l ON l.id = lo.list_id
+         WHERE lo.catalog = ? AND lo.catalog_number = ?`,
+    )
+    .all(object.catalog, object.catalog_number);
+
+  const observations = db
+    .prepare(
+      `SELECT * FROM observations
+         WHERE object_id IN (SELECT id FROM list_objects WHERE catalog = ? AND catalog_number = ?)
+         ORDER BY COALESCE(observed_at, created_at) DESC`,
+    )
+    .all(object.catalog, object.catalog_number);
+
+  const completions = db
+    .prepare(
+      `SELECT * FROM list_completions WHERE list_object_id = ? ORDER BY completed_at DESC`,
+    )
+    .all(object.id);
+
+  res.json({ ...object, memberships, observations, completions });
 });
 
 app.get('/api/observations/:id', (req, res) => {

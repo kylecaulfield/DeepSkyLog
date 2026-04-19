@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; List</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/" data-nav="home">Dashboard</a>
+        <a href="/gallery.html" data-nav="gallery">Gallery</a>
+      </nav>
+    </header>
+    <main>
+      <p class="dim"><a href="/">&larr; All catalogs</a></p>
+      <h1 id="list-name" class="page-title">Loading&hellip;</h1>
+      <p id="list-description" class="page-subtitle"></p>
+
+      <div class="toolbar">
+        <label>
+          Status
+          <select id="filter-status">
+            <option value="all">All</option>
+            <option value="observed">Observed only</option>
+            <option value="pending">Not yet observed</option>
+          </select>
+        </label>
+        <label>
+          Type
+          <select id="filter-type"><option value="all">All types</option></select>
+        </label>
+        <label style="flex: 1;">
+          Search
+          <input id="filter-query" type="search" placeholder="Name, ID, constellation&hellip;" style="width: 100%;" />
+        </label>
+        <span id="count-summary" class="dim"></span>
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Constellation</th>
+              <th>RA</th>
+              <th>Dec</th>
+              <th>Mag</th>
+              <th>Observed</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </main>
+    <script type="module" src="/js/list.js"></script>
+  </body>
+</html>
