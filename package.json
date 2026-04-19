@@ -1,0 +1,22 @@
+{
+  "name": "deepskylog",
+  "version": "0.1.0",
+  "description": "Self-hosted astronomy photo tracker for deep-sky observations.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "exifr": "^7.1.3",
+    "express": "^4.21.0",
+    "multer": "^2.0.0",
+    "sharp": "^0.33.5"
+  }
+}
