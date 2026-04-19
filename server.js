@@ -157,6 +157,59 @@ app.get('/api/observations', (req, res) => {
   res.json(rows);
 });
 
+app.get('/api/observations/map', (_req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT o.id, o.title, o.observed_at, o.latitude, o.longitude, o.location,
+              o.telescope, o.thumbnail_path, o.object_id,
+              lo.catalog AS object_catalog, lo.catalog_number AS object_catalog_number,
+              lo.name AS object_name
+         FROM observations o
+         LEFT JOIN list_objects lo ON lo.id = o.object_id
+         WHERE o.latitude IS NOT NULL AND o.longitude IS NOT NULL`,
+    )
+    .all();
+  res.json(rows);
+});
+
+app.get('/api/observations.csv', (_req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT o.id, o.observed_at, o.created_at, o.title, o.catalog, o.catalog_number,
+              lo.name AS object_name, lo.object_type, lo.constellation,
+              o.telescope, o.camera, o.location, o.latitude, o.longitude,
+              o.exposure_seconds, o.iso, o.focal_length_mm, o.aperture,
+              o.rating, o.description, o.image_path
+         FROM observations o
+         LEFT JOIN list_objects lo ON lo.id = o.object_id
+         ORDER BY COALESCE(o.observed_at, o.created_at) DESC`,
+    )
+    .all();
+
+  const columns = [
+    'id', 'observed_at', 'created_at', 'title', 'catalog', 'catalog_number',
+    'object_name', 'object_type', 'constellation', 'telescope', 'camera',
+    'location', 'latitude', 'longitude', 'exposure_seconds', 'iso',
+    'focal_length_mm', 'aperture', 'rating', 'description', 'image_path',
+  ];
+
+  const esc = (v) => {
+    if (v == null) return '';
+    const s = String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const lines = [columns.join(',')];
+  for (const row of rows) lines.push(columns.map((c) => esc(row[c])).join(','));
+
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set(
+    'Content-Disposition',
+    `attachment; filename="deepskylog-observations-${new Date().toISOString().slice(0, 10)}.csv"`,
+  );
+  res.send(lines.join('\n'));
+});
+
 app.get('/api/filters', (_req, res) => {
   const telescopes = db
     .prepare(
@@ -218,6 +271,56 @@ app.get('/api/objects/:id', (req, res) => {
 
 app.get('/api/admin/config', basicAuth, (_req, res) => {
   res.json({ telescopes: TELESCOPE_OPTIONS });
+});
+
+app.get('/api/admin/stats', basicAuth, (_req, res) => {
+  const totals = db
+    .prepare(
+      `SELECT COUNT(*) AS observations,
+              COUNT(image_path) AS photos,
+              COUNT(DISTINCT object_id) AS distinct_objects,
+              COUNT(DISTINCT telescope) AS distinct_telescopes,
+              ROUND(AVG(rating), 2) AS avg_rating
+         FROM observations`,
+    )
+    .get();
+
+  const lists = db
+    .prepare(
+      `SELECT l.slug, l.name,
+              COUNT(lo.id) AS object_count,
+              COUNT(DISTINCT lc.list_object_id) AS completed_count
+         FROM lists l
+         LEFT JOIN list_objects lo ON lo.list_id = l.id
+         LEFT JOIN list_completions lc ON lc.list_object_id = lo.id
+         GROUP BY l.id
+         ORDER BY l.builtin DESC, l.name`,
+    )
+    .all();
+
+  const recent = db
+    .prepare(
+      `SELECT o.id, o.title, o.observed_at, o.created_at, o.telescope,
+              o.rating, o.thumbnail_path, o.image_path, o.catalog, o.catalog_number,
+              lo.name AS object_name
+         FROM observations o
+         LEFT JOIN list_objects lo ON lo.id = o.object_id
+         ORDER BY o.created_at DESC
+         LIMIT 10`,
+    )
+    .all();
+
+  const telescopes = db
+    .prepare(
+      `SELECT telescope, COUNT(*) AS count
+         FROM observations
+         WHERE telescope IS NOT NULL AND telescope != ''
+         GROUP BY telescope
+         ORDER BY count DESC`,
+    )
+    .all();
+
+  res.json({ totals, lists, recent, telescopes });
 });
 
 app.get('/api/admin/objects', basicAuth, (req, res) => {
@@ -379,14 +482,19 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const relImage = path.relative(UPLOAD_DIR, finalPath).split(path.sep).join('/');
   const relThumb = path.relative(UPLOAD_DIR, thumbPath).split(path.sep).join('/');
 
+  const latitude = typeof exif?.latitude === 'number' ? exif.latitude : null;
+  const longitude = typeof exif?.longitude === 'number' ? exif.longitude : null;
+
   const insert = db.prepare(
     `INSERT INTO observations
        (object_id, catalog, catalog_number, title, description, observed_at,
         location, telescope, camera, exposure_seconds, iso, focal_length_mm,
-        aperture, image_path, thumbnail_path, exif_json, rating)
+        aperture, image_path, thumbnail_path, exif_json, rating,
+        latitude, longitude)
      VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
              @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
-             @aperture, @image_path, @thumbnail_path, @exif_json, @rating)`,
+             @aperture, @image_path, @thumbnail_path, @exif_json, @rating,
+             @latitude, @longitude)`,
   );
 
   const completeList = db.prepare(
@@ -413,6 +521,8 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       thumbnail_path: relThumb,
       exif_json: exif ? JSON.stringify(exif) : null,
       rating,
+      latitude,
+      longitude,
     });
 
     const observationId = Number(result.lastInsertRowid);

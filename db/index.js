@@ -88,6 +88,31 @@ function seedList(db, { slug, name, description, entries }) {
   tx(entries);
 }
 
+function backfillCoordsFromExif(db) {
+  const rows = db
+    .prepare(
+      `SELECT id, exif_json FROM observations
+         WHERE latitude IS NULL AND longitude IS NULL AND exif_json IS NOT NULL`,
+    )
+    .all();
+  if (!rows.length) return;
+
+  const update = db.prepare(
+    'UPDATE observations SET latitude = ?, longitude = ? WHERE id = ?',
+  );
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      try {
+        const exif = JSON.parse(row.exif_json);
+        const lat = typeof exif.latitude === 'number' ? exif.latitude : null;
+        const lon = typeof exif.longitude === 'number' ? exif.longitude : null;
+        if (lat != null && lon != null) update.run(lat, lon, row.id);
+      } catch {}
+    }
+  });
+  tx();
+}
+
 function seedCatalogs(db) {
   seedList(db, {
     slug: 'messier',
@@ -110,6 +135,7 @@ function getDb() {
   const db = openDatabase();
   runMigrations(db);
   seedCatalogs(db);
+  backfillCoordsFromExif(db);
   dbInstance = db;
   return db;
 }

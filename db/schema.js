@@ -81,6 +81,16 @@ const MIGRATIONS = [
       ALTER TABLE observations ADD COLUMN rating INTEGER;
     `,
   },
+  {
+    id: 3,
+    name: 'add_observation_coords',
+    up: `
+      ALTER TABLE observations ADD COLUMN latitude REAL;
+      ALTER TABLE observations ADD COLUMN longitude REAL;
+      CREATE INDEX IF NOT EXISTS idx_observations_coords
+        ON observations(latitude, longitude);
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };
