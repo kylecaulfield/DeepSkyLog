@@ -23,28 +23,6 @@
 6. **Session planner** — pick a date and location, get a list of your
    unobserved targets sorted by altitude window for that night. Even a basic
    version is genuinely useful.
-7. **FITS upload support** — Seestar S50 stores every stacked sub as a FITS
-   file with all the useful metadata (`INSTRUME`, `OBJECT`, `DATE-OBS`,
-   `EXPTIME`, `FILTER`, `CCD-TEMP`, RA/Dec) in the ASCII header. Today the
-   pipeline rejects FITS three ways, verified against the files in
-   `samples/`:
-   1. `stageUpload` filter (`server.js:146-149`) only allows `image/*` mimes,
-      so browsers sending `application/octet-stream` for `.fit` get a 500.
-   2. `exifr.parse` returns all-null on FITS, so `matchTelescope` can't
-      auto-detect the Seestar even though the header says so.
-   3. `sharp(...).toFile(thumbPath)` (`server.js:614-618`) throws
-      `Input file contains unsupported image format` → finalize 500s and the
-      observation row is never written.
-
-   Sketch: accept `image/fits` + `.fit`/`.fits` extensions in the filter, add
-   a tiny FITS-header reader (plain 2880-byte ASCII blocks — no dep needed)
-   that populates `captured_at`/`device`/`exposure_seconds` from
-   `DATE-OBS`/`INSTRUME`/`EXPTIME`, and branch the thumbnailer: for FITS, use
-   a small renderer (astropy via a subprocess, or `fitsjs` + `canvas`) to
-   produce a JPEG preview, then hand that to `sharp` for the 640px thumb.
-   Keep the original `.fit` as the canonical file so processing tools still
-   work. `samples/` is a ready-made regression fixture.
-
 ## Longer term
 
 7. **Astrometry.net integration** — submit an image, get back the exact

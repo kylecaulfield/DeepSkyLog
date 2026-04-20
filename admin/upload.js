@@ -160,12 +160,21 @@ fileInput.addEventListener('change', () => {
   if (file) handleFile(file);
 });
 
+function isFitsFile(file) {
+  return /\.fits?$/i.test(file.name || '');
+}
+
 function handleFile(file) {
-  if (!file.type.startsWith('image/')) {
-    setStatus('Only image files are supported.', 'error');
+  const fits = isFitsFile(file);
+  if (!file.type.startsWith('image/') && !fits) {
+    setStatus('Only image or FITS files are supported.', 'error');
     return;
   }
-  previewImg.src = URL.createObjectURL(file);
+  if (!fits) {
+    previewImg.src = URL.createObjectURL(file);
+  } else {
+    previewImg.removeAttribute('src');
+  }
   uploadStaged(file);
 }
 
@@ -209,14 +218,21 @@ function onStaged(res) {
     : toLocalDatetimeValue(null);
   updateMoonPreview();
 
+  const metaSource = res.kind === 'fits' ? 'FITS header' : 'EXIF';
   if (res.telescope_match) {
     telescopeSelect.value = res.telescope_match;
-    telescopeHint.textContent = `Auto-detected from EXIF: ${res.exif.device || 'device'}`;
+    telescopeHint.textContent = `Auto-detected from ${metaSource}: ${res.exif.device || 'device'}`;
   } else {
     telescopeSelect.value = '';
     telescopeHint.textContent = res.exif?.device
       ? `No automatic match for device “${res.exif.device}”. Please pick one.`
-      : 'No device info in EXIF. Please pick a telescope.';
+      : `No device info in ${metaSource}. Please pick a telescope.`;
+  }
+
+  if (res.exif?.object_name && !objectInput.value) {
+    objectInput.value = res.exif.object_name;
+    resolveObjectFromInput();
+    searchObjects(res.exif.object_name);
   }
 
   formSection.hidden = false;
