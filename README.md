@@ -293,6 +293,154 @@ Take a backup first; always.
 
 ---
 
+## Docker
+
+An OCI image is published on every push to `main` at
+`ghcr.io/kylecaulfield/deepskylog`, built for `linux/amd64` and `linux/arm64`
+by `.github/workflows/docker.yml`. Tags:
+
+- `latest` — tip of `main`.
+- `main` — alias of the above.
+- `<shortsha>` — the exact commit.
+
+All mutable state lives under `/data` inside the container (database + staged
+uploads + finalized uploads + backup archives), so one bind mount is enough.
+
+### Quick start with `docker run`
+
+```bash
+mkdir -p /srv/deepskylog/data
+# The image runs as UID 1000 (the `node` user). Make sure the host dir matches.
+sudo chown -R 1000:1000 /srv/deepskylog/data
+
+docker run -d \
+  --name deepskylog \
+  -p 3000:3000 \
+  -e ADMIN_PASSWORD='change-me' \
+  -v /srv/deepskylog/data:/data \
+  --restart unless-stopped \
+  ghcr.io/kylecaulfield/deepskylog:latest
+```
+
+### docker-compose
+
+```yaml
+services:
+  deepskylog:
+    image: ghcr.io/kylecaulfield/deepskylog:latest
+    container_name: deepskylog
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      ADMIN_PASSWORD: change-me
+      # PORT: 3000        # override the in-container port
+      # BACKUP_KEEP: 14
+    volumes:
+      - ./data:/data
+```
+
+### Hosting on Unraid
+
+The image doesn't ship with a Community Apps template yet, so add it manually
+as a custom container. Copy-paste values into the corresponding fields in
+Unraid's Docker → **Add Container** dialog.
+
+1. **Prepare the appdata directory** (Unraid terminal or SSH as root):
+
+   ```bash
+   mkdir -p /mnt/user/appdata/deepskylog
+   chown -R 1000:1000 /mnt/user/appdata/deepskylog
+   ```
+
+   The container runs as UID 1000, so the appdata dir has to be owned by 1000
+   or readable+writable by it. Unraid's default `nobody:users` (99:100) will
+   produce permission errors on first run; do not skip this step.
+
+2. **Docker → Add Container**. Switch template mode to **Basic** and fill in:
+
+   | Field                | Value                                                      |
+   | -------------------- | ---------------------------------------------------------- |
+   | Name                 | `deepskylog`                                               |
+   | Repository           | `ghcr.io/kylecaulfield/deepskylog:latest`                  |
+   | Network Type         | `Bridge`                                                   |
+   | Icon URL             | (optional) any square PNG                                  |
+   | WebUI                | `http://[IP]:[PORT:3000]/`                                 |
+   | Extra Parameters     | `--init` (reaps zombies cleanly)                           |
+
+3. Click **Add another Path, Port, Variable, Label or Device** and add:
+
+   **Port**
+   - Name: `WebUI`
+   - Container Port: `3000`
+   - Host Port: `3000` (change if it clashes with another container)
+   - Connection Type: `TCP`
+
+   **Path**
+   - Name: `Data`
+   - Container Path: `/data`
+   - Host Path: `/mnt/user/appdata/deepskylog`
+   - Access Mode: `Read/Write`
+
+   **Variable (required)**
+   - Name: `ADMIN_PASSWORD`
+   - Key: `ADMIN_PASSWORD`
+   - Value: a long random password of your choice
+
+   **Variable (optional)**
+   - Name: `BACKUP_KEEP`
+   - Key: `BACKUP_KEEP`
+   - Default: `14`
+
+4. Click **Apply**. Unraid pulls the image, creates the container, and starts
+   it. Watch Docker → deepskylog → **Log** until you see
+   `DeepSkyLog listening on http://localhost:3000`.
+
+5. Open `http://<UNRAID-IP>:3000/` for the public site. Go to
+   `/admin/` (`http://<UNRAID-IP>:3000/admin/`) and log in with any username
+   and the `ADMIN_PASSWORD` you set.
+
+#### Persistence layout on Unraid
+
+Everything lives under `/mnt/user/appdata/deepskylog/`:
+
+```
+deepskylog/
+├── deepskylog.sqlite        # the SQLite database
+├── deepskylog.sqlite-wal    # WAL journal (safe to snapshot)
+├── deepskylog.sqlite-shm
+├── uploads/                 # YYYY/MM/<object-slug>/<image>.jpg
+│   └── …
+├── stage/                   # in-flight admin uploads (auto-swept after 24h)
+└── backups/                 # written by ./backup.sh if you run it
+```
+
+#### Backups
+
+You have two options:
+
+- **Preferred:** back up `/mnt/user/appdata/deepskylog/` with **CA Backup /
+  Restore Appdata** on your preferred schedule. Stop the container first (the
+  CA plugin does this for you).
+- **Inside the container:** `docker exec -u node deepskylog ./backup.sh`
+  produces a tarball at `/data/backups/deepskylog-<UTC>.tar.gz` which you can
+  then sync off-box.
+
+#### Updates
+
+Click Docker → deepskylog → **Force update** (Unraid pulls the newest
+`:latest` tag and recreates the container). Migrations are additive and run on
+every boot.
+
+#### Reverse proxy
+
+Point SWAG / Nginx Proxy Manager at `http://<UNRAID-IP>:3000` and put DeepSkyLog
+behind your existing TLS certificate. Preserve the `Authorization` header
+(default in both proxies) and allow at least 50 MB request bodies so the
+admin upload form works.
+
+---
+
 ## Development
 
 ```bash

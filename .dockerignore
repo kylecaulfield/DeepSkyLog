@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+data
+uploads
+backups
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+README.md
+backlog.md
