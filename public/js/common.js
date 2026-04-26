@@ -67,3 +67,14 @@ export function highlightNav(name) {
 export function qs(name) {
   return new URLSearchParams(location.search).get(name);
 }
+
+// Star-Trek-flavoured stardate, using the popular post-2000 calendar formula:
+//   stardate = (year - 2000) * 1000 + day_of_year / days_in_year * 1000
+// Lands in the TNG-ish 26000s for 2026, climbs about 1000 per Earth year.
+export function stardate(date = new Date()) {
+  const year = date.getUTCFullYear();
+  const yearStart = Date.UTC(year, 0, 1);
+  const yearEnd = Date.UTC(year + 1, 0, 1);
+  const fraction = (date.getTime() - yearStart) / (yearEnd - yearStart);
+  return ((year - 2000) * 1000 + fraction * 1000).toFixed(1);
+}

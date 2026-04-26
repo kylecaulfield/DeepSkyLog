@@ -1,6 +1,13 @@
-import { fetchJson, el, highlightNav } from './common.js';
+import { fetchJson, el, highlightNav, stardate } from './common.js';
 
 highlightNav('home');
+
+const stardateEl = document.getElementById('stardate');
+if (stardateEl) {
+  const tick = () => { stardateEl.textContent = `Stardate ${stardate()}`; };
+  tick();
+  setInterval(tick, 60_000);
+}
 
 function listCard(list) {
   const pct = list.object_count > 0

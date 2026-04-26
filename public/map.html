@@ -11,27 +11,29 @@
           crossorigin="" />
     <style>
       #map {
-        height: calc(100vh - 170px);
+        height: calc(100vh - 200px);
         min-height: 420px;
         width: 100%;
-        border-radius: 14px;
-        border: 1px solid var(--border);
-        background: #020510;
+        border-radius: 0 14px 0 14px;
+        border: 1px solid var(--accent);
+        border-left: 10px solid var(--accent);
+        background: #000;
       }
       .leaflet-popup-content-wrapper {
-        background: #0c1024;
+        background: #0d0d0d;
         color: var(--fg);
-        border: 1px solid var(--border);
-        border-radius: 10px;
+        border: 1px solid var(--accent);
+        border-radius: 0 10px 0 10px;
       }
-      .leaflet-popup-tip { background: #0c1024; }
+      .leaflet-popup-tip { background: var(--accent); }
       .leaflet-popup-content { margin: 0.65rem 0.8rem; font-size: 0.9rem; }
       .pin-popup img {
         display: block; width: 160px; height: 110px;
-        object-fit: cover; border-radius: 6px; margin-bottom: 0.4rem;
+        object-fit: cover; border-radius: 4px; margin-bottom: 0.4rem;
       }
-      .pin-popup small { color: var(--fg-dim); }
-      .pin-popup h4 { margin: 0 0 0.2rem; font-size: 0.95rem; }
+      .pin-popup small { color: var(--fg-dim); display: block; }
+      .pin-popup h4 { margin: 0 0 0.2rem; font-size: 0.95rem; color: var(--peach); }
+      .leaflet-container a.leaflet-popup-close-button { color: var(--accent); }
     </style>
   </head>
   <body>
