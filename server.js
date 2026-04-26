@@ -179,9 +179,18 @@ app.get('/api/lists/:slug', (req, res) => {
 
   const objects = db
     .prepare(
-      `SELECT lo.*, EXISTS(
-         SELECT 1 FROM list_completions lc WHERE lc.list_object_id = lo.id
-       ) AS completed
+      `SELECT lo.*,
+              EXISTS(SELECT 1 FROM list_completions lc
+                       WHERE lc.list_object_id = lo.id) AS completed,
+              (SELECT COUNT(*) FROM observations o
+                 WHERE o.catalog = lo.catalog
+                   AND o.catalog_number = lo.catalog_number) AS attempts_count,
+              (SELECT thumbnail_path FROM observations o
+                 WHERE o.catalog = lo.catalog
+                   AND o.catalog_number = lo.catalog_number
+                   AND o.thumbnail_path IS NOT NULL
+                 ORDER BY featured DESC, COALESCE(observed_at, created_at) DESC
+                 LIMIT 1) AS featured_thumbnail
          FROM list_objects lo
          WHERE lo.list_id = ?
          ORDER BY CAST(lo.catalog_number AS INTEGER)`,
@@ -384,8 +393,8 @@ app.get('/api/objects/:id', (req, res) => {
   const observations = db
     .prepare(
       `SELECT * FROM observations
-         WHERE object_id IN (SELECT id FROM list_objects WHERE catalog = ? AND catalog_number = ?)
-         ORDER BY COALESCE(observed_at, created_at) DESC`,
+         WHERE catalog = ? AND catalog_number = ?
+         ORDER BY featured DESC, COALESCE(observed_at, created_at) DESC`,
     )
     .all(object.catalog, object.catalog_number);
 
@@ -395,7 +404,19 @@ app.get('/api/objects/:id', (req, res) => {
     )
     .all(object.id);
 
-  res.json({ ...object, memberships, observations, completions });
+  const featuredObservation =
+    observations.find((o) => o.featured && o.image_path)
+    || observations.find((o) => o.image_path)
+    || null;
+
+  res.json({
+    ...object,
+    memberships,
+    observations,
+    completions,
+    attempts_count: observations.length,
+    featured_observation_id: featuredObservation?.id ?? null,
+  });
 });
 
 app.get('/api/admin/config', basicAuth, (_req, res) => {
@@ -692,6 +713,19 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       for (const peer of peers) {
         completeList.run(peer.id, observationId, notes);
       }
+
+      // Auto-feature the first attempt for an object so something always
+      // shows up as the cover image.
+      const priorWithImage = db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM observations
+             WHERE catalog = ? AND catalog_number = ?
+               AND id != ? AND image_path IS NOT NULL`,
+        )
+        .get(catalog, catalogNumber, observationId).c;
+      if (priorWithImage === 0 && relImage) {
+        db.prepare('UPDATE observations SET featured = 1 WHERE id = ?').run(observationId);
+      }
     }
 
     return observationId;
@@ -712,6 +746,26 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
     image_path: relImage,
     thumbnail_path: relThumb,
   });
+});
+
+app.post('/api/admin/observations/:id/feature', basicAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const target = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
+  if (!target) return res.status(404).json({ error: 'Observation not found' });
+  if (!target.catalog || !target.catalog_number) {
+    return res.status(400).json({ error: 'Observation has no catalog id to feature against' });
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE observations SET featured = 0
+         WHERE catalog = ? AND catalog_number = ? AND id != ?`,
+    ).run(target.catalog, target.catalog_number, id);
+    db.prepare('UPDATE observations SET featured = 1 WHERE id = ?').run(id);
+  });
+  tx();
+  res.json({ ok: true, id });
 });
 
 app.delete('/api/admin/stage/:id', basicAuth, (req, res) => {

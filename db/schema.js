@@ -102,6 +102,15 @@ const MIGRATIONS = [
       ALTER TABLE observations ADD COLUMN bortle INTEGER;
     `,
   },
+  {
+    id: 5,
+    name: 'add_observation_featured',
+    up: `
+      ALTER TABLE observations ADD COLUMN featured INTEGER NOT NULL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_observations_featured
+        ON observations(catalog, catalog_number, featured);
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

@@ -5,6 +5,8 @@ highlightNav('home');
 const root = document.getElementById('root');
 const id = qs('id');
 
+let isAdmin = false;
+
 function meta(label, value) {
   return [
     el('dt', { class: 'k', text: label }),
@@ -12,8 +14,9 @@ function meta(label, value) {
   ];
 }
 
-function heroPhoto(observations) {
-  const featured = observations.find((o) => o.image_path);
+function heroPhoto(observations, featuredId) {
+  const featured = observations.find((o) => o.id === featuredId && o.image_path)
+    || observations.find((o) => o.image_path);
   if (featured) {
     return el('div', { class: 'object-photo' },
       el('img', {
@@ -26,6 +29,28 @@ function heroPhoto(observations) {
   return el('div', { class: 'object-photo' },
     el('div', { class: 'empty', text: 'No photo uploaded for this object yet.' }),
   );
+}
+
+async function checkAdmin() {
+  try {
+    const res = await fetch('/api/admin/config');
+    isAdmin = res.ok;
+  } catch {
+    isAdmin = false;
+  }
+}
+
+async function makeFeatured(observationId, button) {
+  if (!confirm('Make this the featured image for this object?')) return;
+  button.disabled = true;
+  try {
+    const res = await fetch(`/api/admin/observations/${observationId}/feature`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    render();
+  } catch (err) {
+    button.disabled = false;
+    alert(`Failed to feature: ${err.message}`);
+  }
 }
 
 async function render() {
@@ -49,8 +74,22 @@ async function render() {
 
   root.appendChild(el('h1', { class: 'page-title',
     text: `${data.catalog}${data.catalog_number}${data.name ? ' — ' + data.name : ''}` }));
-  root.appendChild(el('p', { class: 'page-subtitle',
-    text: [typeLabel(data.object_type), data.constellation].filter(Boolean).join(' · ') }));
+
+  const subtitleBits = [typeLabel(data.object_type), data.constellation].filter(Boolean);
+  if (data.attempts_count > 0) {
+    subtitleBits.push(`${data.attempts_count} attempt${data.attempts_count === 1 ? '' : 's'}`);
+  }
+  root.appendChild(el('p', { class: 'page-subtitle', text: subtitleBits.join(' · ') }));
+
+  // Action row: log another attempt at this object.
+  const actions = el('div', { class: 'object-actions' },
+    el('a', {
+      class: 'button-link',
+      href: `/admin/upload.html?object_id=${encodeURIComponent(data.id)}`,
+      text: data.attempts_count > 0 ? '+ Log another attempt' : '+ Log first attempt',
+    }),
+  );
+  root.appendChild(actions);
 
   const metaList = el('dl', { class: 'meta-list' },
     ...meta('Catalog', `${data.catalog}${data.catalog_number}`),
@@ -59,7 +98,7 @@ async function render() {
     ...meta('Right ascension', formatRA(data.ra_hours)),
     ...meta('Declination', formatDec(data.dec_degrees)),
     ...meta('Magnitude', data.magnitude != null ? data.magnitude.toFixed(1) : '—'),
-    ...meta('Observations', String(data.observations.length)),
+    ...meta('Attempts', String(data.attempts_count)),
   );
 
   const memberships = el('div', { class: 'chip-row' },
@@ -68,7 +107,7 @@ async function render() {
   );
 
   root.appendChild(el('section', { class: 'object-hero' },
-    heroPhoto(data.observations),
+    heroPhoto(data.observations, data.featured_observation_id),
     el('div', {},
       metaList,
       el('h3', { style: 'margin-top:1.25rem;', text: 'List memberships' }),
@@ -77,7 +116,7 @@ async function render() {
   ));
 
   const obsSection = el('section', { class: 'section' },
-    el('h2', { text: 'Observations' }));
+    el('h2', { text: data.attempts_count > 1 ? 'Attempts' : 'Observations' }));
 
   if (!data.observations.length) {
     obsSection.appendChild(el('div', { class: 'empty-state',
@@ -85,6 +124,7 @@ async function render() {
   } else {
     const grid = el('div', { class: 'gallery' });
     for (const o of data.observations) {
+      const isFeatured = o.id === data.featured_observation_id;
       const thumb = o.thumbnail_path
         ? el('span', { class: 'thumb',
             style: `background-image: url("/uploads/${o.thumbnail_path}")` })
@@ -99,14 +139,31 @@ async function render() {
           : null;
         conditionBits.push(illum != null ? `Moon: ${o.moon_phase_name} (${illum}%)` : `Moon: ${o.moon_phase_name}`);
       }
+      const headingChildren = [
+        document.createTextNode(o.title || (o.observed_at || o.created_at || 'Observation')),
+      ];
+      if (isFeatured) {
+        headingChildren.push(' ');
+        headingChildren.push(el('span', { class: 'badge badge-success', title: 'Featured', text: 'Featured' }));
+      }
       const captionChildren = [
-        el('h4', { text: o.title || (o.observed_at || o.created_at || 'Observation') }),
+        el('h4', {}, ...headingChildren),
         el('small', { text: [o.telescope, o.camera].filter(Boolean).join(' · ') || '—' }),
       ];
       if (conditionBits.length) {
         captionChildren.push(el('small', { class: 'dim', text: conditionBits.join(' · ') }));
       }
-      grid.appendChild(el('div', { class: 'gallery-item' },
+      if (isAdmin && !isFeatured && o.image_path) {
+        const featureBtn = el('button', {
+          type: 'button',
+          class: 'feature-btn',
+          title: 'Make this the featured image',
+          text: '★ Make featured',
+        });
+        featureBtn.addEventListener('click', () => makeFeatured(o.id, featureBtn));
+        captionChildren.push(featureBtn);
+      }
+      grid.appendChild(el('div', { class: 'gallery-item' + (isFeatured ? ' is-featured' : '') },
         thumb,
         el('div', { class: 'caption' }, ...captionChildren),
       ));
@@ -116,4 +173,7 @@ async function render() {
   root.appendChild(obsSection);
 }
 
-render();
+(async () => {
+  await checkAdmin();
+  await render();
+})();

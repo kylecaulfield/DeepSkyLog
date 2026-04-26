@@ -345,5 +345,34 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
+async function preselectFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const oid = params.get('object_id');
+  if (!oid) return;
+  try {
+    const res = await fetch(`/api/objects/${encodeURIComponent(oid)}`);
+    if (!res.ok) return;
+    const obj = await res.json();
+    const label = `${obj.catalog}${obj.catalog_number}${obj.name ? ' — ' + obj.name : ''}`;
+    objectInput.value = label;
+    objectIdField.value = obj.id;
+    catalogInput.value = obj.catalog;
+    catalogNumberInput.value = obj.catalog_number;
+    objectHint.textContent = `${obj.list_name} · ${obj.object_type || ''} ${obj.constellation ? '· ' + obj.constellation : ''}`;
+    // Cache it so later autocomplete edits round-trip cleanly.
+    objectCache.set(label.toLowerCase(), {
+      id: obj.id,
+      catalog: obj.catalog,
+      catalog_number: obj.catalog_number,
+      name: obj.name,
+      object_type: obj.object_type,
+      constellation: obj.constellation,
+      list_name: obj.list_name,
+      list_slug: obj.list_slug,
+    });
+  } catch {}
+}
+
 loadTelescopes();
 searchObjects('');
+preselectFromUrl();

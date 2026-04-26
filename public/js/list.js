@@ -55,15 +55,27 @@ function render() {
     `${filtered.length} objects · ${observed} observed`;
 
   if (!filtered.length) {
-    tbody.appendChild(el('tr', {}, el('td', { colspan: '8' },
+    tbody.appendChild(el('tr', {}, el('td', { colspan: '9' },
       el('div', { class: 'empty-state', text: 'No objects match the current filters.' }))));
     return;
   }
 
   for (const o of filtered) {
+    const thumb = o.featured_thumbnail
+      ? el('span', {
+          class: 'thumb-chip',
+          style: `background-image: url("/uploads/${o.featured_thumbnail}")`,
+        })
+      : el('span', { class: o.completed ? 'thumb-chip empty check' : 'thumb-chip empty', text: o.completed ? '✓' : '·' });
+
+    const attemptsCell = o.attempts_count > 0
+      ? el('td', { text: String(o.attempts_count) })
+      : el('td', { class: 'dim', text: '—' });
+
     tbody.appendChild(el(
       'tr',
       { class: o.completed ? 'observed' : '' },
+      el('td', {}, thumb),
       el('td', {}, el('a', { href: `/object.html?id=${o.id}`, text: `${o.catalog}${o.catalog_number}` })),
       el('td', { text: o.name || '—' }),
       el('td', { text: typeLabel(o.object_type) }),
@@ -71,7 +83,7 @@ function render() {
       el('td', { text: formatRA(o.ra_hours) }),
       el('td', { text: formatDec(o.dec_degrees) }),
       el('td', { text: o.magnitude != null ? o.magnitude.toFixed(1) : '—' }),
-      el('td', { class: o.completed ? 'check' : 'check-empty', text: o.completed ? '✓' : '·' }),
+      attemptsCell,
     ));
   }
 }
