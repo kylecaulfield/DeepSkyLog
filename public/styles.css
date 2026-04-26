@@ -425,6 +425,25 @@ button:hover { background: rgba(122, 167, 255, 0.2); }
 .feature-btn:hover { background: rgba(255, 183, 116, 0.22); }
 .feature-btn:disabled { opacity: 0.6; cursor: wait; }
 
+.delete-btn {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.55rem;
+  background: rgba(255, 122, 147, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(255, 122, 147, 0.35);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.delete-btn:hover { background: rgba(255, 122, 147, 0.22); }
+.delete-btn:disabled { opacity: 0.6; cursor: wait; }
+
+.tile-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
 .thumb-chip {
   display: inline-block;
   width: 48px;

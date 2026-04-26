@@ -798,6 +798,64 @@ app.post('/api/admin/observations/:id/feature', basicAuth, (req, res) => {
   res.json({ ok: true, id });
 });
 
+app.delete('/api/admin/observations/:id', basicAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const row = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ error: 'Observation not found' });
+
+  // Best-effort file cleanup, scoped to UPLOAD_DIR.
+  const tryUnlink = (rel) => {
+    if (!rel) return;
+    const full = path.resolve(UPLOAD_DIR, rel);
+    if (!full.startsWith(UPLOAD_DIR + path.sep)) return;
+    try { fs.unlinkSync(full); } catch {}
+  };
+  tryUnlink(row.image_path);
+  tryUnlink(row.thumbnail_path);
+
+  // Walk back up the YYYY/MM/<slug> tree, removing empty directories.
+  if (row.image_path) {
+    let dir = path.resolve(UPLOAD_DIR, path.dirname(row.image_path));
+    while (
+      dir.startsWith(UPLOAD_DIR + path.sep) &&
+      dir !== UPLOAD_DIR
+    ) {
+      try {
+        if (fs.readdirSync(dir).length > 0) break;
+        fs.rmdirSync(dir);
+      } catch {
+        break;
+      }
+      dir = path.dirname(dir);
+    }
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM list_completions WHERE observation_id = ?').run(id);
+    db.prepare('DELETE FROM observations WHERE id = ?').run(id);
+
+    // If the deleted row was featured, promote the most recent remaining
+    // attempt with an image so the object still has a cover.
+    if (row.featured && row.catalog && row.catalog_number) {
+      const next = db
+        .prepare(
+          `SELECT id FROM observations
+             WHERE catalog = ? AND catalog_number = ? AND image_path IS NOT NULL
+             ORDER BY COALESCE(observed_at, created_at) DESC
+             LIMIT 1`,
+        )
+        .get(row.catalog, row.catalog_number);
+      if (next) {
+        db.prepare('UPDATE observations SET featured = 1 WHERE id = ?').run(next.id);
+      }
+    }
+  });
+  tx();
+
+  res.status(204).end();
+});
+
 app.delete('/api/admin/stage/:id', basicAuth, (req, res) => {
   const safe = path.basename(req.params.id);
   const full = path.join(STAGE_DIR, safe);

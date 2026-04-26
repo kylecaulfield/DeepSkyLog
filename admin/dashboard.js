@@ -81,7 +81,7 @@ function renderRecent(rows) {
     const stars = r.rating ? '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating) : '—';
 
     const idCell = r.object_list_id
-      ? el('a', { href: `/object.html?id=${r.object_list_id}`, text: objectId })
+      ? el('a', { href: `/admin/object.html?id=${r.object_list_id}`, text: objectId })
       : document.createTextNode(objectId);
 
     tbody.appendChild(el('tr', {},

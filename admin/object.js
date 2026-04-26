@@ -1,6 +1,4 @@
-import { fetchJson, el, formatRA, formatDec, typeLabel, highlightNav, qs } from './common.js';
-
-highlightNav('home');
+import { fetchJson, el, formatRA, formatDec, typeLabel, qs } from '/js/common.js';
 
 const root = document.getElementById('root');
 const id = qs('id');
@@ -19,7 +17,7 @@ function heroPhoto(observations, featuredId) {
     return el('div', { class: 'object-photo' },
       el('img', {
         src: `/uploads/${featured.image_path}`,
-        alt: `Observation of object ${id}`,
+        alt: `Observation ${featured.id}`,
         loading: 'lazy',
       }),
     );
@@ -27,6 +25,28 @@ function heroPhoto(observations, featuredId) {
   return el('div', { class: 'object-photo' },
     el('div', { class: 'empty', text: 'No photo uploaded for this object yet.' }),
   );
+}
+
+async function makeFeatured(observationId) {
+  if (!confirm('Make this the featured image for this object?')) return;
+  const res = await fetch(`/api/admin/observations/${observationId}/feature`, { method: 'POST' });
+  if (!res.ok) {
+    alert(`Feature failed: HTTP ${res.status}`);
+    return;
+  }
+  render();
+}
+
+async function deleteObservation(observationId) {
+  if (!confirm(
+    'Delete this observation? The image and thumbnail files will be removed and the catalog completion will be unticked if this was the only attempt.',
+  )) return;
+  const res = await fetch(`/api/admin/observations/${observationId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    alert(`Delete failed: HTTP ${res.status}`);
+    return;
+  }
+  render();
 }
 
 async function render() {
@@ -41,12 +61,11 @@ async function render() {
     root.innerHTML = '<p class="muted">Object not found.</p>';
     return;
   }
-  document.title = `DeepSkyLog — ${data.catalog}${data.catalog_number}`;
+  document.title = `Admin — ${data.catalog}${data.catalog_number}`;
 
   root.innerHTML = '';
   root.appendChild(el('p', { class: 'dim' },
-    el('a', { href: `/list.html?slug=${encodeURIComponent(data.list_slug)}`,
-              text: `← ${data.list_name}` })));
+    el('a', { href: '/admin/observations.html', text: '← Observations' })));
 
   root.appendChild(el('h1', { class: 'page-title',
     text: `${data.catalog}${data.catalog_number}${data.name ? ' — ' + data.name : ''}` }));
@@ -56,6 +75,21 @@ async function render() {
     subtitleBits.push(`${data.attempts_count} attempt${data.attempts_count === 1 ? '' : 's'}`);
   }
   root.appendChild(el('p', { class: 'page-subtitle', text: subtitleBits.join(' · ') }));
+
+  root.appendChild(el('div', { class: 'object-actions' },
+    el('a', {
+      class: 'button-link',
+      href: `/admin/upload.html?object_id=${encodeURIComponent(data.id)}`,
+      text: data.attempts_count > 0 ? '+ Log another attempt' : '+ Log first attempt',
+    }),
+    el('a', {
+      class: 'button-link ghost-link',
+      href: `/object.html?id=${encodeURIComponent(data.id)}`,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      text: 'Open public view ↗',
+    }),
+  ));
 
   const metaList = el('dl', { class: 'meta-list' },
     ...meta('Catalog', `${data.catalog}${data.catalog_number}`),
@@ -69,7 +103,8 @@ async function render() {
 
   const memberships = el('div', { class: 'chip-row' },
     ...data.memberships.map((m) =>
-      el('a', { class: 'chip', href: `/list.html?slug=${encodeURIComponent(m.slug)}`, text: m.list_name })),
+      el('a', { class: 'chip', href: `/list.html?slug=${encodeURIComponent(m.slug)}`,
+                target: '_blank', rel: 'noopener noreferrer', text: m.list_name })),
   );
 
   root.appendChild(el('section', { class: 'object-hero' },
@@ -124,6 +159,17 @@ async function render() {
         headingChildren.push(' ');
         headingChildren.push(el('span', { class: 'badge badge-success', title: 'Featured', text: 'Featured' }));
       }
+
+      const buttonRow = el('div', { class: 'tile-actions' });
+      if (!isFeatured && o.image_path) {
+        const featureBtn = el('button', { type: 'button', class: 'feature-btn', text: '★ Feature' });
+        featureBtn.addEventListener('click', () => makeFeatured(o.id));
+        buttonRow.appendChild(featureBtn);
+      }
+      const deleteBtn = el('button', { type: 'button', class: 'delete-btn', text: 'Delete' });
+      deleteBtn.addEventListener('click', () => deleteObservation(o.id));
+      buttonRow.appendChild(deleteBtn);
+
       const captionChildren = [
         el('h4', {}, ...headingChildren),
         el('small', { text: [o.telescope, o.camera].filter(Boolean).join(' · ') || '—' }),
@@ -134,6 +180,8 @@ async function render() {
       if (conditionBits.length) {
         captionChildren.push(el('small', { class: 'dim', text: conditionBits.join(' · ') }));
       }
+      captionChildren.push(buttonRow);
+
       grid.appendChild(el('div', { class: 'gallery-item' + (isFeatured ? ' is-featured' : '') },
         thumb,
         el('div', { class: 'caption' }, ...captionChildren),

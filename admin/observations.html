@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; Admin observations</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/admin/admin.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog · Admin</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/">Public site</a>
+        <a href="/admin/">Dashboard</a>
+        <a href="/admin/observations.html" class="active">Observations</a>
+        <a href="/admin/upload.html">Upload</a>
+      </nav>
+    </header>
+    <main>
+      <div class="dash-header">
+        <div>
+          <h1 class="page-title">Observations</h1>
+          <p class="page-subtitle">Manage every photo you've logged.</p>
+        </div>
+        <div class="dash-actions">
+          <a class="button-link" href="/admin/upload.html">+ New observation</a>
+          <a class="button-link ghost-link" href="/api/observations.csv">Download CSV</a>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label style="flex: 1;">
+          Search
+          <input id="filter-query" type="search" placeholder="Object, title, telescope, location…" style="width: 100%;" />
+        </label>
+        <label>
+          Telescope
+          <select id="filter-telescope"><option value="">All</option></select>
+        </label>
+        <span id="count" class="dim" style="margin-left:auto;"></span>
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Object</th>
+              <th>Title</th>
+              <th>Telescope</th>
+              <th>Captured</th>
+              <th>Capture</th>
+              <th>Rating</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </main>
+    <script type="module" src="/admin/observations.js"></script>
+  </body>
+</html>
