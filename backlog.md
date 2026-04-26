@@ -23,7 +23,6 @@
 6. **Session planner** — pick a date and location, get a list of your
    unobserved targets sorted by altitude window for that night. Even a basic
    version is genuinely useful.
-
 ## Longer term
 
 7. **Astrometry.net integration** — submit an image, get back the exact

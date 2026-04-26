@@ -10,6 +10,7 @@ const exifr = require('exifr');
 
 const { getDb, DB_PATH } = require('./db');
 const { altAz, moonPhase } = require('./lib/astro');
+const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/fits');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -30,18 +31,21 @@ app.use(express.urlencoded({ extended: true }));
 
 const TELESCOPE_OPTIONS = ['Seestar S50', 'Seestar S30 Pro', 'Seestar S30', '12" Dobsonian'];
 
-function matchTelescope(exif) {
-  if (!exif) return null;
-  const parts = [
-    exif.Make, exif.Model, exif.CameraModel, exif.CameraModelName,
-    exif.LensMake, exif.LensModel, exif.UniqueCameraModel, exif.Software,
-  ].filter(Boolean).map(String);
-  const hay = parts.join(' ').toLowerCase();
-  if (!hay) return null;
+function matchTelescope(device) {
+  if (!device) return null;
+  const hay = String(device).toLowerCase();
   if (/seestar\s*s\s*30\s*pro/i.test(hay)) return 'Seestar S30 Pro';
   if (/seestar\s*s\s*50/i.test(hay)) return 'Seestar S50';
   if (/seestar\s*s\s*30/i.test(hay)) return 'Seestar S30';
   return null;
+}
+
+function deviceFromExif(exif) {
+  if (!exif) return null;
+  return [
+    exif.Make, exif.Model, exif.CameraModel, exif.CameraModelName,
+    exif.LensMake, exif.LensModel, exif.UniqueCameraModel, exif.Software,
+  ].filter(Boolean).map(String).join(' ') || null;
 }
 
 function slugify(value) {
@@ -145,7 +149,8 @@ const stageUpload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (/^image\//i.test(file.mimetype)) return cb(null, true);
-    cb(new Error('Only image uploads are supported'));
+    if (isFitsPath(file.originalname || '')) return cb(null, true);
+    cb(new Error('Only image or FITS uploads are supported'));
   },
 });
 
@@ -515,48 +520,94 @@ app.get('/api/admin/objects', basicAuth, (req, res) => {
 app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
 
-  let exif = null;
-  try {
-    exif = await exifr.parse(req.file.path, { gps: true, tiff: true, ifd0: true, exif: true });
-  } catch {
-    exif = null;
+  const isFits = isFitsPath(req.file.filename);
+  let capturedIso = null;
+  let device = null;
+  let exposureSeconds = null;
+  let latitude = null;
+  let longitude = null;
+  let iso = null;
+  let focalLength = null;
+  let aperture = null;
+  let objectName = null;
+
+  if (isFits) {
+    try {
+      const header = readFitsHeader(req.file.path);
+      const fx = fitsExif(header);
+      if (fx) {
+        capturedIso = fx.capturedAt;
+        device = fx.device;
+        exposureSeconds = fx.exposureSeconds;
+        objectName = fx.object;
+        latitude = fx.latitude;
+        longitude = fx.longitude;
+        focalLength = fx.focalLengthMm;
+        aperture = fx.aperture;
+      }
+    } catch (err) {
+      console.warn('FITS header parse failed:', err.message);
+    }
+  } else {
+    let exif = null;
+    try {
+      exif = await exifr.parse(req.file.path, { gps: true, tiff: true, ifd0: true, exif: true });
+    } catch {
+      exif = null;
+    }
+    const captured = exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate || null;
+    capturedIso = captured instanceof Date ? captured.toISOString() : null;
+    device = deviceFromExif(exif);
+    latitude = typeof exif?.latitude === 'number' ? exif.latitude : null;
+    longitude = typeof exif?.longitude === 'number' ? exif.longitude : null;
+    iso = exif?.ISO ?? exif?.ISOSpeedRatings ?? null;
+    exposureSeconds = exif?.ExposureTime ?? null;
+    focalLength = exif?.FocalLength ?? null;
+    aperture = exif?.FNumber ?? exif?.ApertureValue ?? null;
   }
-
-  const captured =
-    exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate || null;
-  const capturedIso = captured instanceof Date ? captured.toISOString() : null;
-
-  const telescopeGuess = matchTelescope(exif);
-  const device = [exif?.Make, exif?.Model].filter(Boolean).join(' ') || null;
 
   res.status(201).json({
     stage_id: req.file.filename,
     original_name: req.file.originalname,
     size: req.file.size,
     mime: req.file.mimetype,
+    kind: isFits ? 'fits' : 'image',
     preview_url: `/api/admin/stage/${encodeURIComponent(req.file.filename)}/preview`,
     exif: {
       captured_at: capturedIso,
       device,
-      latitude: typeof exif?.latitude === 'number' ? exif.latitude : null,
-      longitude: typeof exif?.longitude === 'number' ? exif.longitude : null,
-      iso: exif?.ISO ?? exif?.ISOSpeedRatings ?? null,
-      exposure_seconds: exif?.ExposureTime ?? null,
-      focal_length_mm: exif?.FocalLength ?? null,
-      aperture: exif?.FNumber ?? exif?.ApertureValue ?? null,
+      latitude,
+      longitude,
+      iso,
+      exposure_seconds: exposureSeconds,
+      focal_length_mm: focalLength,
+      aperture,
+      object_name: objectName,
     },
-    telescope_match: telescopeGuess,
+    telescope_match: matchTelescope(device),
     telescope_options: TELESCOPE_OPTIONS,
   });
 });
 
-app.get('/api/admin/stage/:id/preview', basicAuth, (req, res) => {
+app.get('/api/admin/stage/:id/preview', basicAuth, async (req, res) => {
   const safe = path.basename(req.params.id);
   const full = path.join(STAGE_DIR, safe);
   if (!full.startsWith(STAGE_DIR + path.sep) || !fs.existsSync(full)) {
     return res.status(404).end();
   }
-  res.sendFile(full);
+  if (!isFitsPath(safe)) return res.sendFile(full);
+
+  const cached = path.join(STAGE_DIR, `${safe}.preview.jpg`);
+  try {
+    if (!fs.existsSync(cached)) {
+      const buf = await renderFitsJpeg(full, sharp, { maxWidth: 1200 });
+      fs.writeFileSync(cached, buf);
+    }
+    res.type('image/jpeg').sendFile(cached);
+  } catch (err) {
+    console.error('FITS preview render failed:', err.message);
+    res.status(500).json({ error: 'Failed to render FITS preview' });
+  }
 });
 
 app.post('/api/admin/observations', basicAuth, async (req, res) => {
@@ -635,53 +686,70 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
 
   const ext = path.extname(stageId).toLowerCase() || '.jpg';
   const baseName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-  const finalName = `${baseName}${ext}`;
-  const finalPath = path.join(destDir, finalName);
+  const isFits = isFitsPath(stageId);
+  const rawPath = path.join(destDir, `${baseName}${ext}`);
+  const heroPath = isFits ? path.join(destDir, `${baseName}.jpg`) : rawPath;
   const thumbPath = path.join(destDir, `thumb-${baseName}.jpg`);
 
-  let finalMoved = false;
-  let thumbWritten = false;
+  const written = [];
   let exif = null;
+  let fitsHeader = null;
   let relImage;
   let relThumb;
 
   try {
     try {
-      fs.renameSync(stagePath, finalPath);
+      fs.renameSync(stagePath, rawPath);
     } catch (err) {
       if (err.code === 'EXDEV') {
-        fs.copyFileSync(stagePath, finalPath);
+        fs.copyFileSync(stagePath, rawPath);
         fs.unlinkSync(stagePath);
       } else {
         throw err;
       }
     }
-    finalMoved = true;
+    written.push(rawPath);
 
-    await sharp(finalPath)
-      .rotate()
-      .resize({ width: 640, withoutEnlargement: true })
-      .jpeg({ quality: 82 })
-      .toFile(thumbPath);
-    thumbWritten = true;
-
-    try {
-      exif = await exifr.parse(finalPath, { gps: true });
-    } catch {
-      exif = null;
+    if (isFits) {
+      try { fitsHeader = readFitsHeader(rawPath); } catch {}
+      const heroBuf = await renderFitsJpeg(rawPath, sharp, { maxWidth: 1600, quality: 88 });
+      fs.writeFileSync(heroPath, heroBuf);
+      written.push(heroPath);
+      await sharp(heroBuf)
+        .resize({ width: 640, withoutEnlargement: true })
+        .jpeg({ quality: 82 })
+        .toFile(thumbPath);
+    } else {
+      await sharp(rawPath)
+        .rotate()
+        .resize({ width: 640, withoutEnlargement: true })
+        .jpeg({ quality: 82 })
+        .toFile(thumbPath);
+      try {
+        exif = await exifr.parse(rawPath, { gps: true });
+      } catch {
+        exif = null;
+      }
     }
+    written.push(thumbPath);
 
-    relImage = path.relative(UPLOAD_DIR, finalPath).split(path.sep).join('/');
+    relImage = path.relative(UPLOAD_DIR, heroPath).split(path.sep).join('/');
     relThumb = path.relative(UPLOAD_DIR, thumbPath).split(path.sep).join('/');
   } catch (err) {
-    if (thumbWritten) { try { fs.unlinkSync(thumbPath); } catch {} }
-    if (finalMoved) { try { fs.unlinkSync(finalPath); } catch {} }
+    for (const p of written) { try { fs.unlinkSync(p); } catch {} }
     console.error('Finalize failed:', err);
     return res.status(500).json({ error: 'Failed to process upload' });
   }
 
-  const latitude = typeof exif?.latitude === 'number' ? exif.latitude : null;
-  const longitude = typeof exif?.longitude === 'number' ? exif.longitude : null;
+  const fx = fitsHeader ? fitsExif(fitsHeader) : null;
+  const latitude = fx?.latitude ?? (typeof exif?.latitude === 'number' ? exif.latitude : null);
+  const longitude = fx?.longitude ?? (typeof exif?.longitude === 'number' ? exif.longitude : null);
+
+  const cameraField = fx?.device || (exif?.Model ? String(exif.Model) : null);
+  const exposureField = exif?.ExposureTime ?? fx?.exposureSeconds ?? null;
+  const focalLengthField = exif?.FocalLength ?? fx?.focalLengthMm ?? null;
+  const apertureField = exif?.FNumber ?? exif?.ApertureValue ?? fx?.aperture ?? null;
+  const metadataJson = fitsHeader ? JSON.stringify({ fits: fitsHeader }) : (exif ? JSON.stringify(exif) : null);
 
   const insert = db.prepare(
     `INSERT INTO observations
@@ -712,14 +780,15 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       observed_at: observedAt,
       location,
       telescope,
-      camera: exif?.Model ? String(exif.Model) : null,
-      exposure_seconds: formExposure ?? exif?.ExposureTime ?? null,
+      camera: cameraField,
+      // Explicit form values override EXIF/FITS-derived defaults.
+      exposure_seconds: formExposure ?? exposureField,
       iso: formIso ?? exif?.ISO ?? exif?.ISOSpeedRatings ?? null,
-      focal_length_mm: exif?.FocalLength ?? null,
-      aperture: exif?.FNumber ?? exif?.ApertureValue ?? null,
+      focal_length_mm: focalLengthField,
+      aperture: apertureField,
       image_path: relImage,
       thumbnail_path: relThumb,
-      exif_json: exif ? JSON.stringify(exif) : null,
+      exif_json: metadataJson,
       rating,
       latitude,
       longitude,

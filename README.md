@@ -17,6 +17,10 @@ list, and publish a public gallery and map of where you image from.
   autocomplete over the seeded catalogs, 1–5 star ratings.
 - Automatic telescope detection for Seestar S50 / S30 Pro / S30; 12″ Dobsonian
   and anything else is picked manually.
+- FITS uploads (`.fit`/`.fits`) are accepted alongside JPEG/PNG. The ASCII
+  header drives metadata (`INSTRUME`, `OBJECT`, `DATE-OBS`, `EXPTIME`,
+  `FOCALLEN`, `APERTURE`, `SITELAT`/`SITELONG`), a JPEG preview is rendered
+  for gallery display, and the original `.fit` is preserved alongside.
 - CSV export of every observation.
 - `backup.sh` snapshots the SQLite database + uploads to a timestamped tarball.
 

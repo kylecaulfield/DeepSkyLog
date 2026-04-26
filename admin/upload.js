@@ -181,6 +181,10 @@ function isImageFile(file) {
   return file.type?.startsWith('image/');
 }
 
+function isFitsFile(file) {
+  return /\.fits?$/i.test(file.name || '');
+}
+
 async function applySidecar(file) {
   let text;
   try {
@@ -219,13 +223,16 @@ function handleFiles(files) {
   const list = Array.from(files);
   const json = list.find(isJsonFile);
   const image = list.find(isImageFile);
-  if (!image && !json) {
-    setStatus('Drop an image, a Seestar .json, or both.', 'error');
+  const fits = list.find(isFitsFile);
+  if (!image && !json && !fits) {
+    setStatus('Drop an image, a FITS file, a Seestar .json, or any combination.', 'error');
     return;
   }
-  if (image) {
-    previewImg.src = URL.createObjectURL(image);
-    uploadStaged(image);
+  const primary = image || fits;
+  if (primary) {
+    if (image) previewImg.src = URL.createObjectURL(image);
+    else previewImg.removeAttribute('src');
+    uploadStaged(primary);
   }
   if (json) applySidecar(json);
 }
@@ -274,14 +281,21 @@ function onStaged(res) {
     : toLocalDatetimeValue(null);
   updateMoonPreview();
 
+  const metaSource = res.kind === 'fits' ? 'FITS header' : 'EXIF';
   if (res.telescope_match) {
     telescopeSelect.value = res.telescope_match;
-    telescopeHint.textContent = `Auto-detected from EXIF: ${res.exif.device || 'device'}`;
+    telescopeHint.textContent = `Auto-detected from ${metaSource}: ${res.exif.device || 'device'}`;
   } else {
     telescopeSelect.value = '';
     telescopeHint.textContent = res.exif?.device
       ? `No automatic match for device “${res.exif.device}”. Please pick one.`
-      : 'No device info in EXIF. Please pick a telescope.';
+      : `No device info in ${metaSource}. Please pick a telescope.`;
+  }
+
+  if (res.exif?.object_name && !objectInput.value) {
+    objectInput.value = res.exif.object_name;
+    resolveObjectFromInput();
+    searchObjects(res.exif.object_name);
   }
 
   formSection.hidden = false;
