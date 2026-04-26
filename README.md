@@ -173,6 +173,39 @@ UPLOAD_DIR=./uploads
 `ADMIN_PASSWORD` is required for any write operation; without it the entire
 `/admin` section refuses to serve.
 
+#### How the admin password is used
+
+There is no user database, session table, or token store. The trust model is:
+
+- **Where the secret lives.** `ADMIN_PASSWORD` is read from `.env` (or the
+  process environment) at startup and held only in process memory. Nothing is
+  ever written to disk; the file you point `EnvironmentFile=` at on systemd or
+  the Docker / Unraid template variable is the single source of truth.
+- **How requests authenticate.** Every request to `/admin/*` and
+  `/api/admin/*` re-authenticates by comparing the supplied HTTP Basic Auth
+  password to `ADMIN_PASSWORD` with `crypto.timingSafeEqual`. The username is
+  ignored; only the password is checked. There is no JWT, no cookie, and no
+  server-side "logged in" state.
+- **Browser-side caching.** After the first 401 challenge the browser caches
+  your credentials per-origin and resends them automatically — that's why you
+  only get prompted once. To "log out" you close the browser (or clear site
+  data for the host).
+- **Rate limiting.** Failed attempts are tracked per client IP in a 15-minute
+  sliding window, capped at 20 failures, after which the middleware returns
+  HTTP 429 with `Retry-After`. The window is held only in process memory and
+  resets on restart.
+- **Rotating the password.** Edit `.env` (or the container variable), then
+  restart the process. Browsers that have your old password cached will see a
+  fresh 401 and re-prompt.
+- **Picking a value.** Any non-empty string works, but since it gates the
+  entire write surface, pick something long and random — for example
+  `openssl rand -base64 24`. Paste it from a password manager rather than
+  typing it.
+
+If `ADMIN_PASSWORD` is unset, the server logs a warning at startup and the
+`/admin` UI plus every `/api/admin/*` endpoint return HTTP 503 — the public
+read-only surface still works.
+
 ### 3. Run it
 
 ```bash
