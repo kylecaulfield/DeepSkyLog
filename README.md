@@ -350,9 +350,11 @@ mkdir -p /srv/deepskylog/data
 # The image runs as UID 1000 (the `node` user). Make sure the host dir matches.
 sudo chown -R 1000:1000 /srv/deepskylog/data
 
+# HOST_PORT defaults to 3000; pick anything free on the host.
+HOST_PORT=${HOST_PORT:-3000}
 docker run -d \
   --name deepskylog \
-  -p 3000:3000 \
+  -p "${HOST_PORT}:3000" \
   -e ADMIN_PASSWORD='change-me' \
   -v /srv/deepskylog/data:/data \
   --restart unless-stopped \
@@ -368,14 +370,34 @@ services:
     container_name: deepskylog
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Map ${HOST_PORT:-3000} on the host to 3000 inside the container.
+      - "${HOST_PORT:-3000}:3000"
     environment:
-      ADMIN_PASSWORD: change-me
-      # PORT: 3000        # override the in-container port
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      # PORT: 3000        # in-container listen port (rarely worth changing)
       # BACKUP_KEEP: 14
     volumes:
       - ./data:/data
 ```
+
+Drop a sibling `.env` next to the compose file with `HOST_PORT=` and
+`ADMIN_PASSWORD=` lines and `docker compose` will pick them up automatically.
+
+#### Changing the port
+
+There are two distinct knobs:
+
+- **Host port** — the side that's reachable on your network. Change it by
+  editing the `-p` mapping (`-p 8080:3000` or `HOST_PORT=8080`). The
+  in-container port stays 3000 and you don't need to rebuild.
+- **In-container port** — what `node server.js` listens on. Override with
+  `-e PORT=8080` (and update the `-p` mapping to `-p HOST:8080`). The
+  `EXPOSE` directive is rebaked at build time from the `PORT` build-arg, so
+  if you want the image's metadata to advertise a different port, build
+  locally with `docker build --build-arg PORT=8080 -t deepskylog .`.
+
+The healthcheck reads `process.env.PORT`, so any runtime override is picked up
+automatically.
 
 ### Hosting on Unraid
 
@@ -409,8 +431,9 @@ Unraid's Docker → **Add Container** dialog.
 
    **Port**
    - Name: `WebUI`
-   - Container Port: `3000`
-   - Host Port: `3000` (change if it clashes with another container)
+   - Container Port: `3000` (leave at the image default)
+   - Host Port: `3000` — change this if 3000 is already taken on Unraid;
+     the WebUI URL above re-reads `[PORT:3000]` so it'll follow your choice.
    - Connection Type: `TCP`
 
    **Path**

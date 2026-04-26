@@ -16,9 +16,14 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
+# Build-time port default. Override with `--build-arg PORT=8080` if you need a
+# different EXPOSE in the image metadata; for runtime overrides just pass
+# `-e PORT=8080` on `docker run` (or `environment: { PORT: 8080 }` in compose).
+ARG PORT=3000
+
 # All mutable state lives under /data so a single volume mount is enough.
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=${PORT} \
     DATABASE_PATH=/data/deepskylog.sqlite \
     UPLOAD_DIR=/data/uploads \
     STAGE_DIR=/data/stage \
@@ -38,7 +43,7 @@ RUN chmod +x backup.sh \
 
 USER node
 VOLUME ["/data"]
-EXPOSE 3000
+EXPOSE ${PORT}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
