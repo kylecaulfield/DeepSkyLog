@@ -313,7 +313,8 @@ app.get('/api/observations.csv', (_req, res) => {
       `SELECT o.id, o.observed_at, o.created_at, o.title, o.catalog, o.catalog_number,
               lo.name AS object_name, lo.object_type, lo.constellation,
               o.telescope, o.camera, o.location, o.latitude, o.longitude,
-              o.exposure_seconds, o.iso, o.focal_length_mm, o.aperture,
+              o.exposure_seconds, o.iso, o.gain, o.stack_count, o.filter_name,
+              o.focal_length_mm, o.aperture,
               o.rating, o.seeing, o.transparency, o.bortle,
               o.moon_phase, o.moon_phase_name,
               o.description, o.image_path
@@ -326,9 +327,10 @@ app.get('/api/observations.csv', (_req, res) => {
   const columns = [
     'id', 'observed_at', 'created_at', 'title', 'catalog', 'catalog_number',
     'object_name', 'object_type', 'constellation', 'telescope', 'camera',
-    'location', 'latitude', 'longitude', 'exposure_seconds', 'iso',
-    'focal_length_mm', 'aperture', 'rating', 'seeing', 'transparency',
-    'bortle', 'moon_phase', 'moon_phase_name', 'description', 'image_path',
+    'location', 'latitude', 'longitude', 'exposure_seconds', 'iso', 'gain',
+    'stack_count', 'filter_name', 'focal_length_mm', 'aperture',
+    'rating', 'seeing', 'transparency', 'bortle',
+    'moon_phase', 'moon_phase_name', 'description', 'image_path',
   ];
 
   const esc = (v) => {
@@ -579,6 +581,30 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const transparency = clamp(body.transparency, 1, 5);
   const bortle = clamp(body.bortle, 1, 9);
 
+  const stackCount = body.stack_count != null && body.stack_count !== ''
+    ? Math.max(0, Math.floor(Number(body.stack_count))) : null;
+  const gain = body.gain != null && body.gain !== ''
+    ? Math.max(0, Math.floor(Number(body.gain))) : null;
+  const filterName = body.filter_name ? String(body.filter_name).trim().slice(0, 80) : null;
+
+  // Validate sidecar JSON before storing it; reject the whole save if it's
+  // syntactically broken so we don't pollute the column.
+  let deviceJson = null;
+  if (body.seestar_json) {
+    try {
+      JSON.parse(String(body.seestar_json));
+      deviceJson = String(body.seestar_json);
+    } catch {
+      return res.status(400).json({ error: 'seestar_json is not valid JSON' });
+    }
+  }
+
+  // Explicit form values override EXIF for these capture fields.
+  const formExposure = body.exposure_seconds != null && body.exposure_seconds !== ''
+    ? Number(body.exposure_seconds) : null;
+  const formIso = body.iso != null && body.iso !== ''
+    ? Number(body.iso) : null;
+
   const rawObjectId = body.object_id ? Number(body.object_id) : null;
   let matchedObject = null;
   if (rawObjectId) {
@@ -663,12 +689,12 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
         location, telescope, camera, exposure_seconds, iso, focal_length_mm,
         aperture, image_path, thumbnail_path, exif_json, rating,
         latitude, longitude, seeing, transparency, moon_phase,
-        moon_phase_name, bortle)
+        moon_phase_name, bortle, stack_count, gain, filter_name, device_json)
      VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
              @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
              @aperture, @image_path, @thumbnail_path, @exif_json, @rating,
              @latitude, @longitude, @seeing, @transparency, @moon_phase,
-             @moon_phase_name, @bortle)`,
+             @moon_phase_name, @bortle, @stack_count, @gain, @filter_name, @device_json)`,
   );
 
   const completeList = db.prepare(
@@ -687,8 +713,8 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       location,
       telescope,
       camera: exif?.Model ? String(exif.Model) : null,
-      exposure_seconds: exif?.ExposureTime ?? null,
-      iso: exif?.ISO ?? exif?.ISOSpeedRatings ?? null,
+      exposure_seconds: formExposure ?? exif?.ExposureTime ?? null,
+      iso: formIso ?? exif?.ISO ?? exif?.ISOSpeedRatings ?? null,
       focal_length_mm: exif?.FocalLength ?? null,
       aperture: exif?.FNumber ?? exif?.ApertureValue ?? null,
       image_path: relImage,
@@ -702,6 +728,10 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       moon_phase: moon.phase,
       moon_phase_name: moon.name,
       bortle,
+      stack_count: stackCount,
+      gain,
+      filter_name: filterName,
+      device_json: deviceJson,
     });
 
     const observationId = Number(result.lastInsertRowid);

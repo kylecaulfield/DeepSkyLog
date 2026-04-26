@@ -111,6 +111,16 @@ const MIGRATIONS = [
         ON observations(catalog, catalog_number, featured);
     `,
   },
+  {
+    id: 6,
+    name: 'add_observation_capture_meta',
+    up: `
+      ALTER TABLE observations ADD COLUMN stack_count INTEGER;
+      ALTER TABLE observations ADD COLUMN gain INTEGER;
+      ALTER TABLE observations ADD COLUMN filter_name TEXT;
+      ALTER TABLE observations ADD COLUMN device_json TEXT;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

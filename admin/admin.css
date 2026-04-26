@@ -121,6 +121,22 @@
 .rating button:hover { color: var(--warn); transform: translateY(-1px); }
 .rating button.active { color: var(--warn); }
 
+fieldset.sidecar {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.85rem 1rem 1rem;
+  background: rgba(122, 167, 255, 0.04);
+  display: grid;
+  gap: 0.7rem;
+}
+fieldset.sidecar legend {
+  padding: 0 0.4rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;

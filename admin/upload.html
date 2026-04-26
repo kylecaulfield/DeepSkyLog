@@ -150,6 +150,37 @@
               </label>
             </div>
 
+            <fieldset class="sidecar">
+              <legend>Capture details (Seestar log)</legend>
+              <input type="hidden" name="seestar_json" id="seestar-json" />
+              <label class="field">
+                <span>Sidecar JSON (optional)</span>
+                <input id="sidecar-input" type="file" accept=".json,application/json" />
+                <small id="sidecar-summary" class="dim">Drop the .json file Seestar saves next to the image to pre-fill the fields below.</small>
+              </label>
+              <div class="row">
+                <label class="field">
+                  <span>Stack count</span>
+                  <input id="stack-count-input" name="stack_count" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>Sub exposure (s)</span>
+                  <input id="exposure-input" name="exposure_seconds" type="number" min="0" step="0.1" />
+                </label>
+              </div>
+              <div class="row">
+                <label class="field">
+                  <span>Gain</span>
+                  <input id="gain-input" name="gain" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>Filter</span>
+                  <input id="filter-input" name="filter_name" type="text"
+                         placeholder="UV/IR-cut, LP, Duo-Band…" />
+                </label>
+              </div>
+            </fieldset>
+
             <label class="field">
               <span>Notes</span>
               <textarea name="notes" id="notes-input" rows="4"

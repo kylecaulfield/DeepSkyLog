@@ -1,3 +1,5 @@
+import { parseSeestarJson } from '/js/seestar.js';
+
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('file-input');
 const browseBtn = document.getElementById('browse-btn');
@@ -28,8 +30,16 @@ const seeingInput = document.getElementById('seeing-input');
 const transparencyInput = document.getElementById('transparency-input');
 const bortleInput = document.getElementById('bortle-input');
 const moonDisplay = document.getElementById('moon-display');
+const sidecarInput = document.getElementById('sidecar-input');
+const sidecarSummary = document.getElementById('sidecar-summary');
+const seestarJsonField = document.getElementById('seestar-json');
+const stackCountInput = document.getElementById('stack-count-input');
+const exposureInput = document.getElementById('exposure-input');
+const gainInput = document.getElementById('gain-input');
+const filterInput = document.getElementById('filter-input');
 const statusEl = document.getElementById('form-status');
 const saveBtn = document.getElementById('save-btn');
+
 
 const SYNODIC = 29.530588853;
 function moonPreview(date) {
@@ -152,21 +162,76 @@ dropzone.addEventListener('keydown', (e) => {
   }),
 );
 dropzone.addEventListener('drop', (e) => {
-  const file = e.dataTransfer.files?.[0];
-  if (file) handleFile(file);
+  const files = e.dataTransfer.files;
+  if (files?.length) handleFiles(files);
 });
 fileInput.addEventListener('change', () => {
-  const file = fileInput.files?.[0];
-  if (file) handleFile(file);
+  if (fileInput.files?.length) handleFiles(fileInput.files);
+});
+sidecarInput.addEventListener('change', () => {
+  const file = sidecarInput.files?.[0];
+  if (file) applySidecar(file);
 });
 
-function handleFile(file) {
-  if (!file.type.startsWith('image/')) {
-    setStatus('Only image files are supported.', 'error');
+function isJsonFile(file) {
+  return /\.json$/i.test(file.name) || file.type === 'application/json';
+}
+
+function isImageFile(file) {
+  return file.type?.startsWith('image/');
+}
+
+async function applySidecar(file) {
+  let text;
+  try {
+    text = await file.text();
+  } catch (err) {
+    sidecarSummary.textContent = `Failed to read sidecar: ${err.message}`;
     return;
   }
-  previewImg.src = URL.createObjectURL(file);
-  uploadStaged(file);
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    sidecarSummary.textContent = 'Sidecar is not valid JSON.';
+    return;
+  }
+  const parsed = parseSeestarJson(obj);
+  seestarJsonField.value = text;
+  if (parsed.stack_count != null) stackCountInput.value = parsed.stack_count;
+  if (parsed.exposure_seconds != null) exposureInput.value = parsed.exposure_seconds;
+  if (parsed.gain != null) gainInput.value = parsed.gain;
+  if (parsed.filter_name) filterInput.value = parsed.filter_name;
+  if (parsed.target && !objectInput.value) {
+    objectInput.value = parsed.target;
+    resolveObjectFromInput();
+    if (objectInput.value) searchObjects(parsed.target);
+  }
+  if (parsed.observed_at && !dateInput.value) {
+    dateInput.value = toLocalDatetimeValue(parsed.observed_at);
+    updateMoonPreview();
+  }
+  if (parsed.summary) sidecarSummary.textContent = `Parsed: ${parsed.summary}`;
+  else sidecarSummary.textContent = 'Sidecar parsed but no recognised fields found.';
+}
+
+function handleFiles(files) {
+  const list = Array.from(files);
+  const json = list.find(isJsonFile);
+  const image = list.find(isImageFile);
+  if (!image && !json) {
+    setStatus('Drop an image, a Seestar .json, or both.', 'error');
+    return;
+  }
+  if (image) {
+    previewImg.src = URL.createObjectURL(image);
+    uploadStaged(image);
+  }
+  if (json) applySidecar(json);
+}
+
+function handleFile(file) {
+  handleFiles([file]);
 }
 
 function uploadStaged(file) {
@@ -288,6 +353,8 @@ function resetForm() {
   objectHint.textContent = '';
   telescopeHint.textContent = '';
   moonDisplay.value = '';
+  seestarJsonField.value = '';
+  sidecarSummary.textContent = 'Drop the .json file Seestar saves next to the image to pre-fill the fields below.';
   setStatus('');
 }
 
@@ -315,6 +382,11 @@ form.addEventListener('submit', async (e) => {
     seeing: seeingInput.value || null,
     transparency: transparencyInput.value || null,
     bortle: bortleInput.value || null,
+    stack_count: stackCountInput.value || null,
+    exposure_seconds: exposureInput.value || null,
+    gain: gainInput.value || null,
+    filter_name: filterInput.value.trim() || null,
+    seestar_json: seestarJsonField.value || null,
   };
 
   if (!payload.telescope) {

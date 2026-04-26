@@ -129,6 +129,17 @@ async function render() {
         ? el('span', { class: 'thumb',
             style: `background-image: url("/uploads/${o.thumbnail_path}")` })
         : el('span', { class: 'thumb empty', text: 'no image' });
+      const captureBits = [];
+      if (o.stack_count != null && o.exposure_seconds != null) {
+        captureBits.push(`${o.stack_count}×${o.exposure_seconds}s`);
+        const totalMin = (o.stack_count * o.exposure_seconds) / 60;
+        captureBits.push(`${totalMin.toFixed(1)} min total`);
+      } else if (o.exposure_seconds != null) {
+        captureBits.push(`${o.exposure_seconds}s exposure`);
+      }
+      if (o.gain != null) captureBits.push(`gain ${o.gain}`);
+      if (o.filter_name) captureBits.push(o.filter_name);
+
       const conditionBits = [];
       if (o.seeing != null) conditionBits.push(`Seeing ${o.seeing}/5`);
       if (o.transparency != null) conditionBits.push(`Transparency ${o.transparency}/5`);
@@ -150,6 +161,9 @@ async function render() {
         el('h4', {}, ...headingChildren),
         el('small', { text: [o.telescope, o.camera].filter(Boolean).join(' · ') || '—' }),
       ];
+      if (captureBits.length) {
+        captionChildren.push(el('small', { class: 'dim', text: captureBits.join(' · ') }));
+      }
       if (conditionBits.length) {
         captionChildren.push(el('small', { class: 'dim', text: conditionBits.join(' · ') }));
       }
