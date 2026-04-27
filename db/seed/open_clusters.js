@@ -1,0 +1,48 @@
+// Bright open clusters that comfortably fit a Seestar S50/S30 field of view.
+// Curated rather than the full AL Open Cluster programme (which includes
+// some clusters too large or too sparse for a 1°-class FOV).
+
+const SEESTAR_OPEN_CLUSTERS = [
+  { catalog: 'OC', catalogNumber: '1',  name: 'Pleiades',                type: 'OC', ra: 3.7911,  dec: 24.1050,  mag: 1.6, constellation: 'Taurus',          aliases: ['M45'] },
+  { catalog: 'OC', catalogNumber: '2',  name: 'Hyades',                  type: 'OC', ra: 4.4667,  dec: 15.8667,  mag: 0.5, constellation: 'Taurus',          aliases: ['C41'] },
+  { catalog: 'OC', catalogNumber: '3',  name: 'Beehive Cluster',         type: 'OC', ra: 8.6711,  dec: 19.6211,  mag: 3.7, constellation: 'Cancer',          aliases: ['M44',  'NGC 2632'] },
+  { catalog: 'OC', catalogNumber: '4',  name: 'Wild Duck Cluster',       type: 'OC', ra: 18.8517, dec: -6.2667,  mag: 6.3, constellation: 'Scutum',          aliases: ['M11',  'NGC 6705'] },
+  { catalog: 'OC', catalogNumber: '5',  name: 'Butterfly Cluster',       type: 'OC', ra: 17.6683, dec: -32.2417, mag: 4.2, constellation: 'Scorpius',        aliases: ['M6',   'NGC 6405'] },
+  { catalog: 'OC', catalogNumber: '6',  name: 'Ptolemy Cluster',         type: 'OC', ra: 17.8967, dec: -34.7933, mag: 3.3, constellation: 'Scorpius',        aliases: ['M7',   'NGC 6475'] },
+  { catalog: 'OC', catalogNumber: '7',  name: 'Pinwheel Cluster',        type: 'OC', ra: 5.6058,  dec: 34.1383,  mag: 6.3, constellation: 'Auriga',          aliases: ['M36',  'NGC 1960'] },
+  { catalog: 'OC', catalogNumber: '8',  name: 'M37',                     type: 'OC', ra: 5.8725,  dec: 32.5450,  mag: 6.2, constellation: 'Auriga',          aliases: ['M37',  'NGC 2099'] },
+  { catalog: 'OC', catalogNumber: '9',  name: 'Starfish Cluster',        type: 'OC', ra: 5.4772,  dec: 35.8250,  mag: 7.4, constellation: 'Auriga',          aliases: ['M38',  'NGC 1912'] },
+  { catalog: 'OC', catalogNumber: '10', name: 'M35',                     type: 'OC', ra: 6.1483,  dec: 24.3367,  mag: 5.3, constellation: 'Gemini',          aliases: ['M35',  'NGC 2168'] },
+  { catalog: 'OC', catalogNumber: '11', name: 'M41',                     type: 'OC', ra: 6.7683,  dec: -20.7567, mag: 4.5, constellation: 'Canis Major',     aliases: ['M41',  'NGC 2287'] },
+  { catalog: 'OC', catalogNumber: '12', name: 'M46',                     type: 'OC', ra: 7.6967,  dec: -14.8100, mag: 6.1, constellation: 'Puppis',          aliases: ['M46',  'NGC 2437'] },
+  { catalog: 'OC', catalogNumber: '13', name: 'M47',                     type: 'OC', ra: 7.6103,  dec: -14.4883, mag: 4.4, constellation: 'Puppis',          aliases: ['M47',  'NGC 2422'] },
+  { catalog: 'OC', catalogNumber: '14', name: 'M50',                     type: 'OC', ra: 7.0517,  dec: -8.3333,  mag: 5.9, constellation: 'Monoceros',       aliases: ['M50',  'NGC 2323'] },
+  { catalog: 'OC', catalogNumber: '15', name: 'Christmas Tree Cluster',  type: 'OC', ra: 6.6750,  dec: 9.8833,   mag: 4.1, constellation: 'Monoceros',       aliases: ['NGC 2264'] },
+  { catalog: 'OC', catalogNumber: '16', name: 'Rosette Cluster',         type: 'OC', ra: 6.5386,  dec: 4.9333,   mag: 4.8, constellation: 'Monoceros',       aliases: ['NGC 2244', 'C50'] },
+  { catalog: 'OC', catalogNumber: '17', name: 'Tau CMa Cluster',         type: 'OC', ra: 7.3092,  dec: -24.9567, mag: 4.1, constellation: 'Canis Major',     aliases: ['NGC 2362', 'C64'] },
+  { catalog: 'OC', catalogNumber: '18', name: "Caroline's Cluster",      type: 'OC', ra: 7.2972,  dec: -15.6167, mag: 7.2, constellation: 'Canis Major',     aliases: ['NGC 2360', 'C58'] },
+  { catalog: 'OC', catalogNumber: '19', name: 'Owl / ET Cluster',        type: 'OC', ra: 1.3250,  dec: 58.3333,  mag: 6.4, constellation: 'Cassiopeia',      aliases: ['NGC 457', 'C13'] },
+  { catalog: 'OC', catalogNumber: '20', name: 'M52',                     type: 'OC', ra: 23.4133, dec: 61.5933,  mag: 6.9, constellation: 'Cassiopeia',      aliases: ['M52',  'NGC 7654'] },
+  { catalog: 'OC', catalogNumber: '21', name: 'M103',                    type: 'OC', ra: 1.5550,  dec: 60.6583,  mag: 7.4, constellation: 'Cassiopeia',      aliases: ['M103', 'NGC 581'] },
+  { catalog: 'OC', catalogNumber: '22', name: "Caroline's Rose",         type: 'OC', ra: 23.9700, dec: 56.7167,  mag: 6.7, constellation: 'Cassiopeia',      aliases: ['NGC 7789'] },
+  { catalog: 'OC', catalogNumber: '23', name: 'Double Cluster (h Per)',  type: 'OC', ra: 2.3361,  dec: 57.1347,  mag: 4.3, constellation: 'Perseus',         aliases: ['NGC 869', 'C14'] },
+  { catalog: 'OC', catalogNumber: '24', name: 'Double Cluster (χ Per)',  type: 'OC', ra: 2.3722,  dec: 57.1500,  mag: 4.4, constellation: 'Perseus',         aliases: ['NGC 884', 'C14'] },
+  { catalog: 'OC', catalogNumber: '25', name: 'M34',                     type: 'OC', ra: 2.7017,  dec: 42.7617,  mag: 5.5, constellation: 'Perseus',         aliases: ['M34',  'NGC 1039'] },
+  { catalog: 'OC', catalogNumber: '26', name: 'M67',                     type: 'OC', ra: 8.8400,  dec: 11.8133,  mag: 6.9, constellation: 'Cancer',          aliases: ['M67',  'NGC 2682'] },
+  { catalog: 'OC', catalogNumber: '27', name: 'M48',                     type: 'OC', ra: 8.2278,  dec: -5.7500,  mag: 5.8, constellation: 'Hydra',           aliases: ['M48',  'NGC 2548'] },
+  { catalog: 'OC', catalogNumber: '28', name: 'M93',                     type: 'OC', ra: 7.7433,  dec: -23.8567, mag: 6.2, constellation: 'Puppis',          aliases: ['M93',  'NGC 2447'] },
+  { catalog: 'OC', catalogNumber: '29', name: 'M21',                     type: 'OC', ra: 18.0778, dec: -22.5000, mag: 5.9, constellation: 'Sagittarius',     aliases: ['M21',  'NGC 6531'] },
+  { catalog: 'OC', catalogNumber: '30', name: 'M23',                     type: 'OC', ra: 17.9469, dec: -18.9850, mag: 5.5, constellation: 'Sagittarius',     aliases: ['M23',  'NGC 6494'] },
+  { catalog: 'OC', catalogNumber: '31', name: 'M25',                     type: 'OC', ra: 18.5289, dec: -19.2500, mag: 4.6, constellation: 'Sagittarius',     aliases: ['M25',  'IC 4725'] },
+  { catalog: 'OC', catalogNumber: '32', name: 'M18',                     type: 'OC', ra: 18.3317, dec: -17.1000, mag: 7.5, constellation: 'Sagittarius',     aliases: ['M18',  'NGC 6613'] },
+  { catalog: 'OC', catalogNumber: '33', name: 'M26',                     type: 'OC', ra: 18.7547, dec: -9.3867,  mag: 8.0, constellation: 'Scutum',          aliases: ['M26',  'NGC 6694'] },
+  { catalog: 'OC', catalogNumber: '34', name: 'M29',                     type: 'OC', ra: 20.3967, dec: 38.5233,  mag: 7.1, constellation: 'Cygnus',          aliases: ['M29',  'NGC 6913'] },
+  { catalog: 'OC', catalogNumber: '35', name: 'M39',                     type: 'OC', ra: 21.5306, dec: 48.4333,  mag: 4.6, constellation: 'Cygnus',          aliases: ['M39',  'NGC 7092'] },
+  { catalog: 'OC', catalogNumber: '36', name: 'NGC 752',                 type: 'OC', ra: 1.9633,  dec: 37.7950,  mag: 5.7, constellation: 'Andromeda',       aliases: ['NGC 752', 'C28'] },
+  { catalog: 'OC', catalogNumber: '37', name: 'NGC 2281',                type: 'OC', ra: 6.8133,  dec: 41.0667,  mag: 5.4, constellation: 'Auriga',          aliases: ['NGC 2281'] },
+  { catalog: 'OC', catalogNumber: '38', name: 'NGC 663',                 type: 'OC', ra: 1.7675,  dec: 61.2250,  mag: 7.1, constellation: 'Cassiopeia',      aliases: ['NGC 663', 'C10'] },
+  { catalog: 'OC', catalogNumber: '39', name: 'NGC 2244 region',         type: 'OC', ra: 6.5386,  dec: 4.9333,   mag: 4.8, constellation: 'Monoceros',       aliases: ['NGC 2244'] },
+  { catalog: 'OC', catalogNumber: '40', name: 'NGC 6633',                type: 'OC', ra: 18.4622, dec: 6.6172,   mag: 4.6, constellation: 'Ophiuchus',       aliases: ['NGC 6633'] },
+];
+
+module.exports = { SEESTAR_OPEN_CLUSTERS };

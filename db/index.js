@@ -4,6 +4,12 @@ const Database = require('better-sqlite3');
 const { MIGRATIONS } = require('./schema');
 const { MESSIER } = require('./seed/messier');
 const { CALDWELL } = require('./seed/caldwell');
+const { FINEST_NGC } = require('./seed/finest_ngc');
+const { LOCAL_GROUP } = require('./seed/local_group');
+const { AL_GLOBULARS } = require('./seed/al_globulars');
+const { SEESTAR_PLANETARY_NEBULAE } = require('./seed/planetary_nebulae');
+const { SEESTAR_OPEN_CLUSTERS } = require('./seed/open_clusters');
+const { SHARPLESS_BRIGHT } = require('./seed/sharpless_bright');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = process.env.DATABASE_PATH || path.join(DATA_DIR, 'deepskylog.sqlite');
@@ -65,8 +71,8 @@ function seedList(db, { slug, name, description, entries }) {
 
   const insert = db.prepare(`
     INSERT OR IGNORE INTO list_objects
-      (list_id, catalog, catalog_number, name, object_type, ra_hours, dec_degrees, magnitude, constellation)
-    VALUES (@listId, @catalog, @catalogNumber, @name, @type, @ra, @dec, @mag, @constellation)
+      (list_id, catalog, catalog_number, name, object_type, ra_hours, dec_degrees, magnitude, constellation, aliases)
+    VALUES (@listId, @catalog, @catalogNumber, @name, @type, @ra, @dec, @mag, @constellation, @aliases)
   `);
 
   const tx = db.transaction((rows) => {
@@ -81,11 +87,38 @@ function seedList(db, { slug, name, description, entries }) {
         dec: row.dec,
         mag: row.mag,
         constellation: row.constellation || null,
+        aliases: row.aliases && row.aliases.length
+          ? JSON.stringify(row.aliases)
+          : null,
       });
     }
   });
 
   tx(entries);
+}
+
+// On upgrades, the seed insert is OR IGNORE so existing rows keep whatever
+// aliases were stored before. This pass refreshes alias data from the seed
+// for any rows where it's currently NULL — useful when an older install
+// gets new alias info added to the seed file.
+function refreshAliases(db, listId, entries) {
+  const update = db.prepare(`
+    UPDATE list_objects SET aliases = @aliases
+      WHERE list_id = @listId AND catalog = @catalog AND catalog_number = @catalogNumber
+        AND aliases IS NULL
+  `);
+  const tx = db.transaction(() => {
+    for (const row of entries) {
+      if (!row.aliases || !row.aliases.length) continue;
+      update.run({
+        listId,
+        catalog: row.catalog,
+        catalogNumber: row.catalogNumber,
+        aliases: JSON.stringify(row.aliases),
+      });
+    }
+  });
+  tx();
 }
 
 function backfillCoordsFromExif(db) {
@@ -114,18 +147,22 @@ function backfillCoordsFromExif(db) {
 }
 
 function seedCatalogs(db) {
-  seedList(db, {
-    slug: 'messier',
-    name: 'Messier Catalog',
-    description: "Charles Messier's 110 deep-sky objects.",
-    entries: MESSIER,
-  });
-  seedList(db, {
-    slug: 'caldwell',
-    name: 'Caldwell Catalog',
-    description: "Patrick Moore's 109 Caldwell objects.",
-    entries: CALDWELL,
-  });
+  const builtins = [
+    { slug: 'messier',          name: 'Messier Catalog',          description: "Charles Messier's 110 deep-sky objects.",                                          entries: MESSIER },
+    { slug: 'caldwell',         name: 'Caldwell Catalog',         description: "Patrick Moore's 109 Caldwell objects.",                                            entries: CALDWELL },
+    { slug: 'finest-ngc',       name: 'Finest NGC',               description: 'A curated selection of bright non-Messier NGC objects, suited for small-aperture and smart-scope observers.', entries: FINEST_NGC },
+    { slug: 'local-group',      name: 'Local Group Galaxies',     description: 'Members and bright satellites of our Local Group of galaxies.',                  entries: LOCAL_GROUP },
+    { slug: 'al-globulars',     name: 'Astronomical League — Globular Clusters', description: 'The 50 brightest globular clusters from the AL observing program.', entries: AL_GLOBULARS },
+    { slug: 'open-clusters-s50', name: 'Open Clusters for Smart Scopes', description: 'Bright open clusters that fit comfortably in a Seestar S50 / S30 field of view.', entries: SEESTAR_OPEN_CLUSTERS },
+    { slug: 'planetary-nebulae-s50', name: 'Planetary Nebulae for Smart Scopes', description: 'Brighter planetary nebulae detectable with a Seestar S50 / S30.', entries: SEESTAR_PLANETARY_NEBULAE },
+    { slug: 'sharpless-bright', name: 'Sharpless 2 (Bright Subset)', description: "S50-friendly large emission nebulae from Stewart Sharpless's 1959 catalog.",   entries: SHARPLESS_BRIGHT },
+  ];
+
+  for (const list of builtins) {
+    seedList(db, list);
+    const id = db.prepare('SELECT id FROM lists WHERE slug = ?').get(list.slug)?.id;
+    if (id) refreshAliases(db, id, list.entries);
+  }
 }
 
 let dbInstance = null;

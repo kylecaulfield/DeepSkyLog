@@ -62,6 +62,115 @@ function escapeLike(value) {
   return String(value).replace(/[\\_%]/g, (ch) => `\\${ch}`);
 }
 
+// Catalog-id matching is case-insensitive and ignores any whitespace inside
+// the identifier so "NGC1976", "NGC 1976" and "ngc1976" all collide.
+function normaliseToken(token) {
+  return String(token || '').replace(/\s+/g, '').toUpperCase();
+}
+
+function parseAliases(json) {
+  if (!json) return [];
+  try {
+    const arr = JSON.parse(json);
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Build a token-equivalence graph from every list_object's primary id and its
+// declared aliases. Two ids are in the same group when any list_object lists
+// them together. The result is a Map<token, Set<token>>; every token in a
+// group points at the same Set instance, so look-ups are O(1).
+function buildAliasGraph(db) {
+  const rows = db
+    .prepare('SELECT catalog, catalog_number, aliases FROM list_objects')
+    .all();
+  const groups = new Map();
+  for (const row of rows) {
+    const tokens = [
+      normaliseToken(`${row.catalog}${row.catalog_number}`),
+      ...parseAliases(row.aliases).map(normaliseToken),
+    ].filter(Boolean);
+    if (!tokens.length) continue;
+    const merged = new Set();
+    for (const t of tokens) {
+      const existing = groups.get(t);
+      if (existing) for (const x of existing) merged.add(x);
+      else merged.add(t);
+    }
+    for (const t of merged) groups.set(t, merged);
+  }
+  return groups;
+}
+
+function tokensFor(graph, primaryId) {
+  const t = normaliseToken(primaryId);
+  if (!t) return [];
+  return [...(graph.get(t) || new Set([t]))];
+}
+
+// Build an in-memory index of observations keyed by their normalised
+// (catalog || catalog_number) token. Used to compute attempts_count /
+// featured_thumbnail for list pages without a per-row SQL round-trip.
+function buildObservationIndex(db) {
+  const rows = db
+    .prepare(
+      `SELECT id, catalog, catalog_number, thumbnail_path, featured,
+              observed_at, created_at
+         FROM observations
+         WHERE catalog IS NOT NULL AND catalog_number IS NOT NULL`,
+    )
+    .all();
+  const idx = new Map();
+  for (const o of rows) {
+    const tok = normaliseToken(`${o.catalog}${o.catalog_number}`);
+    if (!idx.has(tok)) idx.set(tok, []);
+    idx.get(tok).push(o);
+  }
+  return idx;
+}
+
+function observationsForTokens(idx, tokens) {
+  const out = [];
+  for (const t of tokens) {
+    const list = idx.get(t);
+    if (list) out.push(...list);
+  }
+  return out;
+}
+
+function pickFeaturedThumbnail(observations) {
+  const sorted = [...observations].sort((a, b) => {
+    if (a.featured !== b.featured) return (b.featured || 0) - (a.featured || 0);
+    return String(b.observed_at || b.created_at || '').localeCompare(
+      String(a.observed_at || a.created_at || ''),
+    );
+  });
+  return sorted.find((o) => o.thumbnail_path)?.thumbnail_path ?? null;
+}
+
+// Find every list_object whose primary id or any alias is in the supplied
+// token set.
+function peerListObjects(db, tokens) {
+  if (!tokens.length) return [];
+  const placeholders = tokens.map(() => '?').join(',');
+  const direct = db
+    .prepare(
+      `SELECT id FROM list_objects
+         WHERE UPPER(REPLACE(catalog || catalog_number, ' ', '')) IN (${placeholders})`,
+    )
+    .all(...tokens);
+  const aliasMatches = db
+    .prepare(
+      `SELECT lo.id FROM list_objects lo, json_each(COALESCE(lo.aliases, '[]')) AS al
+         WHERE UPPER(REPLACE(al.value, ' ', '')) IN (${placeholders})`,
+    )
+    .all(...tokens);
+  const ids = new Set([...direct.map((r) => r.id), ...aliasMatches.map((r) => r.id)]);
+  return [...ids].map((id) => ({ id }));
+}
+
 const AUTH_FAIL_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_FAIL_MAX = 20;
 const authFailures = new Map();
@@ -186,21 +295,24 @@ app.get('/api/lists/:slug', (req, res) => {
     .prepare(
       `SELECT lo.*,
               EXISTS(SELECT 1 FROM list_completions lc
-                       WHERE lc.list_object_id = lo.id) AS completed,
-              (SELECT COUNT(*) FROM observations o
-                 WHERE o.catalog = lo.catalog
-                   AND o.catalog_number = lo.catalog_number) AS attempts_count,
-              (SELECT thumbnail_path FROM observations o
-                 WHERE o.catalog = lo.catalog
-                   AND o.catalog_number = lo.catalog_number
-                   AND o.thumbnail_path IS NOT NULL
-                 ORDER BY featured DESC, COALESCE(observed_at, created_at) DESC
-                 LIMIT 1) AS featured_thumbnail
+                       WHERE lc.list_object_id = lo.id) AS completed
          FROM list_objects lo
          WHERE lo.list_id = ?
          ORDER BY CAST(lo.catalog_number AS INTEGER)`,
     )
     .all(list.id);
+
+  // Enrich attempts_count and featured_thumbnail in JS so they follow alias
+  // links — if M42 has been observed the RASC NGC 1976 row should still
+  // surface that thumbnail and count.
+  const graph = buildAliasGraph(db);
+  const obsIndex = buildObservationIndex(db);
+  for (const o of objects) {
+    const tokens = tokensFor(graph, `${o.catalog}${o.catalog_number}`);
+    const obs = observationsForTokens(obsIndex, tokens);
+    o.attempts_count = obs.length;
+    o.featured_thumbnail = pickFeaturedThumbnail(obs);
+  }
 
   res.json({ ...list, objects });
 });
@@ -388,28 +500,44 @@ app.get('/api/objects/:id', (req, res) => {
     .get(req.params.id);
   if (!object) return res.status(404).json({ error: 'Object not found' });
 
-  const memberships = db
-    .prepare(
-      `SELECT lo.id, l.slug, l.name AS list_name, lo.catalog, lo.catalog_number
-         FROM list_objects lo
-         JOIN lists l ON l.id = lo.list_id
-         WHERE lo.catalog = ? AND lo.catalog_number = ?`,
-    )
-    .all(object.catalog, object.catalog_number);
+  // Follow alias links across catalogs so an object that's known under
+  // multiple ids surfaces all its memberships and observations together.
+  const graph = buildAliasGraph(db);
+  const tokens = tokensFor(graph, `${object.catalog}${object.catalog_number}`);
+  const peerIds = peerListObjects(db, tokens).map((p) => p.id);
+  const placeholders = peerIds.length ? peerIds.map(() => '?').join(',') : '0';
+  const tokensPlaceholders = tokens.length ? tokens.map(() => '?').join(',') : '\'\'';
 
-  const observations = db
-    .prepare(
-      `SELECT * FROM observations
-         WHERE catalog = ? AND catalog_number = ?
-         ORDER BY featured DESC, COALESCE(observed_at, created_at) DESC`,
-    )
-    .all(object.catalog, object.catalog_number);
+  const memberships = peerIds.length
+    ? db
+        .prepare(
+          `SELECT lo.id, l.slug, l.name AS list_name, lo.catalog, lo.catalog_number
+             FROM list_objects lo JOIN lists l ON l.id = lo.list_id
+             WHERE lo.id IN (${placeholders})
+             ORDER BY l.builtin DESC, l.name`,
+        )
+        .all(...peerIds)
+    : [];
 
-  const completions = db
-    .prepare(
-      `SELECT * FROM list_completions WHERE list_object_id = ? ORDER BY completed_at DESC`,
-    )
-    .all(object.id);
+  const observations = tokens.length
+    ? db
+        .prepare(
+          `SELECT * FROM observations
+             WHERE UPPER(REPLACE(catalog || catalog_number, ' ', '')) IN (${tokensPlaceholders})
+             ORDER BY featured DESC, COALESCE(observed_at, created_at) DESC`,
+        )
+        .all(...tokens)
+    : [];
+
+  const completions = peerIds.length
+    ? db
+        .prepare(
+          `SELECT * FROM list_completions
+             WHERE list_object_id IN (${placeholders})
+             ORDER BY completed_at DESC`,
+        )
+        .all(...peerIds)
+    : [];
 
   const featuredObservation =
     observations.find((o) => o.featured && o.image_path)
@@ -806,24 +934,33 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
     const observationId = Number(result.lastInsertRowid);
 
     if (catalog && catalogNumber) {
-      const peers = db
-        .prepare('SELECT id FROM list_objects WHERE catalog = ? AND catalog_number = ?')
-        .all(catalog, catalogNumber);
+      // Cross-list ticking: an upload of "M42" should also tick the row for
+      // NGC 1976 in the RASC list, and any other list that aliases either.
+      const seedToken = matchedObject
+        ? `${matchedObject.catalog}${matchedObject.catalog_number}`
+        : `${catalog}${catalogNumber}`;
+      const graph = buildAliasGraph(db);
+      const idTokens = tokensFor(graph, seedToken);
+      const peers = peerListObjects(db, idTokens);
       for (const peer of peers) {
         completeList.run(peer.id, observationId, notes);
       }
 
-      // Auto-feature the first attempt for an object so something always
-      // shows up as the cover image.
-      const priorWithImage = db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM observations
-             WHERE catalog = ? AND catalog_number = ?
-               AND id != ? AND image_path IS NOT NULL`,
-        )
-        .get(catalog, catalogNumber, observationId).c;
-      if (priorWithImage === 0 && relImage) {
-        db.prepare('UPDATE observations SET featured = 1 WHERE id = ?').run(observationId);
+      // Auto-feature the first attempt for this object — judged across every
+      // alias token, not just the primary key — so the cover image is set
+      // even when prior attempts lived under a different catalog id.
+      if (relImage) {
+        const placeholders = idTokens.map(() => '?').join(',');
+        const prior = db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM observations
+               WHERE id != ? AND image_path IS NOT NULL
+                 AND UPPER(REPLACE(catalog || catalog_number, ' ', '')) IN (${placeholders})`,
+          )
+          .get(observationId, ...idTokens).c;
+        if (prior === 0) {
+          db.prepare('UPDATE observations SET featured = 1 WHERE id = ?').run(observationId);
+        }
       }
     }
 

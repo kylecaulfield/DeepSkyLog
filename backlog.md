@@ -35,6 +35,10 @@
    with metadata. Great for tracking improvement over time.
 10. **Mobile upload** — a simple PWA wrapper so you can upload directly from
     your phone in the field without going through a laptop.
-11. **Herschel 400 and SAC 110 completion tracking** — the seed data in the
-    initial build covers Messier and Caldwell. Adding the rest of the major
-    lists makes the completion dashboard much more satisfying.
+11. **Herschel 400 and SAC 110 completion tracking** — the seed data now
+    covers Messier (110), Caldwell (109), Local Group (22), Finest NGC (119),
+    AL Globulars (50), Open Clusters for Smart Scopes (40), Planetary
+    Nebulae for Smart Scopes (30), and Sharpless 2 Bright (29) — 509
+    objects across 8 lists, with cross-list aliases so a single upload
+    ticks every list the target appears on. **Still missing:** the full
+    Herschel 400 and SAC 110 Best of NGC.

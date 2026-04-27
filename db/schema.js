@@ -121,6 +121,13 @@ const MIGRATIONS = [
       ALTER TABLE observations ADD COLUMN device_json TEXT;
     `,
   },
+  {
+    id: 7,
+    name: 'add_list_object_aliases',
+    up: `
+      ALTER TABLE list_objects ADD COLUMN aliases TEXT;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };
