@@ -239,3 +239,49 @@ fieldset.sidecar legend {
 }
 
 .rating-cell { color: var(--lcars-cream); letter-spacing: 0.04em; }
+
+/* ---------- Version chip ---------- */
+
+.version-chip {
+  align-self: center;
+  margin-left: auto;
+  padding: 0.25rem 0.7rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.version-chip-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--pill);
+  background: #0d0d0d;
+  border: 1px solid var(--accent);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: var(--peach);
+  text-decoration: none;
+  font-family: var(--condensed);
+  white-space: nowrap;
+}
+
+.version-chip-inner:hover { background: #1a1208; color: var(--lcars-cream); }
+
+.version-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  display: inline-block;
+}
+.version-status[data-state="loading"] { background: var(--lcars-blue); }
+.version-status[data-state="current"] { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.version-status[data-state="behind"]  { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.version-status[data-state="unknown"] { background: var(--muted); }
+
+@media (max-width: 720px) {
+  .version-chip { margin-left: 0; padding-top: 0.5rem; }
+}

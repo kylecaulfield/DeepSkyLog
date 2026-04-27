@@ -268,8 +268,40 @@ app.use('/admin', basicAuth, express.static(path.join(__dirname, 'admin')));
 app.use('/uploads', express.static(UPLOAD_DIR));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Version info — preferred source is the env vars baked in at Docker build
+// time (workflow fills them from the triggering commit). For local `npm
+// start` runs we fall back to running git in the source dir; if even that
+// fails we degrade to "dev". Computed once at startup; never reread.
+const VERSION = (() => {
+  const repo = process.env.GITHUB_REPO || 'kylecaulfield/DeepSkyLog';
+  const sha = (process.env.GIT_SHA || '').trim() || null;
+  const ref = (process.env.GIT_REF || '').trim() || null;
+  const buildTime = (process.env.BUILD_TIME || '').trim() || null;
+  if (sha) return { sha, ref: ref || 'unknown', build_time: buildTime, source: 'env', repo };
+  try {
+    const { execFileSync } = require('child_process');
+    const opts = { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] };
+    const liveSha = execFileSync('git', ['rev-parse', 'HEAD'], opts).toString().trim();
+    const liveRef = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], opts).toString().trim();
+    return { sha: liveSha, ref: liveRef, build_time: null, source: 'git', repo };
+  } catch {
+    return { sha: null, ref: 'dev', build_time: null, source: 'unknown', repo };
+  }
+})();
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, db: path.basename(DB_PATH) });
+});
+
+app.get('/api/version', (_req, res) => {
+  res.json({
+    sha: VERSION.sha,
+    short_sha: VERSION.sha ? VERSION.sha.slice(0, 7) : null,
+    ref: VERSION.ref,
+    build_time: VERSION.build_time,
+    source: VERSION.source,
+    repo: VERSION.repo,
+  });
 });
 
 app.get('/api/lists', (_req, res) => {

@@ -21,9 +21,19 @@ WORKDIR /app
 # `-e PORT=8080` on `docker run` (or `environment: { PORT: 8080 }` in compose).
 ARG PORT=3000
 
+# Version metadata baked at build time so the running container can advertise
+# which commit it was built from. The CI workflow fills these in from the
+# triggering commit; local builds can leave them blank or pass --build-arg.
+ARG GIT_SHA=""
+ARG GIT_REF=""
+ARG BUILD_TIME=""
+
 # All mutable state lives under /data so a single volume mount is enough.
 ENV NODE_ENV=production \
     PORT=${PORT} \
+    GIT_SHA=${GIT_SHA} \
+    GIT_REF=${GIT_REF} \
+    BUILD_TIME=${BUILD_TIME} \
     DATABASE_PATH=/data/deepskylog.sqlite \
     UPLOAD_DIR=/data/uploads \
     STAGE_DIR=/data/stage \
