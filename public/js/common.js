@@ -51,6 +51,9 @@ export const OBJECT_TYPES = {
   MW: 'Star Cloud',
   AST: 'Asterism',
   DS: 'Double Star',
+  STAR: 'Star',
+  MOON: 'Moon',
+  PLAN: 'Planet',
 };
 
 export function typeLabel(code) {

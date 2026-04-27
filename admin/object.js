@@ -94,9 +94,9 @@ async function render() {
   const metaList = el('dl', { class: 'meta-list' },
     ...meta('Catalog', `${data.catalog}${data.catalog_number}`),
     ...meta('Type', typeLabel(data.object_type)),
-    ...meta('Constellation', data.constellation),
-    ...meta('Right ascension', formatRA(data.ra_hours)),
-    ...meta('Declination', formatDec(data.dec_degrees)),
+    ...meta('Constellation', data.constellation || '—'),
+    ...meta('Right ascension', formatRA(data.ra_hours) + (data.live_coords ? ' (live)' : '')),
+    ...meta('Declination', formatDec(data.dec_degrees) + (data.live_coords ? ' (live)' : '')),
     ...meta('Magnitude', data.magnitude != null ? data.magnitude.toFixed(1) : '—'),
     ...meta('Attempts', String(data.attempts_count)),
   );

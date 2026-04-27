@@ -10,6 +10,7 @@ const { AL_GLOBULARS } = require('./seed/al_globulars');
 const { SEESTAR_PLANETARY_NEBULAE } = require('./seed/planetary_nebulae');
 const { SEESTAR_OPEN_CLUSTERS } = require('./seed/open_clusters');
 const { SHARPLESS_BRIGHT } = require('./seed/sharpless_bright');
+const { SOLAR_SYSTEM } = require('./seed/solar_system');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = process.env.DATABASE_PATH || path.join(DATA_DIR, 'deepskylog.sqlite');
@@ -71,8 +72,8 @@ function seedList(db, { slug, name, description, entries }) {
 
   const insert = db.prepare(`
     INSERT OR IGNORE INTO list_objects
-      (list_id, catalog, catalog_number, name, object_type, ra_hours, dec_degrees, magnitude, constellation, aliases)
-    VALUES (@listId, @catalog, @catalogNumber, @name, @type, @ra, @dec, @mag, @constellation, @aliases)
+      (list_id, catalog, catalog_number, name, object_type, ra_hours, dec_degrees, magnitude, constellation, aliases, ephemeris)
+    VALUES (@listId, @catalog, @catalogNumber, @name, @type, @ra, @dec, @mag, @constellation, @aliases, @ephemeris)
   `);
 
   const tx = db.transaction((rows) => {
@@ -90,6 +91,7 @@ function seedList(db, { slug, name, description, entries }) {
         aliases: row.aliases && row.aliases.length
           ? JSON.stringify(row.aliases)
           : null,
+        ephemeris: row.ephemeris || null,
       });
     }
   });
@@ -156,6 +158,7 @@ function seedCatalogs(db) {
     { slug: 'open-clusters-s50', name: 'Open Clusters for Smart Scopes', description: 'Bright open clusters that fit comfortably in a Seestar S50 / S30 field of view.', entries: SEESTAR_OPEN_CLUSTERS },
     { slug: 'planetary-nebulae-s50', name: 'Planetary Nebulae for Smart Scopes', description: 'Brighter planetary nebulae detectable with a Seestar S50 / S30.', entries: SEESTAR_PLANETARY_NEBULAE },
     { slug: 'sharpless-bright', name: 'Sharpless 2 (Bright Subset)', description: "S50-friendly large emission nebulae from Stewart Sharpless's 1959 catalog.",   entries: SHARPLESS_BRIGHT },
+    { slug: 'solar-system',     name: 'Solar System',             description: 'The Sun, the Moon and the eight major planets — positions are computed live from a low-precision Schlyter ephemeris.', entries: SOLAR_SYSTEM },
   ];
 
   for (const list of builtins) {

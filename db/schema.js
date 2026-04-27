@@ -128,6 +128,13 @@ const MIGRATIONS = [
       ALTER TABLE list_objects ADD COLUMN aliases TEXT;
     `,
   },
+  {
+    id: 8,
+    name: 'add_list_object_ephemeris',
+    up: `
+      ALTER TABLE list_objects ADD COLUMN ephemeris TEXT;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

@@ -72,6 +72,7 @@ function render() {
       ? el('td', { text: String(o.attempts_count) })
       : el('td', { class: 'dim', text: '—' });
 
+    const live = o.ephemeris ? 'varies' : null;
     tbody.appendChild(el(
       'tr',
       { class: o.completed ? 'observed' : '' },
@@ -80,9 +81,9 @@ function render() {
       el('td', { text: o.name || '—' }),
       el('td', { text: typeLabel(o.object_type) }),
       el('td', { text: o.constellation || '—' }),
-      el('td', { text: formatRA(o.ra_hours) }),
-      el('td', { text: formatDec(o.dec_degrees) }),
-      el('td', { text: o.magnitude != null ? o.magnitude.toFixed(1) : '—' }),
+      el('td', { class: live ? 'dim' : '', text: live || formatRA(o.ra_hours) }),
+      el('td', { class: live ? 'dim' : '', text: live || formatDec(o.dec_degrees) }),
+      el('td', { text: o.magnitude != null ? Number(o.magnitude).toFixed(1) : '—' }),
       attemptsCell,
     ));
   }

@@ -55,15 +55,18 @@ async function render() {
   if (data.attempts_count > 0) {
     subtitleBits.push(`${data.attempts_count} attempt${data.attempts_count === 1 ? '' : 's'}`);
   }
+  if (data.live_coords) {
+    subtitleBits.push(`live coords from low-precision ephemeris`);
+  }
   root.appendChild(el('p', { class: 'page-subtitle', text: subtitleBits.join(' · ') }));
 
   const metaList = el('dl', { class: 'meta-list' },
     ...meta('Catalog', `${data.catalog}${data.catalog_number}`),
     ...meta('Type', typeLabel(data.object_type)),
-    ...meta('Constellation', data.constellation),
+    ...meta('Constellation', data.constellation || '—'),
     ...meta('Right ascension', formatRA(data.ra_hours)),
     ...meta('Declination', formatDec(data.dec_degrees)),
-    ...meta('Magnitude', data.magnitude != null ? data.magnitude.toFixed(1) : '—'),
+    ...meta('Magnitude', data.magnitude != null ? Number(data.magnitude).toFixed(1) : '—'),
     ...meta('Attempts', String(data.attempts_count)),
   );
 

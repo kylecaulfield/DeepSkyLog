@@ -10,6 +10,7 @@ const exifr = require('exifr');
 
 const { getDb, DB_PATH } = require('./db');
 const { altAz, moonPhase } = require('./lib/astro');
+const { bodyPosition } = require('./lib/ephemeris');
 const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/fits');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -366,28 +367,38 @@ app.get('/api/tonight', (req, res) => {
     .prepare(
       `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
               lo.constellation, lo.ra_hours, lo.dec_degrees, lo.magnitude,
+              lo.ephemeris,
               l.slug AS list_slug, l.name AS list_name,
               EXISTS(SELECT 1 FROM list_completions lc
                        WHERE lc.list_object_id = lo.id) AS observed
          FROM list_objects lo
          JOIN lists l ON l.id = lo.list_id
-         WHERE lo.ra_hours IS NOT NULL AND lo.dec_degrees IS NOT NULL`,
+         WHERE lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
+            OR lo.ephemeris IS NOT NULL`,
     )
     .all();
 
   const enriched = [];
   for (const row of rows) {
     if (!includeObserved && row.observed) continue;
-    const pos = altAz({
-      raHours: row.ra_hours,
-      decDeg: row.dec_degrees,
-      lat,
-      lon,
-      date,
-    });
+    let raHours = row.ra_hours;
+    let decDeg = row.dec_degrees;
+    let magnitude = row.magnitude;
+    if (row.ephemeris) {
+      const eph = bodyPosition(row.ephemeris, date);
+      if (!eph) continue;
+      raHours = eph.raHours;
+      decDeg = eph.decDeg;
+      if (eph.magnitude != null) magnitude = eph.magnitude;
+    }
+    if (raHours == null || decDeg == null) continue;
+    const pos = altAz({ raHours, decDeg, lat, lon, date });
     if (!pos || pos.altitude < minAlt) continue;
     enriched.push({
       ...row,
+      ra_hours: raHours,
+      dec_degrees: decDeg,
+      magnitude,
       altitude: pos.altitude,
       azimuth: pos.azimuth,
     });
@@ -544,8 +555,25 @@ app.get('/api/objects/:id', (req, res) => {
     || observations.find((o) => o.image_path)
     || null;
 
+  let live = null;
+  if (object.ephemeris) {
+    const eph = bodyPosition(object.ephemeris, new Date());
+    if (eph) {
+      live = {
+        ra_hours: eph.raHours,
+        dec_degrees: eph.decDeg,
+        magnitude: eph.magnitude ?? object.magnitude,
+        computed_at: new Date().toISOString(),
+      };
+    }
+  }
+
   res.json({
     ...object,
+    ra_hours: live ? live.ra_hours : object.ra_hours,
+    dec_degrees: live ? live.dec_degrees : object.dec_degrees,
+    magnitude: live ? live.magnitude : object.magnitude,
+    live_coords: live,
     memberships,
     observations,
     completions,
