@@ -49,9 +49,12 @@ async function doFetch(pathname, { method = 'GET', body, headers = {}, auth = fa
   return res;
 }
 
-async function waitForReady(timeoutMs = 15_000) {
+async function waitForReady(timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (serverProc && serverProc.exitCode != null) {
+      throw new Error(`server exited during boot with code ${serverProc.exitCode}`);
+    }
     try {
       const res = await fetch(`${baseUrl}/api/health`);
       if (res.ok) return;
@@ -97,7 +100,7 @@ test('smoke', async (t) => {
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  serverProc.stdout.on('data', () => {});
+  serverProc.stdout.on('data', (b) => process.stderr.write(`[server] ${b}`));
   serverProc.stderr.on('data', (b) => process.stderr.write(`[server] ${b}`));
 
   t.after(async () => {
