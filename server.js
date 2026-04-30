@@ -1523,8 +1523,13 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   try {
     observationId = tx();
   } catch (err) {
-    try { fs.unlinkSync(thumbPath); } catch {}
-    try { fs.unlinkSync(finalPath); } catch {}
+    // Roll back every file written during finalize. The previous version
+    // referenced an undefined `finalPath` here and crashed the rollback
+    // with a ReferenceError, leaving the response un-sent and the orphaned
+    // files behind.
+    for (const p of written) {
+      try { fs.unlinkSync(p); } catch {}
+    }
     console.error('Finalize DB write failed:', err);
     return res.status(500).json({ error: 'Failed to record observation' });
   }
