@@ -292,10 +292,41 @@ function onStaged(res) {
       : `No device info in ${metaSource}. Please pick a telescope.`;
   }
 
-  if (res.exif?.object_name && !objectInput.value) {
-    objectInput.value = res.exif.object_name;
-    resolveObjectFromInput();
-    searchObjects(res.exif.object_name);
+  // Object: prefer the explicit EXIF/FITS object_name, fall back to whatever
+  // we mined from EXIF text fields or OCR.
+  const targetGuess = res.guesses?.target?.raw || res.exif?.object_name;
+  if (targetGuess && !objectInput.value) {
+    objectInput.value = targetGuess;
+    searchObjects(targetGuess);
+    setTimeout(resolveObjectFromInput, 150);
+  }
+
+  // Total integration time from the watermark ("52min") goes into the
+  // exposure input only if the user hasn't filled it from EXIF or sidecar.
+  const totalExposure = res.guesses?.total_exposure_seconds;
+  if (totalExposure && !exposureInput.value) {
+    exposureInput.value = totalExposure;
+  }
+
+  // Photographer: not a form field today, so just surface it in the EXIF
+  // table by appending a row.
+  if (res.guesses?.photographer) {
+    const dt = document.createElement('dt');
+    dt.className = 'k';
+    dt.textContent = 'Photographer';
+    const dd = document.createElement('dd');
+    dd.className = 'v';
+    dd.textContent = res.guesses.photographer;
+    exifSummary.append(dt, dd);
+  }
+  if (res.guesses?.from_ocr) {
+    const dt = document.createElement('dt');
+    dt.className = 'k';
+    dt.textContent = 'Source';
+    const dd = document.createElement('dd');
+    dd.className = 'v';
+    dd.textContent = 'EXIF + watermark OCR';
+    exifSummary.append(dt, dd);
   }
 
   formSection.hidden = false;
@@ -368,7 +399,7 @@ function resetForm() {
   telescopeHint.textContent = '';
   moonDisplay.value = '';
   seestarJsonField.value = '';
-  sidecarSummary.textContent = 'Drop the .json file Seestar saves next to the image to pre-fill the fields below.';
+  sidecarSummary.textContent = 'Optional. Drop the .json file Seestar saves alongside the image and stack count, exposure, gain and filter all auto-fill. Without it we read EXIF and OCR the watermark band.';
   setStatus('');
 }
 

@@ -12,6 +12,8 @@ const { getDb, DB_PATH } = require('./db');
 const { altAz, moonPhase } = require('./lib/astro');
 const { bodyPosition } = require('./lib/ephemeris');
 const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/fits');
+const { ocrBanner } = require('./lib/seestar_ocr');
+const { parseAll: parseSeestarText } = require('./lib/seestar_meta');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -718,6 +720,7 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
   let focalLength = null;
   let aperture = null;
   let objectName = null;
+  let exifTextBlob = '';
 
   if (isFits) {
     try {
@@ -752,7 +755,38 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
     exposureSeconds = exif?.ExposureTime ?? null;
     focalLength = exif?.FocalLength ?? null;
     aperture = exif?.FNumber ?? exif?.ApertureValue ?? null;
+    exifTextBlob = [
+      exif?.Artist, exif?.ImageDescription, exif?.UserComment,
+      exif?.XPSubject, exif?.XPComment, exif?.XPAuthor, exif?.XPTitle,
+      exif?.Software,
+    ].filter(Boolean).map(String).join('\n');
   }
+
+  // Mine the text we have (EXIF text fields plus the watermark band on
+  // Seestar JPGs) for target / total exposure / coords / capture date.
+  const telescopeMatch = matchTelescope(device);
+  const isSeestar = !isFits && /seestar/i.test(device || '');
+  let ocrText = null;
+  let ocrError = null;
+  if (isSeestar) {
+    try {
+      ocrText = await ocrBanner(req.file.path);
+    } catch (err) {
+      ocrError = err.message;
+      console.warn('Seestar OCR failed:', err.message);
+    }
+  }
+  const combinedText = [exifTextBlob || '', ocrText || ''].filter(Boolean).join('\n');
+  const guesses = parseSeestarText(combinedText);
+
+  // Promote OCR/EXIF guesses into the exposed exif block where the form
+  // currently has nothing (sub-second EXIF exposure shouldn't be clobbered
+  // by a watermark "52min", which is total integration; we put that in a
+  // separate field for the UI to interpret).
+  if (latitude == null && guesses.coords?.latitude != null) latitude = guesses.coords.latitude;
+  if (longitude == null && guesses.coords?.longitude != null) longitude = guesses.coords.longitude;
+  if (!capturedIso && guesses.captured_at) capturedIso = guesses.captured_at;
+  if (!objectName && guesses.target?.raw) objectName = guesses.target.raw;
 
   res.status(201).json({
     stage_id: req.file.filename,
@@ -772,7 +806,14 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
       aperture,
       object_name: objectName,
     },
-    telescope_match: matchTelescope(device),
+    guesses: {
+      target: guesses.target || null,
+      total_exposure_seconds: guesses.exposure_seconds_total,
+      photographer: guesses.photographer,
+      from_ocr: !!ocrText,
+      ocr_error: ocrError,
+    },
+    telescope_match: telescopeMatch,
     telescope_options: TELESCOPE_OPTIONS,
   });
 });
