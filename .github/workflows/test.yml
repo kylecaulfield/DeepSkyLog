@@ -1,0 +1,35 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - 'backlog.md'
+      - '**/*.md'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (skip OCR data download)
+        env:
+          SKIP_TESSDATA: '1'
+        run: npm ci
+
+      - name: Run smoke tests
+        env:
+          DISABLE_OCR: '1'
+        run: npm test

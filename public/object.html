@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>DeepSkyLog &mdash; Object</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet"
+          href="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.min.css" />
   </head>
   <body>
     <header class="site-header">
@@ -15,6 +17,7 @@
       <nav class="site-nav">
         <a href="/" data-nav="home">Dashboard</a>
         <a href="/tonight.html" data-nav="tonight">Tonight</a>
+        <a href="/planner.html" data-nav="planner">Planner</a>
         <a href="/gallery.html" data-nav="gallery">Gallery</a>
         <a href="/map.html" data-nav="map">Map</a>
       </nav>
@@ -22,6 +25,9 @@
     <main id="root">
       <p class="muted">Loading object&hellip;</p>
     </main>
+    <script type="text/javascript"
+            src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js"
+            charset="utf-8"></script>
     <script type="module" src="/js/object.js"></script>
   </body>
 </html>

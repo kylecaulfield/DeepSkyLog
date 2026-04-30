@@ -37,6 +37,32 @@ async function makeFeatured(observationId) {
   render();
 }
 
+async function triggerPlateSolve(o) {
+  const status = o.solver_status;
+  // Already finished or in progress: just poll for an update.
+  const action = (status === 'pending' || status === 'solving' || status === 'success')
+    ? { method: 'GET', label: 'Polling…' }
+    : { method: 'POST', label: 'Submitting…' };
+  try {
+    const res = await fetch(`/api/admin/observations/${o.id}/platesolve`, { method: action.method });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    if (data.status === 'success') {
+      alert(`Solved!  RA ${(data.solved_ra_hours || 0).toFixed(3)}h  Dec ${(data.solved_dec_degrees || 0).toFixed(2)}°  · radius ${(data.solved_radius_deg || 0).toFixed(2)}°`);
+    } else if (data.status === 'failure') {
+      alert('Astrometry could not solve this image.');
+    } else {
+      alert(`Status: ${data.status}. Click again in a minute to refresh.`);
+    }
+    render();
+  } catch (err) {
+    alert(`Plate solve failed: ${err.message}`);
+  }
+}
+
 async function deleteObservation(observationId) {
   if (!confirm(
     'Delete this observation? The image and thumbnail files will be removed and the catalog completion will be unticked if this was the only attempt.',
@@ -169,6 +195,18 @@ async function render() {
       const editBtn = el('button', { type: 'button', class: 'edit-btn', text: 'Edit' });
       editBtn.addEventListener('click', () => openEditModal(o));
       buttonRow.appendChild(editBtn);
+      if (o.image_path) {
+        const solveBtn = el('button', {
+          type: 'button',
+          class: 'edit-btn',
+          text: o.solver_status === 'success' ? `Solved · ${o.solved_radius_deg ? o.solved_radius_deg.toFixed(2) + '°' : 'ok'}`
+              : o.solver_status === 'failure' ? 'Solve failed (retry)'
+              : o.solver_status === 'pending' || o.solver_status === 'solving' ? `Solving (refresh)`
+              : 'Plate solve',
+        });
+        solveBtn.addEventListener('click', () => triggerPlateSolve(o));
+        buttonRow.appendChild(solveBtn);
+      }
       const deleteBtn = el('button', { type: 'button', class: 'delete-btn', text: 'Delete' });
       deleteBtn.addEventListener('click', () => deleteObservation(o.id));
       buttonRow.appendChild(deleteBtn);

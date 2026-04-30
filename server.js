@@ -14,6 +14,7 @@ const { bodyPosition } = require('./lib/ephemeris');
 const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/fits');
 const { ocrBanner } = require('./lib/seestar_ocr');
 const { parseAll: parseSeestarText } = require('./lib/seestar_meta');
+const astrometry = require('./lib/astrometry');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -383,6 +384,121 @@ app.get('/api/observations', (req, res) => {
     )
     .all(params);
   res.json(rows);
+});
+
+// Session planner — like /api/tonight but for an arbitrary date/range. The
+// caller supplies start/end ISO strings (or a `date` plus night-window
+// defaults of local sunset-to-sunrise approximated as 18:00–06:00 local).
+// For each target we sample altitude across the window and return:
+//   max_altitude / max_altitude_at — the apex
+//   above_min_minutes — minutes the target is above min_alt
+//   rises_at / sets_at / window_start / window_end (relative to query)
+app.get('/api/planner', (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: 'lat and lon query params are required' });
+  }
+  const minAlt = Number.isFinite(Number(req.query.min_alt)) ? Number(req.query.min_alt) : 30;
+  const includeObserved = req.query.include_observed === '1';
+  const limit = Math.min(Number(req.query.limit) || 200, 500);
+
+  let start, end;
+  if (req.query.start && req.query.end) {
+    start = new Date(req.query.start);
+    end = new Date(req.query.end);
+  } else if (req.query.date) {
+    // Treat date as local sunset-to-sunrise: 18:00 of the chosen day → 06:00
+    // of the next day in the supplied location's local time. We approximate
+    // local time as UTC + lon/15 (about right within the hour for planning).
+    const localOffsetHours = lon / 15;
+    const d = new Date(`${req.query.date}T18:00:00Z`);
+    start = new Date(d.getTime() - localOffsetHours * 3_600_000);
+    end = new Date(start.getTime() + 12 * 3_600_000);
+  } else {
+    return res.status(400).json({ error: 'either date= or start= and end= are required' });
+  }
+  if (!(start instanceof Date) || Number.isNaN(start.getTime()) ||
+      !(end instanceof Date) || Number.isNaN(end.getTime()) ||
+      end <= start) {
+    return res.status(400).json({ error: 'invalid date range' });
+  }
+  const stepMinutes = Math.max(1, Math.min(60, Number(req.query.step_minutes) || 10));
+  const stepMs = stepMinutes * 60_000;
+
+  const rows = db
+    .prepare(
+      `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
+              lo.constellation, lo.ra_hours, lo.dec_degrees, lo.magnitude,
+              lo.ephemeris,
+              l.slug AS list_slug, l.name AS list_name,
+              EXISTS(SELECT 1 FROM list_completions lc
+                       WHERE lc.list_object_id = lo.id) AS observed
+         FROM list_objects lo
+         JOIN lists l ON l.id = lo.list_id
+         WHERE lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
+            OR lo.ephemeris IS NOT NULL`,
+    )
+    .all();
+
+  const enriched = [];
+  for (const row of rows) {
+    if (!includeObserved && row.observed) continue;
+
+    let maxAlt = -90;
+    let maxAt = null;
+    let minutesAbove = 0;
+    let firstAbove = null;
+    let lastAbove = null;
+    let aboveCurrent = false;
+
+    for (let t = start.getTime(); t <= end.getTime(); t += stepMs) {
+      const date = new Date(t);
+      let raHours = row.ra_hours;
+      let decDeg = row.dec_degrees;
+      if (row.ephemeris) {
+        const eph = bodyPosition(row.ephemeris, date);
+        if (!eph) { aboveCurrent = false; continue; }
+        raHours = eph.raHours;
+        decDeg = eph.decDeg;
+      }
+      if (raHours == null || decDeg == null) continue;
+      const pos = altAz({ raHours, decDeg, lat, lon, date });
+      if (!pos) continue;
+      if (pos.altitude > maxAlt) {
+        maxAlt = pos.altitude;
+        maxAt = date.toISOString();
+      }
+      if (pos.altitude >= minAlt) {
+        minutesAbove += stepMinutes;
+        if (!firstAbove) firstAbove = date.toISOString();
+        lastAbove = date.toISOString();
+        aboveCurrent = true;
+      } else {
+        aboveCurrent = false;
+      }
+    }
+
+    if (maxAlt < minAlt) continue;
+    enriched.push({
+      ...row,
+      max_altitude: maxAlt,
+      max_altitude_at: maxAt,
+      first_above_at: firstAbove,
+      last_above_at: lastAbove,
+      minutes_above_min: minutesAbove,
+    });
+  }
+
+  enriched.sort((a, b) => b.max_altitude - a.max_altitude);
+
+  res.json({
+    location: { lat, lon },
+    window: { start: start.toISOString(), end: end.toISOString(), step_minutes: stepMinutes },
+    min_altitude: minAlt,
+    moon: moonPhase(start),
+    targets: enriched.slice(0, limit),
+  });
 });
 
 app.get('/api/tonight', (req, res) => {
@@ -775,6 +891,95 @@ app.delete('/api/admin/equipment/:id', basicAuth, (req, res) => {
   const result = db.prepare(`DELETE FROM equipment WHERE id = ?`).run(id);
   if (!result.changes) return res.status(404).json({ error: 'Equipment not found' });
   res.status(204).end();
+});
+
+// --- Astrometry.net plate solving ----------------------------------------
+
+function setSolverStatus(observationId, fields) {
+  const sets = Object.keys(fields).map((k) => `${k} = @${k}`).join(', ');
+  db.prepare(`UPDATE observations SET ${sets} WHERE id = @id`)
+    .run({ ...fields, id: observationId });
+}
+
+app.post('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const obs = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
+  if (!obs) return res.status(404).json({ error: 'Observation not found' });
+  if (!obs.image_path) return res.status(400).json({ error: 'Observation has no image to solve' });
+
+  let session;
+  try { session = await astrometry.login(); }
+  catch (err) {
+    if (err.code === 'no_key') {
+      return res.status(503).json({ error: 'ASTROMETRY_API_KEY is not set on the server' });
+    }
+    return res.status(502).json({ error: `astrometry login failed: ${err.message}` });
+  }
+
+  const full = path.resolve(UPLOAD_DIR, obs.image_path);
+  if (!full.startsWith(UPLOAD_DIR + path.sep) || !fs.existsSync(full)) {
+    return res.status(404).json({ error: 'Image file not found on disk' });
+  }
+
+  let subid;
+  try { subid = await astrometry.submitFile(session, full); }
+  catch (err) {
+    return res.status(502).json({ error: `astrometry upload failed: ${err.message}` });
+  }
+
+  setSolverStatus(id, { solver_status: 'pending', solver_job_id: String(subid) });
+  res.status(202).json({ ok: true, status: 'pending', subid });
+});
+
+app.get('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const obs = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
+  if (!obs) return res.status(404).json({ error: 'Observation not found' });
+  if (!obs.solver_job_id) return res.json({ status: obs.solver_status || 'idle' });
+  if (obs.solver_status === 'success' || obs.solver_status === 'failure') {
+    return res.json({
+      status: obs.solver_status,
+      solved_ra_hours: obs.solved_ra_hours,
+      solved_dec_degrees: obs.solved_dec_degrees,
+      solved_radius_deg: obs.solved_radius_deg,
+      solved_orientation_deg: obs.solved_orientation_deg,
+      solved_pixscale: obs.solved_pixscale,
+      solved_at: obs.solved_at,
+    });
+  }
+
+  // Poll astrometry for a status update.
+  let poll;
+  try { poll = await astrometry.pollStatus(obs.solver_job_id); }
+  catch (err) { return res.status(502).json({ error: err.message }); }
+
+  if (poll.state === 'pending' || poll.state === 'solving') {
+    setSolverStatus(id, { solver_status: poll.state });
+    return res.json({ status: poll.state });
+  }
+  if (poll.state === 'failure') {
+    setSolverStatus(id, {
+      solver_status: 'failure',
+      solved_at: new Date().toISOString(),
+    });
+    return res.json({ status: 'failure' });
+  }
+  // success
+  const cal = poll.calibration || {};
+  const updates = {
+    solver_status: 'success',
+    solved_ra_hours: cal.ra != null ? cal.ra / 15 : null,        // API returns RA in degrees
+    solved_dec_degrees: cal.dec ?? null,
+    solved_radius_deg: cal.radius ?? null,
+    solved_orientation_deg: cal.orientation ?? null,
+    solved_pixscale: cal.pixscale ?? null,
+    solved_at: new Date().toISOString(),
+    solved_json: JSON.stringify({ calibration: cal, info: poll.info || null }),
+  };
+  setSolverStatus(id, updates);
+  res.json({ status: 'success', ...updates });
 });
 
 app.get('/api/admin/stats', basicAuth, (_req, res) => {

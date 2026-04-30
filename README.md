@@ -7,22 +7,43 @@ list, and publish a public gallery and map of where you image from.
 
 ## Features
 
-- Dashboard showing % completion for every observing list.
-- Full object tables (110 Messier, 109 Caldwell seeded on first run) with
-  observed rows highlighted and filters for status / type / free text.
-- Photo gallery filterable by telescope and object type.
-- Per-object pages with hero photo, RA/Dec metadata, and list memberships.
-- Leaflet map of imaging locations, driven by EXIF GPS.
-- Admin UI behind HTTP Basic Auth: drag-and-drop uploads, EXIF preview,
-  autocomplete over the seeded catalogs, 1–5 star ratings.
-- Automatic telescope detection for Seestar S50 / S30 Pro / S30; 12″ Dobsonian
-  and anything else is picked manually.
-- FITS uploads (`.fit`/`.fits`) are accepted alongside JPEG/PNG. The ASCII
-  header drives metadata (`INSTRUME`, `OBJECT`, `DATE-OBS`, `EXPTIME`,
-  `FOCALLEN`, `APERTURE`, `SITELAT`/`SITELONG`), a JPEG preview is rendered
-  for gallery display, and the original `.fit` is preserved alongside.
-- CSV export of every observation.
-- `backup.sh` snapshots the SQLite database + uploads to a timestamped tarball.
+- **Catalogs.** 9 built-in lists / 527 objects: Messier (110), Caldwell
+  (109), Finest NGC (119), Local Group (22), AL Globulars (50), Open
+  Clusters for Smart Scopes (40), Planetary Nebulae for Smart Scopes (30),
+  Sharpless 2 Bright (29), Solar System (9). Cross-list aliases mean a
+  single upload of e.g. M42 also ticks NGC 1976 in any list that names it.
+- **Tonight + Planner.** `/tonight.html` shows what's up right now;
+  `/planner.html` projects altitude across an entire night for a chosen
+  date and location.
+- **Solar System ephemeris.** Sun, Moon, and the eight major planets
+  carry an `ephemeris` tag instead of stored coordinates; the server
+  computes live RA/Dec/magnitude on every fetch.
+- **Photo gallery + map** of every observation. Map is driven by EXIF GPS;
+  Aladin Lite finder chart embedded on each object page.
+- **Admin behind HTTP Basic Auth** with a configurable port and a version
+  chip in the header that compares against `main` on GitHub. Per-IP rate
+  limit on auth failures.
+- **Drag-and-drop upload** with EXIF + watermark OCR + JSON sidecar
+  parsing — drop a Seestar JPG and the form pre-fills target, telescope,
+  date, location, exposure, gain, filter. Tesseract.js language data is
+  bundled with the Docker image so OCR works on first upload.
+- **Multi-attempt support.** Log many photos of the same object, mark one
+  as featured for the cover image, compare any two side-by-side.
+- **Edit / delete / feature** every observation. Equipment library lets
+  you keep telescopes, cameras, filters, mounts as first-class entities.
+- **FITS uploads** (`.fit` / `.fits`) accepted alongside JPEG/PNG; the
+  ASCII header drives metadata and a JPEG preview is rendered for gallery
+  display.
+- **Plate solving** via Astrometry.net (set `ASTROMETRY_API_KEY`) — kicks
+  off a job, polls for results, stores RA/Dec/FOV/orientation back on the
+  observation.
+- **Backups.** `./backup.sh` snapshots the database + uploads. The admin
+  dashboard lists every archive with a one-click Restore.
+- **Activity heatmap.** Last 365 days of observations on the admin
+  dashboard, GitHub-contribution-graph style.
+- **CSV export** of every observation, all 30+ columns.
+- **Smoke test suite.** `npm test` boots a throwaway server and drives
+  every endpoint; runs in ~1 s; CI runs it on every push.
 
 ## Architecture at a glance
 
