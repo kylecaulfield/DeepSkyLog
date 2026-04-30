@@ -6,6 +6,9 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+# scripts/ is copied before `npm ci` so postinstall (fetch-tessdata.js) runs
+# during the deps stage and bakes the OCR language file into the image.
+COPY scripts ./scripts
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev
 
@@ -40,7 +43,9 @@ ENV NODE_ENV=production \
     BACKUP_DIR=/data/backups
 
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/vendor ./vendor
 COPY package.json package-lock.json ./
+COPY scripts ./scripts
 COPY server.js backup.sh ./
 COPY lib ./lib
 COPY db ./db

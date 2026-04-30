@@ -334,7 +334,11 @@ Take a backup first; always.
 
 An OCI image is published on every push to `main` at
 `ghcr.io/kylecaulfield/deepskylog`, built for `linux/amd64` and `linux/arm64`
-by `.github/workflows/docker.yml`. Tags:
+by `.github/workflows/docker.yml`. The image bundles `eng.traineddata.gz`
+under `vendor/tessdata/` (~10 MB, downloaded by an `npm install` postinstall
+hook) so OCR of the Seestar watermark band works out of the box without an
+internet round-trip on first upload. Set `DISABLE_OCR=1` or `SKIP_TESSDATA=1`
+to opt out of the download / runtime use. Tags:
 
 - `latest` — tip of `main`.
 - `main` — alias of the above.

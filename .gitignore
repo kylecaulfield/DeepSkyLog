@@ -5,4 +5,5 @@ data/
 uploads/
 thumbnails/
 backups/
+vendor/tessdata/
 .DS_Store
