@@ -14,15 +14,20 @@ const moonLine = document.getElementById('moon-line');
 const rows = document.getElementById('rows');
 
 const STORE_KEY = 'deepskylog.location';
-const stored = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-if (stored) {
+let stored = null;
+try { stored = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); }
+catch { /* corrupt — ignore */ }
+if (stored && Number.isFinite(Number(stored.lat)) && Number.isFinite(Number(stored.lon))) {
   latInput.value = stored.lat;
   lonInput.value = stored.lon;
 }
 
-// Default to tonight (the soonest "evening").
-const today = new Date();
-dateInput.value = today.toISOString().slice(0, 10);
+// Default to tonight in the user's *local* date (not UTC), so a planner
+// loaded at 11pm local doesn't jump to "tomorrow" because UTC has rolled
+// over.
+const todayLocal = new Date();
+const pad = (n) => String(n).padStart(2, '0');
+dateInput.value = `${todayLocal.getFullYear()}-${pad(todayLocal.getMonth() + 1)}-${pad(todayLocal.getDate())}`;
 
 function fmtDeg(v) { return v == null ? '—' : `${v.toFixed(1)}°`; }
 function fmtTime(iso) {

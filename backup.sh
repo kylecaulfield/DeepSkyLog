@@ -17,7 +17,11 @@ if [[ -f .env ]]; then
   set -a; . ./.env; set +a
 fi
 
-DB_PATH="${DB_PATH:-./data/deepskylog.sqlite}"
+# Accept either DB_PATH (this script's historical name) or DATABASE_PATH
+# (what server.js exports). When invoked from the admin "Run backup now"
+# button the server passes both; when run from a shell, the operator may
+# only have DATABASE_PATH set in .env.
+DB_PATH="${DB_PATH:-${DATABASE_PATH:-./data/deepskylog.sqlite}}"
 UPLOAD_DIR="${UPLOAD_DIR:-./uploads}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 KEEP="${BACKUP_KEEP:-14}"

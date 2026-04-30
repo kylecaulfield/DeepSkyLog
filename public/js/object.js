@@ -85,18 +85,27 @@ async function render() {
   ));
 
   // Finder chart via Aladin Lite — only when we have coordinates.
+  // Re-rendering: render() may be called more than once (after a successful
+  // edit, etc.). Each call replaces the section, so we never end up with two
+  // #aladin-lite-div nodes. We also wait on requestAnimationFrame so the
+  // element has been laid out (Aladin reads clientWidth synchronously).
   if (data.ra_hours != null && data.dec_degrees != null && typeof A !== 'undefined') {
-    const chartSection = el('section', { class: 'section' },
+    const chartContainer = el('div', { class: 'finder-chart' });
+    const chartSection = el('section', { class: 'section finder-section' },
       el('h2', { text: 'Finder chart' }),
       el('p', { class: 'dim',
         text: 'Sky around this target on a 1° field. Drag to pan, scroll to zoom. Survey: DSS coloured.' }),
-      el('div', { id: 'aladin-lite-div', class: 'finder-chart' }),
+      chartContainer,
     );
     root.appendChild(chartSection);
-    queueMicrotask(() => {
+    requestAnimationFrame(() => {
       try {
+        if (!A.init || typeof A.init.then !== 'function') return;
         A.init.then(() => {
-          const aladin = A.aladin('#aladin-lite-div', {
+          // Defensive: clear anything Aladin previously rendered into this
+          // container so we never stack two charts.
+          chartContainer.innerHTML = '';
+          A.aladin(chartContainer, {
             survey: 'P/DSS2/color',
             fov: 1.0,
             target: `${data.ra_hours * 15} ${data.dec_degrees}`,
@@ -109,7 +118,7 @@ async function render() {
             showShareControl: false,
             showFrame: false,
           });
-        });
+        }).catch((err) => console.warn('Aladin init failed:', err));
       } catch (err) {
         console.warn('Aladin init failed:', err);
       }

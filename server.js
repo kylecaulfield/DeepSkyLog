@@ -447,10 +447,9 @@ app.get('/api/planner', (req, res) => {
 
     let maxAlt = -90;
     let maxAt = null;
-    let minutesAbove = 0;
+    let samplesAbove = 0;        // count of samples strictly above min
     let firstAbove = null;
     let lastAbove = null;
-    let aboveCurrent = false;
 
     for (let t = start.getTime(); t <= end.getTime(); t += stepMs) {
       const date = new Date(t);
@@ -458,7 +457,7 @@ app.get('/api/planner', (req, res) => {
       let decDeg = row.dec_degrees;
       if (row.ephemeris) {
         const eph = bodyPosition(row.ephemeris, date);
-        if (!eph) { aboveCurrent = false; continue; }
+        if (!eph) continue;
         raHours = eph.raHours;
         decDeg = eph.decDeg;
       }
@@ -470,16 +469,18 @@ app.get('/api/planner', (req, res) => {
         maxAt = date.toISOString();
       }
       if (pos.altitude >= minAlt) {
-        minutesAbove += stepMinutes;
+        samplesAbove += 1;
         if (!firstAbove) firstAbove = date.toISOString();
         lastAbove = date.toISOString();
-        aboveCurrent = true;
-      } else {
-        aboveCurrent = false;
       }
     }
 
     if (maxAlt < minAlt) continue;
+    // Each sample represents an interval of stepMinutes. N samples cover
+    // (N-1) intervals, so minutes-above is (samplesAbove - 1) × stepMinutes
+    // when there's at least one above-min sample; the previous version was
+    // off by one full step on every target.
+    const minutesAbove = samplesAbove > 0 ? (samplesAbove - 1) * stepMinutes : 0;
     enriched.push({
       ...row,
       max_altitude: maxAlt,
@@ -752,7 +753,7 @@ app.get('/api/admin/equipment', basicAuth, (_req, res) => {
 
 app.post('/api/admin/equipment', basicAuth, (req, res) => {
   const kind = String(req.body?.kind || '').trim().toLowerCase();
-  const name = String(req.body?.name || '').trim();
+  const name = String(req.body?.name || '').trim().slice(0, 80);
   if (!kind || !name) return res.status(400).json({ error: 'kind and name are required' });
   if (!['telescope', 'camera', 'filter', 'mount', 'other'].includes(kind)) {
     return res.status(400).json({ error: 'kind must be telescope|camera|filter|mount|other' });
@@ -775,15 +776,34 @@ app.post('/api/admin/equipment', basicAuth, (req, res) => {
 app.patch('/api/admin/equipment/:id', basicAuth, (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const body = req.body || {};
   const existing = db.prepare(`SELECT * FROM equipment WHERE id = ?`).get(id);
   if (!existing) return res.status(404).json({ error: 'Equipment not found' });
   const sets = [];
   const params = { id };
-  if ('name' in req.body)    { sets.push('name = @name');    params.name = String(req.body.name).trim(); }
-  if ('notes' in req.body)   { sets.push('notes = @notes');  params.notes = req.body.notes ? String(req.body.notes).slice(0, 500) : null; }
-  if ('retired' in req.body) { sets.push('retired = @retired'); params.retired = req.body.retired ? 1 : 0; }
+  if ('name' in body) {
+    const name = String(body.name || '').trim().slice(0, 80);
+    if (!name) return res.status(400).json({ error: 'name cannot be empty' });
+    sets.push('name = @name');
+    params.name = name;
+  }
+  if ('notes' in body) {
+    sets.push('notes = @notes');
+    params.notes = body.notes ? String(body.notes).slice(0, 500) : null;
+  }
+  if ('retired' in body) {
+    sets.push('retired = @retired');
+    params.retired = body.retired ? 1 : 0;
+  }
   if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
-  db.prepare(`UPDATE equipment SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  try {
+    db.prepare(`UPDATE equipment SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: `another ${existing.kind} already uses that name` });
+    }
+    throw err;
+  }
   res.json(db.prepare(`SELECT * FROM equipment WHERE id = ?`).get(id));
 });
 
@@ -815,9 +835,18 @@ app.post('/api/admin/backups', basicAuth, (_req, res) => {
   const script = path.join(__dirname, 'backup.sh');
   if (!fs.existsSync(script)) return res.status(500).json({ error: 'backup.sh not found' });
   const { spawnSync } = require('child_process');
+  // Pass the canonical paths the server is actually using so backup.sh
+  // doesn't fall back to its own defaults when DATABASE_PATH/UPLOAD_DIR
+  // were overridden in the environment.
   const result = spawnSync('bash', [script], {
     cwd: __dirname,
-    env: { ...process.env, BACKUP_DIR },
+    env: {
+      ...process.env,
+      DB_PATH: DB_PATH,
+      DATABASE_PATH: DB_PATH,
+      UPLOAD_DIR,
+      BACKUP_DIR,
+    },
     timeout: 5 * 60_000,
   });
   if (result.status !== 0) {
@@ -855,22 +884,69 @@ app.post('/api/admin/backups/:name/restore', basicAuth, async (req, res) => {
     return res.status(400).json({ error: 'archive missing deepskylog.sqlite' });
   }
 
-  // Replace live DB.
+  // Atomic db swap with rollback. The flow is:
+  //   1. copy archive db to <DB_PATH>.new                  (fail-safe)
+  //   2. rename live <DB_PATH>          → <DB_PATH>.bak   (atomic)
+  //   3. rename <DB_PATH>.new           → <DB_PATH>       (atomic)
+  //   4. on any failure between 2 and 3: rename .bak back
+  //   5. on success: best-effort remove .bak and stale -wal/-shm
+  //
+  // We deliberately rename rather than unlink: with better-sqlite3 holding
+  // an fd, the rename is invisible to the running process (the kernel keeps
+  // the unlinked-by-rename inode alive); the next process restart opens the
+  // freshly-named file. Avoids the "live db permanently destroyed if copy
+  // fails halfway" hole the old code had.
   const dbDir = path.dirname(DB_PATH);
   fs.mkdirSync(dbDir, { recursive: true });
-  for (const ext of ['', '-wal', '-shm']) {
+  const dbNew = `${DB_PATH}.new`;
+  const dbBak = `${DB_PATH}.bak`;
+  let bakInPlace = false;
+  let uploadsBak = null;
+  try {
+    fs.copyFileSync(dbSrc, dbNew);
+    if (fs.existsSync(DB_PATH)) {
+      fs.renameSync(DB_PATH, dbBak);
+      bakInPlace = true;
+    }
+    fs.renameSync(dbNew, DB_PATH);
+
+    const uploadsSrc = path.join(tmp, 'uploads');
+    if (fs.existsSync(uploadsSrc)) {
+      uploadsBak = `${UPLOAD_DIR}.bak-${Date.now()}`;
+      if (fs.existsSync(UPLOAD_DIR)) {
+        fs.renameSync(UPLOAD_DIR, uploadsBak);
+      }
+      fs.cpSync(uploadsSrc, UPLOAD_DIR, { recursive: true });
+      fs.rmSync(uploadsBak, { recursive: true, force: true });
+      uploadsBak = null;
+    }
+  } catch (err) {
+    // Roll back any partial swap.
+    try { fs.unlinkSync(dbNew); } catch {}
+    if (bakInPlace) {
+      try {
+        if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+        fs.renameSync(dbBak, DB_PATH);
+      } catch (rollbackErr) {
+        console.error('Restore rollback failed:', rollbackErr.message);
+      }
+    }
+    if (uploadsBak && fs.existsSync(uploadsBak)) {
+      try {
+        fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
+        fs.renameSync(uploadsBak, UPLOAD_DIR);
+      } catch {}
+    }
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return res.status(500).json({ error: `restore failed: ${err.message}` });
+  }
+
+  // Success — clean up bak files and any stale wal/shm sidecars (the new
+  // db doesn't have matching ones until it's reopened).
+  try { if (fs.existsSync(dbBak)) fs.unlinkSync(dbBak); } catch {}
+  for (const ext of ['-wal', '-shm']) {
     try { fs.unlinkSync(`${DB_PATH}${ext}`); } catch {}
   }
-  fs.copyFileSync(dbSrc, DB_PATH);
-
-  // Replace uploads if present in archive.
-  const uploadsSrc = path.join(tmp, 'uploads');
-  if (fs.existsSync(uploadsSrc)) {
-    fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-    fs.cpSync(uploadsSrc, UPLOAD_DIR, { recursive: true });
-  }
-
   fs.rmSync(tmp, { recursive: true, force: true });
 
   res.json({
@@ -1492,11 +1568,15 @@ app.patch('/api/admin/observations/:id', basicAuth, (req, res) => {
   if ('filter_name' in body)      updates.filter_name = str(body.filter_name, 80);
   if ('focal_length_mm' in body)  updates.focal_length_mm = num(body.focal_length_mm);
   if ('aperture' in body)         updates.aperture = num(body.aperture);
-  if ('latitude' in body)         updates.latitude = num(body.latitude);
-  if ('longitude' in body)        updates.longitude = num(body.longitude);
+  if ('latitude' in body)         updates.latitude  = clamp(body.latitude, -90, 90);
+  if ('longitude' in body)        updates.longitude = clamp(body.longitude, -180, 180);
 
-  // Re-derive the moon phase if observed_at changes.
-  if (updates.observed_at && !Number.isNaN(Date.parse(updates.observed_at))) {
+  // observed_at: accept null (clear) or a parseable date; reject obvious
+  // garbage so the column doesn't fill up with whatever the client sent.
+  if ('observed_at' in body && updates.observed_at !== null) {
+    if (Number.isNaN(Date.parse(updates.observed_at))) {
+      return res.status(400).json({ error: 'observed_at is not a parseable date' });
+    }
     const mp = moonPhase(new Date(updates.observed_at));
     updates.moon_phase = mp.phase;
     updates.moon_phase_name = mp.name;

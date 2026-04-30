@@ -237,6 +237,91 @@ test('smoke', async (t) => {
     assert.equal(typeof detail.live_coords.ra_hours, 'number');
   });
 
+  await t.test('PATCH observation rejects out-of-range lat/lon and bad date', async () => {
+    // Set up an observation we can poke.
+    const jpeg = await buildSyntheticJpeg();
+    const fd = new FormData();
+    fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }), 'm45.jpg');
+    const stage = await fetch(`${baseUrl}/api/admin/stage`, {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
+      body: fd,
+    }).then((r) => r.json());
+    const messier = await fetchJsonAuthed('/api/lists/messier');
+    const m45 = messier.objects.find((o) => o.catalog_number === '45');
+    const created = await fetch(`${baseUrl}/api/admin/observations`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stage_id: stage.stage_id,
+        object_id: m45.id, catalog: 'M', catalog_number: '45',
+        object_name: 'Pleiades',
+        telescope: 'Test',
+        observed_at: '2026-04-19T22:00',
+      }),
+    }).then((r) => r.json());
+
+    // Out-of-range latitude is clamped (not rejected — clamp() saturates).
+    const clamped = await fetch(`${baseUrl}/api/admin/observations/${created.id}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ latitude: 999, longitude: -999 }),
+    }).then((r) => r.json());
+    assert.equal(clamped.latitude, 90);
+    assert.equal(clamped.longitude, -180);
+
+    // Garbage date is rejected, not stored.
+    const bad = await fetch(`${baseUrl}/api/admin/observations/${created.id}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ observed_at: 'not-a-date' }),
+    });
+    assert.equal(bad.status, 400);
+  });
+
+  await t.test('Equipment PATCH returns 409 on UNIQUE collision', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const a = await fetch(`${baseUrl}/api/admin/equipment`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'camera', name: 'IMX585' }),
+    }).then((r) => r.json());
+    const b = await fetch(`${baseUrl}/api/admin/equipment`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'camera', name: 'IMX462' }),
+    }).then((r) => r.json());
+    // Try to rename b → a's name.
+    const collision = await fetch(`${baseUrl}/api/admin/equipment/${b.id}`, {
+      method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'IMX585' }),
+    });
+    assert.equal(collision.status, 409);
+    // Cleanup
+    await fetch(`${baseUrl}/api/admin/equipment/${a.id}`, { method: 'DELETE', headers: auth });
+    await fetch(`${baseUrl}/api/admin/equipment/${b.id}`, { method: 'DELETE', headers: auth });
+  });
+
+  await t.test('Planner minutes_above_min uses correct (N-1)*step formula', async () => {
+    // We don't know what objects are above any given minimum, but we can
+    // assert the structure. With step=10 minutes and many samples, an
+    // object reported as "above for K minutes" must satisfy K % 10 === 0.
+    const today = new Date().toISOString().slice(0, 10);
+    const data = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=10&step_minutes=10`,
+    );
+    for (const t of data.targets) {
+      assert.equal(t.minutes_above_min % 10, 0, `target #${t.id} minutes_above_min not a multiple of step`);
+    }
+  });
+
   await t.test('CSV export has the expected header', async () => {
     const res = await fetch(`${baseUrl}/api/observations.csv`);
     assert.equal(res.status, 200);

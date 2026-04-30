@@ -114,13 +114,16 @@ function renderHeatmap(rows) {
   const counts = new Map(rows.map((r) => [r.day, r.count]));
   const max = Math.max(1, ...rows.map((r) => r.count));
 
-  // Build a grid: 53 weeks × 7 days, ending on today (UTC).
+  // GitHub-style: anchor today in the last column, walk backwards to fill
+  // 53 weeks of 7-day columns (rows by weekday, columns by week).
+  // Working in UTC keeps the iso date strings aligned with the SQL output.
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
-  const start = new Date(today);
-  start.setUTCDate(start.getUTCDate() - 364);
-  // Align to Sunday so each column is one calendar week.
-  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+  const todayDow = today.getUTCDay();           // 0=Sun … 6=Sat
+  const lastColEnd = new Date(today);
+  lastColEnd.setUTCDate(lastColEnd.getUTCDate() + (6 - todayDow)); // Saturday of this week
+  const start = new Date(lastColEnd);
+  start.setUTCDate(start.getUTCDate() - 53 * 7 + 1); // earliest Sunday in grid
 
   const weeks = 53;
   const grid = el('div', { class: 'heatmap' });
@@ -137,11 +140,11 @@ function renderHeatmap(rows) {
         class: 'hm-cell' + (future ? ' future' : ''),
         title: future ? '' : `${iso} — ${c} observation${c === 1 ? '' : 's'}`,
       });
-      if (!future && c > 0) {
+      if (future) {
+        // Leave data-level off so .future styling alone applies.
+      } else if (c > 0) {
         const intensity = Math.ceil((c / max) * 4);
         cell.dataset.level = String(Math.min(4, intensity));
-      } else if (future) {
-        cell.dataset.level = '';
       } else {
         cell.dataset.level = '0';
       }
@@ -179,21 +182,27 @@ async function loadBackups() {
       el('div', { class: 'empty-state', text: `No archives in ${data.dir} yet.` }))));
     return;
   }
+  let restoreInFlight = false;
   for (const a of data.archives) {
     const restoreBtn = el('button', { type: 'button', class: 'edit-btn', text: 'Restore' });
     restoreBtn.addEventListener('click', async () => {
+      if (restoreInFlight) return;
       if (!confirm(`Restore ${a.name}?\n\nThe live database and uploads will be REPLACED with what's in this archive. The server will then exit (your supervisor / Docker will restart it).`)) return;
+      restoreInFlight = true;
       restoreBtn.disabled = true;
+      const status = document.getElementById('backup-status');
+      status.textContent = 'Restoring…';
       try {
         const res = await fetch(`/api/admin/backups/${encodeURIComponent(a.name)}/restore`, { method: 'POST' });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error || `HTTP ${res.status}`);
         }
-        document.getElementById('backup-status').textContent = 'Restored. Server is exiting; refresh in a few seconds.';
+        status.textContent = 'Restored. Server is exiting; refresh in a few seconds.';
       } catch (err) {
+        status.textContent = `Restore failed: ${err.message}`;
         restoreBtn.disabled = false;
-        alert(`Restore failed: ${err.message}`);
+        restoreInFlight = false;
       }
     });
     tbody.appendChild(el('tr', {},
