@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; Equipment</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/admin/admin.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog · Admin</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/">Public site</a>
+        <a href="/admin/">Dashboard</a>
+        <a href="/admin/observations.html">Observations</a>
+        <a href="/admin/equipment.html" class="active">Equipment</a>
+        <a href="/admin/upload.html">Upload</a>
+      </nav>
+    </header>
+    <main>
+      <h1 class="page-title">Equipment library</h1>
+      <p class="page-subtitle">Telescopes, cameras, filters and mounts. Telescopes added here join the upload form's dropdown.</p>
+
+      <section class="section">
+        <form id="add-form" class="toolbar">
+          <label>
+            Kind
+            <select name="kind" required>
+              <option value="telescope">Telescope</option>
+              <option value="camera">Camera</option>
+              <option value="filter">Filter</option>
+              <option value="mount">Mount</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label style="flex: 1;">
+            Name
+            <input type="text" name="name" required placeholder="Seestar S50, ASI120MM, UHC, EQ6-R…" style="width: 100%;" />
+          </label>
+          <label style="flex: 2;">
+            Notes
+            <input type="text" name="notes" placeholder="optional" style="width: 100%;" />
+          </label>
+          <button type="submit">Add</button>
+          <span id="add-status" class="dim"></span>
+        </form>
+      </section>
+
+      <section class="section">
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Kind</th>
+                <th>Name</th>
+                <th>Notes</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/admin/equipment.js"></script>
+    <script type="module" src="/admin/version.js"></script>
+  </body>
+</html>

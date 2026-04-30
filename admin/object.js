@@ -166,6 +166,9 @@ async function render() {
         featureBtn.addEventListener('click', () => makeFeatured(o.id));
         buttonRow.appendChild(featureBtn);
       }
+      const editBtn = el('button', { type: 'button', class: 'edit-btn', text: 'Edit' });
+      editBtn.addEventListener('click', () => openEditModal(o));
+      buttonRow.appendChild(editBtn);
       const deleteBtn = el('button', { type: 'button', class: 'delete-btn', text: 'Delete' });
       deleteBtn.addEventListener('click', () => deleteObservation(o.id));
       buttonRow.appendChild(deleteBtn);
@@ -190,6 +193,101 @@ async function render() {
     obsSection.appendChild(grid);
   }
   root.appendChild(obsSection);
+}
+
+function toLocalDt(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function openEditModal(o) {
+  const overlay = el('div', { class: 'modal-overlay' });
+  const card = el('div', { class: 'modal' });
+  const fld = (label, name, type, value) =>
+    el('label', { class: 'field' },
+      el('span', { text: label }),
+      el('input', { type, name, value: value == null ? '' : String(value) }),
+    );
+  const fldArea = (label, name, value) => {
+    const ta = el('textarea', { name, rows: '3' });
+    ta.value = value || '';
+    return el('label', { class: 'field' }, el('span', { text: label }), ta);
+  };
+  const select = (label, name, value, options) => {
+    const sel = el('select', { name });
+    sel.appendChild(el('option', { value: '' }, '—'));
+    for (const v of options) {
+      const opt = el('option', { value: String(v) }, String(v));
+      if (String(v) === String(value || '')) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    return el('label', { class: 'field' }, el('span', { text: label }), sel);
+  };
+
+  const form = el('form', { class: 'edit-form' },
+    fld('Title', 'title', 'text', o.title),
+    fld('Captured at', 'observed_at', 'datetime-local', toLocalDt(o.observed_at)),
+    fld('Location', 'location', 'text', o.location),
+    fld('Telescope', 'telescope', 'text', o.telescope),
+    fld('Camera', 'camera', 'text', o.camera),
+    el('div', { class: 'row' },
+      select('Rating', 'rating', o.rating, [1,2,3,4,5]),
+      select('Seeing', 'seeing', o.seeing, [1,2,3,4,5]),
+    ),
+    el('div', { class: 'row' },
+      select('Transparency', 'transparency', o.transparency, [1,2,3,4,5]),
+      select('Bortle', 'bortle', o.bortle, [1,2,3,4,5,6,7,8,9]),
+    ),
+    el('div', { class: 'row' },
+      fld('Stack count', 'stack_count', 'number', o.stack_count),
+      fld('Sub-exposure (s)', 'exposure_seconds', 'number', o.exposure_seconds),
+    ),
+    el('div', { class: 'row' },
+      fld('Gain', 'gain', 'number', o.gain),
+      fld('Filter', 'filter_name', 'text', o.filter_name),
+    ),
+    fldArea('Notes', 'description', o.description),
+  );
+
+  const status = el('p', { class: 'edit-status dim' });
+  const actions = el('div', { class: 'actions' });
+  const cancel = el('button', { type: 'button', class: 'ghost', text: 'Cancel' });
+  cancel.addEventListener('click', () => overlay.remove());
+  actions.appendChild(cancel);
+  actions.appendChild(el('button', { type: 'submit', text: 'Save' }));
+  form.appendChild(actions);
+  form.appendChild(status);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    status.textContent = 'Saving…';
+    status.className = 'edit-status dim';
+    const fd = new FormData(form);
+    const payload = {};
+    for (const [k, v] of fd.entries()) payload[k] = v === '' ? null : v;
+    try {
+      const res = await fetch(`/api/admin/observations/${o.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      overlay.remove();
+      render();
+    } catch (err) {
+      status.textContent = `Save failed: ${err.message}`;
+      status.className = 'edit-status danger';
+    }
+  });
+
+  card.appendChild(el('h3', { text: `Edit observation #${o.id}` }));
+  card.appendChild(form);
+  overlay.appendChild(card);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 }
 
 render();

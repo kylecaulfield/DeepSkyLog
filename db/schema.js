@@ -135,6 +135,37 @@ const MIGRATIONS = [
       ALTER TABLE list_objects ADD COLUMN ephemeris TEXT;
     `,
   },
+  {
+    id: 9,
+    name: 'add_equipment_table',
+    up: `
+      CREATE TABLE IF NOT EXISTS equipment (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,        -- 'telescope' | 'camera' | 'filter' | 'mount' | 'other'
+        name TEXT NOT NULL,
+        notes TEXT,
+        retired INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(kind, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_equipment_kind ON equipment(kind, retired);
+    `,
+  },
+  {
+    id: 10,
+    name: 'add_observation_solve_columns',
+    up: `
+      ALTER TABLE observations ADD COLUMN solver_status TEXT;
+      ALTER TABLE observations ADD COLUMN solver_job_id TEXT;
+      ALTER TABLE observations ADD COLUMN solved_ra_hours REAL;
+      ALTER TABLE observations ADD COLUMN solved_dec_degrees REAL;
+      ALTER TABLE observations ADD COLUMN solved_radius_deg REAL;
+      ALTER TABLE observations ADD COLUMN solved_orientation_deg REAL;
+      ALTER TABLE observations ADD COLUMN solved_pixscale REAL;
+      ALTER TABLE observations ADD COLUMN solved_at TEXT;
+      ALTER TABLE observations ADD COLUMN solved_json TEXT;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

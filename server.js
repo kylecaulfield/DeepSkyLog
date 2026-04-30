@@ -617,7 +617,164 @@ app.get('/api/objects/:id', (req, res) => {
 });
 
 app.get('/api/admin/config', basicAuth, (_req, res) => {
-  res.json({ telescopes: TELESCOPE_OPTIONS });
+  // Merge hardcoded telescope options with user-managed equipment so the
+  // upload form's dropdown stays unified.
+  const userTelescopes = db
+    .prepare(`SELECT name FROM equipment WHERE kind = 'telescope' AND retired = 0 ORDER BY name`)
+    .all()
+    .map((r) => r.name);
+  const merged = [...new Set([...TELESCOPE_OPTIONS, ...userTelescopes])];
+  res.json({ telescopes: merged });
+});
+
+app.get('/api/admin/equipment', basicAuth, (_req, res) => {
+  const rows = db
+    .prepare(`SELECT * FROM equipment ORDER BY retired ASC, kind, name`)
+    .all();
+  res.json(rows);
+});
+
+app.post('/api/admin/equipment', basicAuth, (req, res) => {
+  const kind = String(req.body?.kind || '').trim().toLowerCase();
+  const name = String(req.body?.name || '').trim();
+  if (!kind || !name) return res.status(400).json({ error: 'kind and name are required' });
+  if (!['telescope', 'camera', 'filter', 'mount', 'other'].includes(kind)) {
+    return res.status(400).json({ error: 'kind must be telescope|camera|filter|mount|other' });
+  }
+  const notes = req.body?.notes ? String(req.body.notes).slice(0, 500) : null;
+  try {
+    const result = db
+      .prepare(`INSERT INTO equipment (kind, name, notes) VALUES (?, ?, ?)`)
+      .run(kind, name, notes);
+    const row = db.prepare(`SELECT * FROM equipment WHERE id = ?`).get(result.lastInsertRowid);
+    res.status(201).json(row);
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'Equipment with that kind+name already exists' });
+    }
+    throw err;
+  }
+});
+
+app.patch('/api/admin/equipment/:id', basicAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const existing = db.prepare(`SELECT * FROM equipment WHERE id = ?`).get(id);
+  if (!existing) return res.status(404).json({ error: 'Equipment not found' });
+  const sets = [];
+  const params = { id };
+  if ('name' in req.body)    { sets.push('name = @name');    params.name = String(req.body.name).trim(); }
+  if ('notes' in req.body)   { sets.push('notes = @notes');  params.notes = req.body.notes ? String(req.body.notes).slice(0, 500) : null; }
+  if ('retired' in req.body) { sets.push('retired = @retired'); params.retired = req.body.retired ? 1 : 0; }
+  if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+  db.prepare(`UPDATE equipment SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  res.json(db.prepare(`SELECT * FROM equipment WHERE id = ?`).get(id));
+});
+
+// --- Backup management ----------------------------------------------------
+
+const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || './backups');
+
+app.get('/api/admin/backups', basicAuth, (_req, res) => {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) return res.json({ dir: BACKUP_DIR, archives: [] });
+    const entries = fs.readdirSync(BACKUP_DIR, { withFileTypes: true })
+      .filter((e) => e.isFile() && /\.tar\.gz$/.test(e.name))
+      .map((e) => {
+        const full = path.join(BACKUP_DIR, e.name);
+        const st = fs.statSync(full);
+        return { name: e.name, size: st.size, modified: st.mtime.toISOString() };
+      })
+      .sort((a, b) => b.modified.localeCompare(a.modified));
+    res.json({ dir: BACKUP_DIR, archives: entries });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/backups', basicAuth, (_req, res) => {
+  // Run ./backup.sh in the project root and stream the output back. We use
+  // the same script the user can run from a shell so behaviour stays
+  // consistent. Fails fast if the script is missing.
+  const script = path.join(__dirname, 'backup.sh');
+  if (!fs.existsSync(script)) return res.status(500).json({ error: 'backup.sh not found' });
+  const { spawnSync } = require('child_process');
+  const result = spawnSync('bash', [script], {
+    cwd: __dirname,
+    env: { ...process.env, BACKUP_DIR },
+    timeout: 5 * 60_000,
+  });
+  if (result.status !== 0) {
+    return res.status(500).json({
+      error: 'backup.sh exited non-zero',
+      stdout: result.stdout?.toString(),
+      stderr: result.stderr?.toString(),
+    });
+  }
+  res.status(201).json({ ok: true, log: result.stdout?.toString() });
+});
+
+app.post('/api/admin/backups/:name/restore', basicAuth, async (req, res) => {
+  const safe = path.basename(req.params.name);
+  const archive = path.join(BACKUP_DIR, safe);
+  if (!archive.startsWith(BACKUP_DIR + path.sep) || !fs.existsSync(archive)) {
+    return res.status(404).json({ error: 'Archive not found' });
+  }
+
+  // Extract into a sibling temp dir, then atomically swap the live db file
+  // and merge uploads. The server will exit afterwards so the next request
+  // re-opens the new database; in Docker the supervisor restarts us.
+  const { spawnSync } = require('child_process');
+  const tmp = path.join(BACKUP_DIR, `.restore-${Date.now()}`);
+  fs.mkdirSync(tmp, { recursive: true });
+  const tar = spawnSync('tar', ['-xzf', archive, '-C', tmp], { timeout: 5 * 60_000 });
+  if (tar.status !== 0) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return res.status(500).json({ error: 'tar extract failed', stderr: tar.stderr?.toString() });
+  }
+
+  const dbSrc = path.join(tmp, 'deepskylog.sqlite');
+  if (!fs.existsSync(dbSrc)) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return res.status(400).json({ error: 'archive missing deepskylog.sqlite' });
+  }
+
+  // Replace live DB.
+  const dbDir = path.dirname(DB_PATH);
+  fs.mkdirSync(dbDir, { recursive: true });
+  for (const ext of ['', '-wal', '-shm']) {
+    try { fs.unlinkSync(`${DB_PATH}${ext}`); } catch {}
+  }
+  fs.copyFileSync(dbSrc, DB_PATH);
+
+  // Replace uploads if present in archive.
+  const uploadsSrc = path.join(tmp, 'uploads');
+  if (fs.existsSync(uploadsSrc)) {
+    fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    fs.cpSync(uploadsSrc, UPLOAD_DIR, { recursive: true });
+  }
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+
+  res.json({
+    ok: true,
+    archive: safe,
+    note: 'Database and uploads restored. Restart the server to pick up the new database.',
+  });
+
+  // Schedule a graceful exit so a Docker restart picks up the fresh state.
+  // Without an external supervisor (`npm start` directly) the user has to
+  // restart by hand — the response message says so.
+  setTimeout(() => { console.log('Restored backup; exiting for clean reopen'); process.exit(0); }, 250);
+});
+
+app.delete('/api/admin/equipment/:id', basicAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const result = db.prepare(`DELETE FROM equipment WHERE id = ?`).run(id);
+  if (!result.changes) return res.status(404).json({ error: 'Equipment not found' });
+  res.status(204).end();
 });
 
 app.get('/api/admin/stats', basicAuth, (_req, res) => {
@@ -668,7 +825,20 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
     )
     .all();
 
-  res.json({ totals, lists, recent, telescopes });
+  // Calendar heatmap: counts of observations per UTC date for the last 365
+  // days. Returned as a sparse array; the front-end fills in zero days.
+  const heatmap = db
+    .prepare(
+      `SELECT substr(COALESCE(observed_at, created_at), 1, 10) AS day,
+              COUNT(*) AS count
+         FROM observations
+         WHERE COALESCE(observed_at, created_at) >= date('now', '-365 day')
+         GROUP BY day
+         ORDER BY day`,
+    )
+    .all();
+
+  res.json({ totals, lists, recent, telescopes, heatmap });
 });
 
 app.get('/api/admin/objects', basicAuth, (req, res) => {
@@ -1083,6 +1253,60 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
     image_path: relImage,
     thumbnail_path: relThumb,
   });
+});
+
+app.patch('/api/admin/observations/:id', basicAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const existing = db.prepare('SELECT id FROM observations WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Observation not found' });
+
+  // Whitelist of editable columns plus per-column type-coercion / clamping.
+  const body = req.body || {};
+  const clamp = (v, lo, hi) =>
+    v == null || v === '' ? null : Math.max(lo, Math.min(hi, Number(v)));
+  const str = (v, max = 200) =>
+    v == null ? null : String(v).trim().slice(0, max) || null;
+  const num = (v) => (v == null || v === '' ? null : Number(v));
+
+  const updates = {};
+  if ('title' in body)            updates.title = str(body.title, 200);
+  if ('description' in body)      updates.description = body.description == null ? null : String(body.description);
+  if ('observed_at' in body)      updates.observed_at = str(body.observed_at, 40);
+  if ('location' in body)         updates.location = str(body.location, 200);
+  if ('telescope' in body)        updates.telescope = str(body.telescope, 80);
+  if ('camera' in body)           updates.camera = str(body.camera, 80);
+  if ('rating' in body)           updates.rating = clamp(body.rating, 1, 5);
+  if ('seeing' in body)           updates.seeing = clamp(body.seeing, 1, 5);
+  if ('transparency' in body)     updates.transparency = clamp(body.transparency, 1, 5);
+  if ('bortle' in body)           updates.bortle = clamp(body.bortle, 1, 9);
+  if ('stack_count' in body)      updates.stack_count = num(body.stack_count);
+  if ('exposure_seconds' in body) updates.exposure_seconds = num(body.exposure_seconds);
+  if ('iso' in body)              updates.iso = num(body.iso);
+  if ('gain' in body)             updates.gain = num(body.gain);
+  if ('filter_name' in body)      updates.filter_name = str(body.filter_name, 80);
+  if ('focal_length_mm' in body)  updates.focal_length_mm = num(body.focal_length_mm);
+  if ('aperture' in body)         updates.aperture = num(body.aperture);
+  if ('latitude' in body)         updates.latitude = num(body.latitude);
+  if ('longitude' in body)        updates.longitude = num(body.longitude);
+
+  // Re-derive the moon phase if observed_at changes.
+  if (updates.observed_at && !Number.isNaN(Date.parse(updates.observed_at))) {
+    const mp = moonPhase(new Date(updates.observed_at));
+    updates.moon_phase = mp.phase;
+    updates.moon_phase_name = mp.name;
+  }
+
+  const keys = Object.keys(updates);
+  if (!keys.length) return res.status(400).json({ error: 'No editable fields supplied' });
+
+  const setClause = keys.map((k) => `${k} = @${k}`).join(', ');
+  db.prepare(
+    `UPDATE observations SET ${setClause}, updated_at = datetime('now') WHERE id = @id`,
+  ).run({ ...updates, id });
+
+  const fresh = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
+  res.json(fresh);
 });
 
 app.post('/api/admin/observations/:id/feature', basicAuth, (req, res) => {

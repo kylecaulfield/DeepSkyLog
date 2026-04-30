@@ -17,6 +17,7 @@
         <a href="/">Public site</a>
         <a href="/admin/" class="active">Dashboard</a>
         <a href="/admin/observations.html">Observations</a>
+        <a href="/admin/equipment.html">Equipment</a>
         <a href="/admin/upload.html">Upload</a>
       </nav>
     </header>
@@ -69,6 +70,25 @@
       <section class="section">
         <h2>Telescope usage</h2>
         <div id="telescopes" class="chip-row"></div>
+      </section>
+
+      <section class="section">
+        <h2>Activity calendar</h2>
+        <div id="heatmap" class="heatmap-wrap"></div>
+      </section>
+
+      <section class="section">
+        <h2>Backups</h2>
+        <div class="dash-actions" style="margin-bottom: 0.75rem;">
+          <button type="button" id="backup-now" class="button-link">Run backup now</button>
+          <span id="backup-status" class="dim"></span>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Archive</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead>
+            <tbody id="backup-rows"></tbody>
+          </table>
+        </div>
       </section>
     </main>
     <script type="module" src="/admin/dashboard.js"></script>

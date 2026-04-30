@@ -240,6 +240,103 @@ fieldset.sidecar legend {
 
 .rating-cell { color: var(--lcars-cream); letter-spacing: 0.04em; }
 
+.edit-btn {
+  font-size: 0.74rem;
+  padding: 0.25rem 0.7rem;
+  background: var(--lcars-blue);
+  color: #000;
+  border: none;
+  border-radius: var(--pill);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  font-family: var(--condensed);
+}
+.edit-btn:hover { background: var(--peach); }
+
+/* ---------- Modal ---------- */
+
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: grid; place-items: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.modal {
+  background: #0a0a0a;
+  border: 2px solid var(--accent);
+  border-left: 14px solid var(--accent-2);
+  border-radius: 0 16px 0 16px;
+  padding: 1.25rem 1.5rem;
+  max-width: 640px;
+  width: 100%;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
+.modal h3 {
+  margin: 0 0 0.85rem;
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+.edit-form {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.edit-status.danger { color: var(--danger); }
+
+/* ---------- Calendar heatmap ---------- */
+
+.heatmap-wrap {
+  background: #0d0d0d;
+  border: 1px solid var(--accent);
+  border-radius: 0 12px 0 12px;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+}
+
+.heatmap {
+  display: flex;
+  gap: 3px;
+  min-width: max-content;
+}
+
+.hm-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hm-cell {
+  width: 11px;
+  height: 11px;
+  display: inline-block;
+  border-radius: 2px;
+  background: #1a0f08;
+}
+
+.hm-cell[data-level="0"] { background: #1a0f08; }
+.hm-cell[data-level="1"] { background: #5a3818; }
+.hm-cell[data-level="2"] { background: #b06a32; }
+.hm-cell[data-level="3"] { background: var(--accent); }
+.hm-cell[data-level="4"] { background: var(--peach); }
+.hm-cell.future { background: #050505; }
+
+.hm-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 0.5rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
 /* ---------- Version chip ---------- */
 
 .version-chip {

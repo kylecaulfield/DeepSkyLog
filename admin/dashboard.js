@@ -107,6 +107,120 @@ function renderTelescopes(telescopes) {
   }
 }
 
+function renderHeatmap(rows) {
+  const wrap = document.getElementById('heatmap');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const counts = new Map(rows.map((r) => [r.day, r.count]));
+  const max = Math.max(1, ...rows.map((r) => r.count));
+
+  // Build a grid: 53 weeks × 7 days, ending on today (UTC).
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const start = new Date(today);
+  start.setUTCDate(start.getUTCDate() - 364);
+  // Align to Sunday so each column is one calendar week.
+  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+
+  const weeks = 53;
+  const grid = el('div', { class: 'heatmap' });
+
+  for (let w = 0; w < weeks; w++) {
+    const col = el('div', { class: 'hm-col' });
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(start);
+      day.setUTCDate(start.getUTCDate() + w * 7 + d);
+      const iso = day.toISOString().slice(0, 10);
+      const c = counts.get(iso) || 0;
+      const future = day > today;
+      const cell = el('span', {
+        class: 'hm-cell' + (future ? ' future' : ''),
+        title: future ? '' : `${iso} — ${c} observation${c === 1 ? '' : 's'}`,
+      });
+      if (!future && c > 0) {
+        const intensity = Math.ceil((c / max) * 4);
+        cell.dataset.level = String(Math.min(4, intensity));
+      } else if (future) {
+        cell.dataset.level = '';
+      } else {
+        cell.dataset.level = '0';
+      }
+      col.appendChild(cell);
+    }
+    grid.appendChild(col);
+  }
+  wrap.appendChild(grid);
+  wrap.appendChild(el('div', { class: 'hm-legend dim' },
+    el('span', { text: 'Less' }),
+    el('span', { class: 'hm-cell', 'data-level': '0' }),
+    el('span', { class: 'hm-cell', 'data-level': '1' }),
+    el('span', { class: 'hm-cell', 'data-level': '2' }),
+    el('span', { class: 'hm-cell', 'data-level': '3' }),
+    el('span', { class: 'hm-cell', 'data-level': '4' }),
+    el('span', { text: 'More' }),
+  ));
+}
+
+async function loadBackups() {
+  const tbody = document.getElementById('backup-rows');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  let data;
+  try {
+    const res = await fetch('/api/admin/backups');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch (err) {
+    tbody.appendChild(el('tr', {}, el('td', { colspan: '4', class: 'muted', text: `Failed: ${err.message}` })));
+    return;
+  }
+  if (!data.archives.length) {
+    tbody.appendChild(el('tr', {}, el('td', { colspan: '4' },
+      el('div', { class: 'empty-state', text: `No archives in ${data.dir} yet.` }))));
+    return;
+  }
+  for (const a of data.archives) {
+    const restoreBtn = el('button', { type: 'button', class: 'edit-btn', text: 'Restore' });
+    restoreBtn.addEventListener('click', async () => {
+      if (!confirm(`Restore ${a.name}?\n\nThe live database and uploads will be REPLACED with what's in this archive. The server will then exit (your supervisor / Docker will restart it).`)) return;
+      restoreBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/admin/backups/${encodeURIComponent(a.name)}/restore`, { method: 'POST' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        document.getElementById('backup-status').textContent = 'Restored. Server is exiting; refresh in a few seconds.';
+      } catch (err) {
+        restoreBtn.disabled = false;
+        alert(`Restore failed: ${err.message}`);
+      }
+    });
+    tbody.appendChild(el('tr', {},
+      el('td', { text: a.name }),
+      el('td', { class: 'dim', text: `${(a.size / 1024 / 1024).toFixed(1)} MB` }),
+      el('td', { class: 'dim', text: new Date(a.modified).toLocaleString() }),
+      el('td', {}, restoreBtn),
+    ));
+  }
+}
+
+document.getElementById('backup-now')?.addEventListener('click', async () => {
+  const status = document.getElementById('backup-status');
+  status.textContent = 'Running backup.sh…';
+  try {
+    const res = await fetch('/api/admin/backups', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    status.textContent = 'Backup created.';
+    loadBackups();
+  } catch (err) {
+    status.textContent = `Failed: ${err.message}`;
+  }
+});
+
 async function load() {
   try {
     const res = await fetch('/api/admin/stats');
@@ -116,9 +230,11 @@ async function load() {
     renderCatalogs(data.lists || []);
     renderRecent(data.recent || []);
     renderTelescopes(data.telescopes || []);
+    renderHeatmap(data.heatmap || []);
   } catch (err) {
     document.getElementById('stats').textContent = `Failed to load: ${err.message}`;
   }
+  loadBackups();
 }
 
 load();
