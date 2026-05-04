@@ -78,6 +78,18 @@
       </section>
 
       <section class="section">
+        <h2>Site settings</h2>
+        <form id="settings-form" class="dash-actions" style="gap:0.5rem; align-items:flex-end; flex-wrap:wrap;">
+          <label style="display:flex; flex-direction:column; gap:0.25rem;">
+            <span class="dim" style="font-size:0.85em;">Site name</span>
+            <input id="site-name-input" type="text" maxlength="80" required style="min-width:18rem;" />
+          </label>
+          <button type="submit" class="button-link">Save</button>
+          <span id="settings-status" class="dim"></span>
+        </form>
+      </section>
+
+      <section class="section">
         <h2>Backups</h2>
         <div class="dash-actions" style="margin-bottom: 0.75rem;">
           <button type="button" id="backup-now" class="button-link">Run backup now</button>
@@ -93,5 +105,6 @@
     </main>
     <script type="module" src="/admin/dashboard.js"></script>
     <script type="module" src="/admin/version.js"></script>
+    <script type="module" src="/js/site-name.js"></script>
   </body>
 </html>

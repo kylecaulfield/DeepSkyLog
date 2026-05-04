@@ -744,6 +744,34 @@ app.get('/api/admin/config', basicAuth, (_req, res) => {
   res.json({ telescopes: merged });
 });
 
+// Public site settings — site name etc. Read-only, no auth, so every page can
+// fetch it on load to render the configured branding.
+app.get('/api/settings', (_req, res) => {
+  const rows = db.prepare(`SELECT key, value FROM site_settings`).all();
+  const out = { site_name: 'DeepSkyLog' };
+  for (const r of rows) out[r.key] = r.value;
+  res.json(out);
+});
+
+app.put('/api/admin/settings', basicAuth, (req, res) => {
+  const body = req.body || {};
+  const updates = [];
+  if (typeof body.site_name === 'string') {
+    const trimmed = body.site_name.trim();
+    if (!trimmed) return res.status(400).json({ error: 'site_name cannot be empty' });
+    if (trimmed.length > 80) return res.status(400).json({ error: 'site_name max 80 chars' });
+    updates.push(['site_name', trimmed]);
+  }
+  if (!updates.length) return res.status(400).json({ error: 'no settings to update' });
+  const stmt = db.prepare(
+    `INSERT INTO site_settings (key, value, updated_at) VALUES (@key, @value, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  );
+  const tx = db.transaction((rows) => { for (const [key, value] of rows) stmt.run({ key, value }); });
+  tx(updates);
+  res.json({ ok: true });
+});
+
 app.get('/api/admin/equipment', basicAuth, (_req, res) => {
   const rows = db
     .prepare(`SELECT * FROM equipment ORDER BY retired ASC, kind, name`)
