@@ -43,6 +43,22 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
     single upload ticks every list the target appears on. **Still missing:**
     the full Herschel 400 and SAC 110 Best of NGC.
 
+## Test coverage to add
+
+12. **HTML wiring smoke checks** — boot the server in CI, `curl` every public
+    and admin HTML page, grep for the IDs each page module expects
+    (`#latitude-input`, `#site-name-input`, `#object-type-input`, the
+    `/js/site-name.js` script tag, etc.). Catches typos in form-field IDs
+    that today only fail in the browser. ~30 min to add as a new sub-test
+    in `test/smoke.test.js`.
+13. **Headless browser tests (Playwright)** — drive the actual upload flow:
+    drop multiple files, fill the form, click "Use image GPS", change the
+    site name and verify the brand label updates after a refresh, log a
+    comet observation and confirm it appears under the COMET filter on the
+    gallery page. Requires adding `@playwright/test` as a dev dependency,
+    a `tests/e2e/` folder, and a CI job that installs the browser binaries.
+    1–2 hours of scaffolding for the first test, then minutes per scenario.
+
 ## Bonus shipped (not in original backlog)
 
 - ✅ **Edit observations** — PATCH endpoint + admin modal form.

@@ -332,6 +332,203 @@ test('smoke', async (t) => {
     }
   });
 
+  await t.test('site settings: default name, PUT updates, public GET reflects', async () => {
+    const initial = await fetchJsonAuthed('/api/settings');
+    assert.equal(initial.site_name, 'DeepSkyLog');
+
+    const update = await fetch(`${baseUrl}/api/admin/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ site_name: 'My Backyard Sky' }),
+    });
+    assert.equal(update.status, 200);
+
+    const after = await (await fetch(`${baseUrl}/api/settings`)).json();
+    assert.equal(after.site_name, 'My Backyard Sky');
+
+    // Empty / oversized values are rejected.
+    const empty = await fetch(`${baseUrl}/api/admin/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ site_name: '   ' }),
+    });
+    assert.equal(empty.status, 400);
+
+    // Restore default so the rest of the suite isn't surprised.
+    await fetch(`${baseUrl}/api/admin/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ site_name: 'DeepSkyLog' }),
+    });
+  });
+
+  await t.test('planner accepts explicit start/end window', async () => {
+    const start = new Date();
+    start.setUTCHours(20, 0, 0, 0);
+    const end = new Date(start.getTime() + 6 * 3_600_000);
+    const data = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&min_alt=10&start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
+    );
+    assert.equal(data.window.start, start.toISOString());
+    assert.equal(data.window.end, end.toISOString());
+
+    // Reversed window is rejected.
+    const bad = await fetch(
+      `${baseUrl}/api/planner?lat=51.5&lon=0&start=${encodeURIComponent(end.toISOString())}&end=${encodeURIComponent(start.toISOString())}`,
+    );
+    assert.equal(bad.status, 400);
+  });
+
+  await t.test('upload: explicit form lat/lon override EXIF GPS', async () => {
+    const jpeg = await buildSyntheticJpeg();
+    const fd = new FormData();
+    fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }), 'm51.jpg');
+    const stage = await fetch(`${baseUrl}/api/admin/stage`, {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
+      body: fd,
+    }).then((r) => r.json());
+
+    const messier = await fetchJsonAuthed('/api/lists/messier');
+    const m51 = messier.objects.find((o) => o.catalog_number === '51');
+    assert.ok(m51);
+
+    const created = await fetch(`${baseUrl}/api/admin/observations`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stage_id: stage.stage_id,
+        object_id: m51.id, catalog: 'M', catalog_number: '51',
+        object_name: 'Whirlpool', telescope: 'Seestar S30 Pro',
+        observed_at: '2026-04-19T22:00',
+        latitude: 51.4769, longitude: -0.0005,
+      }),
+    }).then((r) => r.json());
+
+    // Finalize returns just {id, paths}; pull the full row to verify storage.
+    const all = await (await fetch(`${baseUrl}/api/observations`)).json();
+    const row = all.find((o) => o.id === created.id);
+    assert.ok(row, 'created row visible from /api/observations');
+    assert.equal(row.latitude, 51.4769);
+    assert.equal(row.longitude, -0.0005);
+
+    // Out-of-range form values are clamped, not rejected.
+    const fd2 = new FormData();
+    fd2.set('image', new Blob([jpeg], { type: 'image/jpeg' }), 'm51b.jpg');
+    const stage2 = await fetch(`${baseUrl}/api/admin/stage`, {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
+      body: fd2,
+    }).then((r) => r.json());
+    const clamped = await fetch(`${baseUrl}/api/admin/observations`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stage_id: stage2.stage_id,
+        object_id: m51.id, catalog: 'M', catalog_number: '51',
+        object_name: 'Whirlpool', telescope: 'Seestar S30 Pro',
+        observed_at: '2026-04-19T22:00',
+        latitude: 999, longitude: -999,
+      }),
+    }).then((r) => r.json());
+    const all2 = await (await fetch(`${baseUrl}/api/observations`)).json();
+    const clampedRow = all2.find((o) => o.id === clamped.id);
+    assert.equal(clampedRow.latitude, 90);
+    assert.equal(clampedRow.longitude, -180);
+  });
+
+  await t.test('comet observation: object_type + RA/Dec persist, filterable', async () => {
+    const jpeg = await buildSyntheticJpeg();
+    const fd = new FormData();
+    fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }), 'comet.jpg');
+    const stage = await fetch(`${baseUrl}/api/admin/stage`, {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
+      body: fd,
+    }).then((r) => r.json());
+
+    const created = await fetch(`${baseUrl}/api/admin/observations`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stage_id: stage.stage_id,
+        object_name: 'C/2023 A3 Tsuchinshan-ATLAS',
+        telescope: 'Seestar S30 Pro',
+        observed_at: '2026-04-19T22:00',
+        object_type: 'COMET',
+        ra_hours: 14.25,
+        dec_degrees: -2.5,
+      }),
+    }).then((r) => r.json());
+
+    // /api/observations?object_type=COMET should pick it up via the
+    // COALESCE(list_object.type, observation.type) filter, and the row
+    // should carry the values we sent through.
+    const filtered = await (await fetch(`${baseUrl}/api/observations?object_type=COMET`)).json();
+    const row = filtered.find((o) => o.id === created.id);
+    assert.ok(row, 'comet observation visible under object_type=COMET');
+    assert.equal(row.object_type, 'COMET');
+    assert.equal(row.ra_hours, 14.25);
+    assert.equal(row.dec_degrees, -2.5);
+
+    // /api/filters surfaces COMET as a valid type from observations.
+    const filters = await (await fetch(`${baseUrl}/api/filters`)).json();
+    assert.ok(filters.objectTypes.includes('COMET'), 'COMET present in filters');
+
+    // Garbage object_type is silently dropped to null on PATCH (not 500).
+    const patched = await fetch(`${baseUrl}/api/admin/observations/${created.id}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64'),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ object_type: 'BOGUS' }),
+    }).then((r) => r.json());
+    assert.equal(patched.object_type, null);
+  });
+
+  await t.test('batch staging: many parallel stages succeed independently', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const stages = await Promise.all(
+      [0, 1, 2].map(async (i) => {
+        const jpeg = await buildSyntheticJpeg();
+        const fd = new FormData();
+        fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }), `batch-${i}.jpg`);
+        const res = await fetch(`${baseUrl}/api/admin/stage`, { method: 'POST', headers: auth, body: fd });
+        assert.equal(res.status, 201);
+        return res.json();
+      }),
+    );
+    const ids = new Set(stages.map((s) => s.stage_id));
+    assert.equal(ids.size, 3, 'each stage got a distinct id');
+
+    // Drop them — exercises the stage DELETE path used by the batch cancel.
+    for (const s of stages) {
+      const del = await fetch(`${baseUrl}/api/admin/stage/${encodeURIComponent(s.stage_id)}`, {
+        method: 'DELETE', headers: auth,
+      });
+      assert.equal(del.status, 204);
+    }
+  });
+
   // Run last — consumes the per-IP failure budget, so any admin call after
   // this one gets a 429 until the 15-minute window rolls over.
   await t.test('rate limit triggers 429 after 20 failures', async () => {
