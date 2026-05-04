@@ -505,6 +505,26 @@ test('smoke', async (t) => {
     assert.equal(patched.object_type, null);
   });
 
+  await t.test('Seestar filename parser fills gaps in stage response', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const jpeg = await buildSyntheticJpeg();
+    const fd = new FormData();
+    fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }),
+      'Stacked_206_C 4_10.0s_IRCUT_20241027-213334.jpg');
+    const res = await fetch(`${baseUrl}/api/admin/stage`, { method: 'POST', headers: auth, body: fd });
+    assert.equal(res.status, 201);
+    const staged = await res.json();
+    assert.equal(staged.exif.stack_count, 206);
+    assert.equal(staged.exif.filter_name, 'IRCUT');
+    assert.equal(staged.exif.exposure_seconds, 10);
+    assert.equal(staged.exif.captured_at, '2024-10-27T21:33:34');
+    assert.equal(staged.exif.object_name, 'C4');
+    assert.equal(staged.guesses.from_filename, true);
+    await fetch(`${baseUrl}/api/admin/stage/${encodeURIComponent(staged.stage_id)}`, {
+      method: 'DELETE', headers: auth,
+    });
+  });
+
   await t.test('batch staging: many parallel stages succeed independently', async () => {
     const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
     const stages = await Promise.all(

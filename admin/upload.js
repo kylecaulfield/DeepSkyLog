@@ -386,6 +386,16 @@ function onStaged(res) {
     exposureInput.value = totalExposure;
   }
 
+  // Stack count and filter name come from the Seestar filename pattern
+  // (Stacked_<count>_..._<filter>_..._<ts>) when EXIF/sidecar didn't
+  // already provide them.
+  if (res.exif?.stack_count != null && !stackCountInput.value) {
+    stackCountInput.value = res.exif.stack_count;
+  }
+  if (res.exif?.filter_name && !filterInput.value) {
+    filterInput.value = res.exif.filter_name;
+  }
+
   // Photographer: not a form field today, so just surface it in the EXIF
   // table by appending a row.
   if (res.guesses?.photographer) {
