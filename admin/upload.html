@@ -23,18 +23,19 @@
     </header>
     <main>
       <h1 class="page-title">Log an observation</h1>
-      <p class="page-subtitle">Drop an image to auto-fill metadata, then confirm the details.</p>
+      <p class="page-subtitle">Drop one or many images to auto-fill metadata, then confirm the details for each.</p>
 
       <section class="section">
         <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload image">
-          <input id="file-input" type="file" accept="image/*,.fit,.fits" hidden />
+          <input id="file-input" type="file" accept="image/*,.fit,.fits" hidden multiple />
           <div class="dropzone-inner">
             <div class="dropzone-icon" aria-hidden="true">◎</div>
-            <p><strong>Drag &amp; drop</strong> an image here</p>
-            <p class="dim">or <button type="button" id="browse-btn" class="linkish">browse your files</button></p>
+            <p><strong>Drag &amp; drop</strong> images here</p>
+            <p class="dim">or <button type="button" id="browse-btn" class="linkish">browse your files</button> · multiple selection works</p>
           </div>
           <div id="drop-progress" class="progress" hidden><span></span></div>
         </div>
+        <div id="queue-panel" hidden style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;"></div>
       </section>
 
       <section id="form-section" class="section" hidden>
