@@ -85,6 +85,21 @@
               </label>
             </div>
 
+            <div class="row">
+              <label class="field">
+                <span>Latitude</span>
+                <input id="latitude-input" name="latitude" type="number" step="0.0001" min="-90" max="90" placeholder="51.4769" />
+              </label>
+              <label class="field">
+                <span>Longitude</span>
+                <input id="longitude-input" name="longitude" type="number" step="0.0001" min="-180" max="180" placeholder="-0.0005" />
+              </label>
+              <label class="field" style="flex:0 0 auto; align-self:flex-end;">
+                <span>&nbsp;</span>
+                <button type="button" id="use-image-gps" class="button-link ghost-link" disabled title="Copy GPS from the image's EXIF">Use image GPS</button>
+              </label>
+            </div>
+
             <label class="field">
               <span>Telescope</span>
               <select id="telescope-select" name="telescope" required>

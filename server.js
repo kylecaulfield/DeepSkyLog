@@ -1364,6 +1364,12 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const formIso = body.iso != null && body.iso !== ''
     ? Number(body.iso) : null;
 
+  // Form lat/lon (clamped) take precedence over anything we mine from EXIF.
+  const formLatitude = body.latitude != null && body.latitude !== ''
+    ? clamp(body.latitude, -90, 90) : null;
+  const formLongitude = body.longitude != null && body.longitude !== ''
+    ? clamp(body.longitude, -180, 180) : null;
+
   const rawObjectId = body.object_id ? Number(body.object_id) : null;
   let matchedObject = null;
   if (rawObjectId) {
@@ -1450,8 +1456,12 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   }
 
   const fx = fitsHeader ? fitsExif(fitsHeader) : null;
-  const latitude = fx?.latitude ?? (typeof exif?.latitude === 'number' ? exif.latitude : null);
-  const longitude = fx?.longitude ?? (typeof exif?.longitude === 'number' ? exif.longitude : null);
+  const latitude = formLatitude
+    ?? fx?.latitude
+    ?? (typeof exif?.latitude === 'number' ? exif.latitude : null);
+  const longitude = formLongitude
+    ?? fx?.longitude
+    ?? (typeof exif?.longitude === 'number' ? exif.longitude : null);
 
   const cameraField = fx?.device || (exif?.Model ? String(exif.Model) : null);
   const exposureField = exif?.ExposureTime ?? fx?.exposureSeconds ?? null;
