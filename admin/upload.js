@@ -71,6 +71,8 @@ function updateMoonPreview() {
 const objectCache = new Map();
 let currentStage = null;
 let objectSearchSeq = 0;
+const stageQueue = [];               // staged items waiting for review/save
+const queuePanel = document.getElementById('queue-panel');
 
 async function loadTelescopes() {
   const res = await fetch('/api/admin/config');
@@ -225,18 +227,13 @@ async function applySidecar(file) {
 function handleFiles(files) {
   const list = Array.from(files);
   const json = list.find(isJsonFile);
-  const image = list.find(isImageFile);
-  const fits = list.find(isFitsFile);
-  if (!image && !json && !fits) {
+  const captures = list.filter((f) => isImageFile(f) || isFitsFile(f));
+  if (!captures.length && !json) {
     setStatus('Drop an image, a FITS file, a Seestar .json, or any combination.', 'error');
     return;
   }
-  const primary = image || fits;
-  if (primary) {
-    if (image) previewImg.src = URL.createObjectURL(image);
-    else previewImg.removeAttribute('src');
-    uploadStaged(primary);
-  }
+
+  for (const file of captures) uploadStaged(file).catch(() => {});
   if (json) applySidecar(json);
 }
 
@@ -244,33 +241,96 @@ function handleFile(file) {
   handleFiles([file]);
 }
 
+let activeUploads = 0;
+
 function uploadStaged(file) {
-  progress.hidden = false;
-  progressBar.style.width = '0%';
-  setStatus('Uploading…');
+  return new Promise((resolve, reject) => {
+    progress.hidden = false;
+    progressBar.style.width = '0%';
+    activeUploads += 1;
+    setStatus(`Uploading${activeUploads > 1 ? ` (${activeUploads} in flight)` : ''}…`);
 
-  const data = new FormData();
-  data.append('image', file);
+    const data = new FormData();
+    data.append('image', file);
 
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/admin/stage');
-  xhr.upload.addEventListener('progress', (e) => {
-    if (e.lengthComputable) progressBar.style.width = `${(e.loaded / e.total) * 100}%`;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/admin/stage');
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable) progressBar.style.width = `${(e.loaded / e.total) * 100}%`;
+    });
+    xhr.addEventListener('load', () => {
+      activeUploads -= 1;
+      if (activeUploads === 0) progress.hidden = true;
+      if (xhr.status < 200 || xhr.status >= 300) {
+        setStatus(`Upload failed (${xhr.status}).`, 'error');
+        reject(new Error(`HTTP ${xhr.status}`));
+        return;
+      }
+      const res = JSON.parse(xhr.responseText);
+      enqueueStaged(res);
+      resolve(res);
+    });
+    xhr.addEventListener('error', () => {
+      activeUploads -= 1;
+      if (activeUploads === 0) progress.hidden = true;
+      setStatus('Upload failed.', 'error');
+      reject(new Error('network'));
+    });
+    xhr.send(data);
   });
-  xhr.addEventListener('load', () => {
-    progress.hidden = true;
-    if (xhr.status < 200 || xhr.status >= 300) {
-      setStatus(`Upload failed (${xhr.status}).`, 'error');
-      return;
-    }
-    const res = JSON.parse(xhr.responseText);
-    onStaged(res);
-  });
-  xhr.addEventListener('error', () => {
-    progress.hidden = true;
-    setStatus('Upload failed.', 'error');
-  });
-  xhr.send(data);
+}
+
+function enqueueStaged(res) {
+  stageQueue.push(res);
+  renderQueue();
+  // If nothing is loaded yet, activate this newly-staged item.
+  if (!currentStage) setActiveStage(0);
+}
+
+function renderQueue() {
+  queuePanel.innerHTML = '';
+  queuePanel.hidden = stageQueue.length <= 1;
+  if (stageQueue.length <= 1) return;
+  for (let i = 0; i < stageQueue.length; i++) {
+    const item = stageQueue[i];
+    const active = currentStage && item.stage_id === currentStage.stage_id;
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip' + (active ? ' active' : '');
+    chip.style.cssText = 'cursor:pointer; ' + (active ? 'outline:2px solid var(--accent, #4af);' : '');
+    chip.textContent = `${i + 1}. ${item.original_name || item.stage_id}`;
+    chip.title = active ? 'Currently reviewing' : 'Click to review this one';
+    chip.addEventListener('click', () => setActiveStage(i));
+    queuePanel.appendChild(chip);
+  }
+}
+
+function setActiveStage(idx) {
+  const item = stageQueue[idx];
+  if (!item) return;
+  // Reset only per-image fields; preserve user-typed shared fields like
+  // telescope, target, location, rating, notes for the next item in batch.
+  resetPerImageFields();
+  onStaged(item);
+  renderQueue();
+}
+
+function resetPerImageFields() {
+  stageIdField.value = '';
+  exifSummary.innerHTML = '';
+  previewImg.removeAttribute('src');
+  // Per-image: date, GPS, exposure/gain/stack/filter, sidecar JSON.
+  dateInput.value = '';
+  latitudeInput.value = '';
+  longitudeInput.value = '';
+  useImageGpsBtn.disabled = true;
+  useImageGpsBtn.title = 'No GPS in image EXIF';
+  exposureInput.value = '';
+  gainInput.value = '';
+  stackCountInput.value = '';
+  filterInput.value = '';
+  seestarJsonField.value = '';
+  moonDisplay.value = '';
 }
 
 function onStaged(res) {
@@ -398,7 +458,13 @@ document.getElementById('cancel-btn').addEventListener('click', async () => {
       await fetch(`/api/admin/stage/${encodeURIComponent(currentStage.stage_id)}`, { method: 'DELETE' });
     } catch {}
   }
-  resetForm();
+  // In batch mode, "cancel" discards just the active item and advances.
+  if (stageQueue.length > 1) {
+    advanceQueue();
+  } else {
+    stageQueue.length = 0;
+    resetForm();
+  }
 });
 
 function resetForm() {
@@ -420,6 +486,23 @@ function resetForm() {
   seestarJsonField.value = '';
   sidecarSummary.textContent = 'Optional. Drop the .json file Seestar saves alongside the image and stack count, exposure, gain and filter all auto-fill. Without it we read EXIF and OCR the watermark band.';
   setStatus('');
+  renderQueue();
+}
+
+// After a successful save: drop the saved item from the queue and either
+// advance to the next item (preserving shared fields like telescope/target)
+// or fall back to the empty state if the queue is now empty.
+function advanceQueue() {
+  if (currentStage) {
+    const idx = stageQueue.findIndex((s) => s.stage_id === currentStage.stage_id);
+    if (idx >= 0) stageQueue.splice(idx, 1);
+  }
+  currentStage = null;
+  if (stageQueue.length) {
+    setActiveStage(0);
+  } else {
+    resetForm();
+  }
 }
 
 dateInput.addEventListener('change', updateMoonPreview);
@@ -483,7 +566,7 @@ form.addEventListener('submit', async (e) => {
     }
     const out = await res.json();
     setStatus(`Saved observation #${out.id}.`, 'success');
-    resetForm();
+    advanceQueue();
   } catch (err) {
     setStatus(err.message, 'error');
   } finally {
