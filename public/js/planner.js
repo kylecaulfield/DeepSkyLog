@@ -3,6 +3,7 @@ import { fetchJson, el, typeLabel, highlightNav } from './common.js';
 highlightNav('planner');
 
 const dateInput = document.getElementById('date-input');
+const timeInput = document.getElementById('time-input');
 const latInput = document.getElementById('lat-input');
 const lonInput = document.getElementById('lon-input');
 const altInput = document.getElementById('alt-input');
@@ -22,12 +23,13 @@ if (stored && Number.isFinite(Number(stored.lat)) && Number.isFinite(Number(stor
   lonInput.value = stored.lon;
 }
 
-// Default to tonight in the user's *local* date (not UTC), so a planner
+// Default to now in the user's *local* date and time, so a planner
 // loaded at 11pm local doesn't jump to "tomorrow" because UTC has rolled
 // over.
-const todayLocal = new Date();
+const nowLocal = new Date();
 const pad = (n) => String(n).padStart(2, '0');
-dateInput.value = `${todayLocal.getFullYear()}-${pad(todayLocal.getMonth() + 1)}-${pad(todayLocal.getDate())}`;
+dateInput.value = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth() + 1)}-${pad(nowLocal.getDate())}`;
+timeInput.value = `${pad(nowLocal.getHours())}:${pad(nowLocal.getMinutes())}`;
 
 function fmtDeg(v) { return v == null ? '—' : `${v.toFixed(1)}°`; }
 function fmtTime(iso) {
@@ -48,6 +50,7 @@ async function load() {
   const lon = Number(lonInput.value);
   const minAlt = Number(altInput.value);
   const date = dateInput.value;
+  const time = timeInput.value;
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || !date) {
     status.textContent = 'Enter date, latitude and longitude.';
     return;
@@ -58,8 +61,21 @@ async function load() {
   rows.innerHTML = '';
   const params = new URLSearchParams({
     lat: String(lat), lon: String(lon),
-    min_alt: String(minAlt), date,
+    min_alt: String(minAlt),
   });
+  if (time) {
+    // Combine date+time as local — the resulting Date is correct UTC instant.
+    const start = new Date(`${date}T${time}`);
+    const end = new Date(start.getTime() + 12 * 3_600_000);
+    if (Number.isNaN(start.getTime())) {
+      status.textContent = 'Invalid date or time.';
+      return;
+    }
+    params.set('start', start.toISOString());
+    params.set('end', end.toISOString());
+  } else {
+    params.set('date', date);
+  }
   if (includeObserved.checked) params.set('include_observed', '1');
 
   let data;
