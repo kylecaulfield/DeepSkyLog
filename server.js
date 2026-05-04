@@ -13,7 +13,7 @@ const { altAz, moonPhase } = require('./lib/astro');
 const { bodyPosition } = require('./lib/ephemeris');
 const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/fits');
 const { ocrBanner } = require('./lib/seestar_ocr');
-const { parseAll: parseSeestarText } = require('./lib/seestar_meta');
+const { parseAll: parseSeestarText, parseFilename: parseSeestarFilename } = require('./lib/seestar_meta');
 const astrometry = require('./lib/astrometry');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -1269,6 +1269,21 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
   const combinedText = [exifTextBlob || '', ocrText || ''].filter(Boolean).join('\n');
   const guesses = parseSeestarText(combinedText);
 
+  // Seestar export filenames carry stack count, target, sub-exposure,
+  // filter, and capture timestamp — fill any gaps left by EXIF/OCR.
+  const fileGuess = parseSeestarFilename(req.file.originalname);
+  let stackCount = null;
+  let filterName = null;
+  if (fileGuess) {
+    if (!capturedIso && fileGuess.captured_at) capturedIso = fileGuess.captured_at;
+    if (!objectName && fileGuess.target?.raw) objectName = fileGuess.target.raw;
+    if (exposureSeconds == null && fileGuess.exposure_seconds != null) {
+      exposureSeconds = fileGuess.exposure_seconds;
+    }
+    stackCount = fileGuess.stack_count;
+    filterName = fileGuess.filter_name;
+  }
+
   // Promote OCR/EXIF guesses into the exposed exif block where the form
   // currently has nothing (sub-second EXIF exposure shouldn't be clobbered
   // by a watermark "52min", which is total integration; we put that in a
@@ -1295,12 +1310,15 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
       focal_length_mm: focalLength,
       aperture,
       object_name: objectName,
+      stack_count: stackCount,
+      filter_name: filterName,
     },
     guesses: {
-      target: guesses.target || null,
+      target: guesses.target || fileGuess?.target || null,
       total_exposure_seconds: guesses.exposure_seconds_total,
       photographer: guesses.photographer,
       from_ocr: !!ocrText,
+      from_filename: !!fileGuess,
       ocr_error: ocrError,
     },
     telescope_match: telescopeMatch,
