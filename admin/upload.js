@@ -20,6 +20,9 @@ const catalogInput = document.getElementById('catalog-input');
 const catalogNumberInput = document.getElementById('catalog-number-input');
 const dateInput = document.getElementById('date-input');
 const locationInput = document.getElementById('location-input');
+const latitudeInput = document.getElementById('latitude-input');
+const longitudeInput = document.getElementById('longitude-input');
+const useImageGpsBtn = document.getElementById('use-image-gps');
 const titleInput = document.getElementById('title-input');
 const telescopeSelect = document.getElementById('telescope-select');
 const telescopeHint = document.getElementById('telescope-hint');
@@ -281,6 +284,18 @@ function onStaged(res) {
     : toLocalDatetimeValue(null);
   updateMoonPreview();
 
+  // GPS: enable the "Use image GPS" button when EXIF has coords, and pre-fill
+  // the lat/lon inputs only if the user hasn't typed something already.
+  const hasGps = typeof res.exif?.latitude === 'number' && typeof res.exif?.longitude === 'number';
+  useImageGpsBtn.disabled = !hasGps;
+  if (hasGps) {
+    useImageGpsBtn.title = `Use image GPS (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)})`;
+    if (!latitudeInput.value) latitudeInput.value = res.exif.latitude.toFixed(6);
+    if (!longitudeInput.value) longitudeInput.value = res.exif.longitude.toFixed(6);
+  } else {
+    useImageGpsBtn.title = 'No GPS in image EXIF';
+  }
+
   const metaSource = res.kind === 'fits' ? 'FITS header' : 'EXIF';
   if (res.telescope_match) {
     telescopeSelect.value = res.telescope_match;
@@ -398,6 +413,10 @@ function resetForm() {
   objectHint.textContent = '';
   telescopeHint.textContent = '';
   moonDisplay.value = '';
+  latitudeInput.value = '';
+  longitudeInput.value = '';
+  useImageGpsBtn.disabled = true;
+  useImageGpsBtn.title = 'No GPS in image EXIF';
   seestarJsonField.value = '';
   sidecarSummary.textContent = 'Optional. Drop the .json file Seestar saves alongside the image and stack count, exposure, gain and filter all auto-fill. Without it we read EXIF and OCR the watermark band.';
   setStatus('');
@@ -405,6 +424,14 @@ function resetForm() {
 
 dateInput.addEventListener('change', updateMoonPreview);
 dateInput.addEventListener('input', updateMoonPreview);
+
+useImageGpsBtn.addEventListener('click', () => {
+  const lat = currentStage?.exif?.latitude;
+  const lon = currentStage?.exif?.longitude;
+  if (typeof lat !== 'number' || typeof lon !== 'number') return;
+  latitudeInput.value = lat.toFixed(6);
+  longitudeInput.value = lon.toFixed(6);
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -432,6 +459,8 @@ form.addEventListener('submit', async (e) => {
     gain: gainInput.value || null,
     filter_name: filterInput.value.trim() || null,
     seestar_json: seestarJsonField.value || null,
+    latitude: latitudeInput.value !== '' ? Number(latitudeInput.value) : null,
+    longitude: longitudeInput.value !== '' ? Number(longitudeInput.value) : null,
   };
 
   if (!payload.telescope) {
