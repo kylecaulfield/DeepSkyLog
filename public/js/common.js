@@ -54,6 +54,7 @@ export const OBJECT_TYPES = {
   STAR: 'Star',
   MOON: 'Moon',
   PLAN: 'Planet',
+  COMET: 'Comet',
 };
 
 export function typeLabel(code) {

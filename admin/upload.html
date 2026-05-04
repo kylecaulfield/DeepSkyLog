@@ -68,6 +68,38 @@
                 <span>Catalog #</span>
                 <input id="catalog-number-input" name="catalog_number" placeholder="42" />
               </label>
+              <label class="field">
+                <span>Object type</span>
+                <select id="object-type-input" name="object_type">
+                  <option value="">— auto —</option>
+                  <option value="GAL">Galaxy</option>
+                  <option value="GC">Globular Cluster</option>
+                  <option value="OC">Open Cluster</option>
+                  <option value="PN">Planetary Nebula</option>
+                  <option value="DN">Diffuse Nebula</option>
+                  <option value="SNR">Supernova Remnant</option>
+                  <option value="MW">Star Cloud</option>
+                  <option value="AST">Asterism</option>
+                  <option value="DS">Double Star</option>
+                  <option value="STAR">Star</option>
+                  <option value="MOON">Moon</option>
+                  <option value="PLAN">Planet</option>
+                  <option value="COMET">Comet</option>
+                </select>
+                <small class="dim">Required for comets and other objects not in a seeded list.</small>
+              </label>
+            </div>
+
+            <div class="row" id="ra-dec-row">
+              <label class="field">
+                <span>RA (hours)</span>
+                <input id="ra-hours-input" name="ra_hours" type="number" step="0.0001" min="0" max="24" placeholder="e.g. 5.5878" />
+              </label>
+              <label class="field">
+                <span>Dec (°)</span>
+                <input id="dec-degrees-input" name="dec_degrees" type="number" step="0.0001" min="-90" max="90" placeholder="e.g. -5.391" />
+              </label>
+              <small class="dim" style="flex-basis:100%;">Per-observation sky position. Useful for comets and other moving targets.</small>
             </div>
 
             <label class="field">

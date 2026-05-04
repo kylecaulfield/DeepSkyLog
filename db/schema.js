@@ -178,6 +178,15 @@ const MIGRATIONS = [
       INSERT OR IGNORE INTO site_settings (key, value) VALUES ('site_name', 'DeepSkyLog');
     `,
   },
+  {
+    id: 12,
+    name: 'add_observation_object_type_and_coords',
+    up: `
+      ALTER TABLE observations ADD COLUMN object_type TEXT;
+      ALTER TABLE observations ADD COLUMN ra_hours REAL;
+      ALTER TABLE observations ADD COLUMN dec_degrees REAL;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };
