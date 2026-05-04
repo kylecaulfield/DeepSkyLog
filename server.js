@@ -365,7 +365,9 @@ app.get('/api/observations', (req, res) => {
     params.telescope = telescope;
   }
   if (objectType) {
-    clauses.push('lo.object_type = @object_type');
+    // Match against the catalog row's type when linked, otherwise the
+    // free-form type stored on the observation itself (used for comets).
+    clauses.push('COALESCE(lo.object_type, o.object_type) = @object_type');
     params.object_type = objectType;
   }
   if (hasImage) {
@@ -376,7 +378,9 @@ app.get('/api/observations', (req, res) => {
   const rows = db
     .prepare(
       `SELECT o.*, lo.catalog AS object_catalog, lo.catalog_number AS object_catalog_number,
-              lo.name AS object_name, lo.object_type AS object_type, lo.constellation AS constellation
+              lo.name AS object_name,
+              COALESCE(lo.object_type, o.object_type) AS object_type,
+              lo.constellation AS constellation
          FROM observations o
          LEFT JOIN list_objects lo ON lo.id = o.object_id
          ${where}
@@ -639,11 +643,18 @@ app.get('/api/filters', (_req, res) => {
     .all()
     .map((r) => r.telescope);
 
+  // Object types come from both the catalog (list_objects) and the
+  // free-form types stored directly on observations (e.g. comets), so
+  // filtering picks up entries that aren't in any seeded list.
   const objectTypes = db
     .prepare(
-      `SELECT DISTINCT object_type FROM list_objects
-         WHERE object_type IS NOT NULL AND object_type != ''
-         ORDER BY object_type`,
+      `SELECT DISTINCT object_type FROM (
+         SELECT object_type FROM list_objects
+         UNION
+         SELECT object_type FROM observations
+       )
+       WHERE object_type IS NOT NULL AND object_type != ''
+       ORDER BY object_type`,
     )
     .all()
     .map((r) => r.object_type);
@@ -1364,6 +1375,16 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const formIso = body.iso != null && body.iso !== ''
     ? Number(body.iso) : null;
 
+  // Free-form object metadata for observations not backed by a list row
+  // (notably comets, which don't fit the static catalog model).
+  const allowedTypes = ['GC','OC','PN','SNR','DN','GAL','MW','AST','DS','STAR','MOON','PLAN','COMET'];
+  const observationObjectType = (typeof body.object_type === 'string' && allowedTypes.includes(body.object_type))
+    ? body.object_type : null;
+  const observationRaHours = body.ra_hours != null && body.ra_hours !== ''
+    ? clamp(body.ra_hours, 0, 24) : null;
+  const observationDecDegrees = body.dec_degrees != null && body.dec_degrees !== ''
+    ? clamp(body.dec_degrees, -90, 90) : null;
+
   // Form lat/lon (clamped) take precedence over anything we mine from EXIF.
   const formLatitude = body.latitude != null && body.latitude !== ''
     ? clamp(body.latitude, -90, 90) : null;
@@ -1475,12 +1496,14 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
         location, telescope, camera, exposure_seconds, iso, focal_length_mm,
         aperture, image_path, thumbnail_path, exif_json, rating,
         latitude, longitude, seeing, transparency, moon_phase,
-        moon_phase_name, bortle, stack_count, gain, filter_name, device_json)
+        moon_phase_name, bortle, stack_count, gain, filter_name, device_json,
+        object_type, ra_hours, dec_degrees)
      VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
              @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
              @aperture, @image_path, @thumbnail_path, @exif_json, @rating,
              @latitude, @longitude, @seeing, @transparency, @moon_phase,
-             @moon_phase_name, @bortle, @stack_count, @gain, @filter_name, @device_json)`,
+             @moon_phase_name, @bortle, @stack_count, @gain, @filter_name, @device_json,
+             @object_type, @ra_hours, @dec_degrees)`,
   );
 
   const completeList = db.prepare(
@@ -1519,6 +1542,9 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       gain,
       filter_name: filterName,
       device_json: deviceJson,
+      object_type: observationObjectType,
+      ra_hours: observationRaHours,
+      dec_degrees: observationDecDegrees,
     });
 
     const observationId = Number(result.lastInsertRowid);
@@ -1613,6 +1639,13 @@ app.patch('/api/admin/observations/:id', basicAuth, (req, res) => {
   if ('aperture' in body)         updates.aperture = num(body.aperture);
   if ('latitude' in body)         updates.latitude  = clamp(body.latitude, -90, 90);
   if ('longitude' in body)        updates.longitude = clamp(body.longitude, -180, 180);
+  if ('object_type' in body) {
+    const allowed = ['GC','OC','PN','SNR','DN','GAL','MW','AST','DS','STAR','MOON','PLAN','COMET'];
+    updates.object_type = (typeof body.object_type === 'string' && allowed.includes(body.object_type))
+      ? body.object_type : null;
+  }
+  if ('ra_hours' in body)         updates.ra_hours = clamp(body.ra_hours, 0, 24);
+  if ('dec_degrees' in body)      updates.dec_degrees = clamp(body.dec_degrees, -90, 90);
 
   // observed_at: accept null (clear) or a parseable date; reject obvious
   // garbage so the column doesn't fill up with whatever the client sent.

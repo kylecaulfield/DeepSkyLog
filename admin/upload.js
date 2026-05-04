@@ -20,6 +20,9 @@ const catalogInput = document.getElementById('catalog-input');
 const catalogNumberInput = document.getElementById('catalog-number-input');
 const dateInput = document.getElementById('date-input');
 const locationInput = document.getElementById('location-input');
+const objectTypeInput = document.getElementById('object-type-input');
+const raHoursInput = document.getElementById('ra-hours-input');
+const decDegreesInput = document.getElementById('dec-degrees-input');
 const latitudeInput = document.getElementById('latitude-input');
 const longitudeInput = document.getElementById('longitude-input');
 const useImageGpsBtn = document.getElementById('use-image-gps');
@@ -544,6 +547,9 @@ form.addEventListener('submit', async (e) => {
     seestar_json: seestarJsonField.value || null,
     latitude: latitudeInput.value !== '' ? Number(latitudeInput.value) : null,
     longitude: longitudeInput.value !== '' ? Number(longitudeInput.value) : null,
+    object_type: objectTypeInput.value || null,
+    ra_hours: raHoursInput.value !== '' ? Number(raHoursInput.value) : null,
+    dec_degrees: decDegreesInput.value !== '' ? Number(decDegreesInput.value) : null,
   };
 
   if (!payload.telescope) {
