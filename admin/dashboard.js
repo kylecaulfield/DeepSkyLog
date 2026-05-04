@@ -244,6 +244,41 @@ async function load() {
     document.getElementById('stats').textContent = `Failed to load: ${err.message}`;
   }
   loadBackups();
+  loadSiteSettings();
 }
+
+async function loadSiteSettings() {
+  const input = document.getElementById('site-name-input');
+  if (!input) return;
+  try {
+    const res = await fetch('/api/settings');
+    if (!res.ok) return;
+    const data = await res.json();
+    input.value = data.site_name || '';
+  } catch { /* leave blank */ }
+}
+
+document.getElementById('settings-form')?.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const input = document.getElementById('site-name-input');
+  const status = document.getElementById('settings-status');
+  const value = input.value.trim();
+  if (!value) { status.textContent = 'Site name cannot be empty.'; return; }
+  status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/admin/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site_name: value }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    status.textContent = 'Saved. Refresh to see the new branding.';
+  } catch (err) {
+    status.textContent = `Failed: ${err.message}`;
+  }
+});
 
 load();
