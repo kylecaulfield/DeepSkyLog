@@ -29,7 +29,10 @@ function item(obs) {
     : '';
   const label = obs.title || [id, obs.object_name].filter(Boolean).join(' · ') || `Observation #${obs.id}`;
   const meta = [obs.telescope, typeLabel(obs.object_type)].filter(Boolean).join(' · ');
-  const href = obs.object_id ? `/object.html?id=${obs.object_id}` : '#';
+  // Drill straight to the per-observation detail page; falls back to the
+  // object detail when somehow we don't have an observation id.
+  const href = obs.id ? `/observation.html?id=${obs.id}`
+    : (obs.object_id ? `/object.html?id=${obs.object_id}` : '#');
 
   return el('a', { class: 'gallery-item', href },
     thumb,

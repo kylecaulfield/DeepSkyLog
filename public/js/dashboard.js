@@ -45,7 +45,12 @@ function galleryItem(obs) {
 
   return el(
     'a',
-    { class: 'gallery-item', href: obs.object_id ? `/object.html?id=${obs.object_id}` : '#' },
+    { class: 'gallery-item',
+      // Drill into the per-observation detail page for every row. The id
+      // is always present; the previous fallback to /object.html?id=…
+      // (or '#' for free-form rows) lost half the metadata and the moon
+      // and map panels.
+      href: obs.id ? `/observation.html?id=${obs.id}` : '#' },
     thumb,
     el('div', { class: 'caption' },
       el('h4', { text: label }),
