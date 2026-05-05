@@ -9,11 +9,12 @@ const sharp = require('sharp');
 const exifr = require('exifr');
 
 const { getDb, DB_PATH } = require('./db');
-const { altAz, moonPhase } = require('./lib/astro');
+const { altAz, moonPhase, sunPosition, moonPosition, angularSeparationDeg } = require('./lib/astro');
 const { bodyPosition } = require('./lib/ephemeris');
 const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/fits');
 const { ocrBanner } = require('./lib/seestar_ocr');
 const { parseAll: parseSeestarText, parseFilename: parseSeestarFilename } = require('./lib/seestar_meta');
+const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -406,6 +407,10 @@ app.get('/api/planner', (req, res) => {
   const minAlt = Number.isFinite(Number(req.query.min_alt)) ? Number(req.query.min_alt) : 30;
   const includeObserved = req.query.include_observed === '1';
   const limit = Math.min(Number(req.query.limit) || 200, 500);
+  // Optional minimum great-circle separation from the moon (degrees). 0 or
+  // unset = no filter. Pairs with the moon-up bands the response surfaces.
+  const minMoonSep = Number.isFinite(Number(req.query.min_moon_sep))
+    ? Math.max(0, Number(req.query.min_moon_sep)) : 0;
 
   let start, end;
   if (req.query.start && req.query.end) {
@@ -445,6 +450,46 @@ app.get('/api/planner', (req, res) => {
     )
     .all();
 
+  // Pre-compute sun and moon position+altitude across the window. Used for
+  // both target-vs-moon separation and the twilight/moon-up bands surfaced
+  // alongside the targets.
+  const samples = [];
+  for (let t = start.getTime(); t <= end.getTime(); t += stepMs) {
+    const date = new Date(t);
+    const sunEq = sunPosition(date);
+    const moonEq = moonPosition(date);
+    samples.push({
+      date,
+      sunAlt: altAz({ raHours: sunEq.raHours, decDeg: sunEq.decDeg, lat, lon, date })?.altitude ?? null,
+      moonAlt: altAz({ raHours: moonEq.raHours, decDeg: moonEq.decDeg, lat, lon, date })?.altitude ?? null,
+      moonEq,
+    });
+  }
+  // Astronomical twilight = sun below -18°. We collapse the window into
+  // contiguous bands where this holds, which is what an imager actually
+  // wants ("when is it really dark?").
+  const astroDarkBands = [];
+  let bandStart = null;
+  for (const s of samples) {
+    const dark = s.sunAlt != null && s.sunAlt < -18;
+    if (dark && !bandStart) bandStart = s.date;
+    if ((!dark || s === samples[samples.length - 1]) && bandStart) {
+      astroDarkBands.push({ start: bandStart.toISOString(), end: s.date.toISOString() });
+      bandStart = null;
+    }
+  }
+  // Moon-up bands: moon above 0° altitude. Same collapsing logic.
+  const moonUpBands = [];
+  bandStart = null;
+  for (const s of samples) {
+    const up = s.moonAlt != null && s.moonAlt > 0;
+    if (up && !bandStart) bandStart = s.date;
+    if ((!up || s === samples[samples.length - 1]) && bandStart) {
+      moonUpBands.push({ start: bandStart.toISOString(), end: s.date.toISOString() });
+      bandStart = null;
+    }
+  }
+
   const enriched = [];
   for (const row of rows) {
     if (!includeObserved && row.observed) continue;
@@ -454,9 +499,10 @@ app.get('/api/planner', (req, res) => {
     let samplesAbove = 0;        // count of samples strictly above min
     let firstAbove = null;
     let lastAbove = null;
+    let moonSepAtMax = null;
 
-    for (let t = start.getTime(); t <= end.getTime(); t += stepMs) {
-      const date = new Date(t);
+    for (let i = 0; i < samples.length; i++) {
+      const { date, moonEq } = samples[i];
       let raHours = row.ra_hours;
       let decDeg = row.dec_degrees;
       if (row.ephemeris) {
@@ -471,6 +517,7 @@ app.get('/api/planner', (req, res) => {
       if (pos.altitude > maxAlt) {
         maxAlt = pos.altitude;
         maxAt = date.toISOString();
+        moonSepAtMax = angularSeparationDeg({ raHours, decDeg }, moonEq);
       }
       if (pos.altitude >= minAlt) {
         samplesAbove += 1;
@@ -480,6 +527,7 @@ app.get('/api/planner', (req, res) => {
     }
 
     if (maxAlt < minAlt) continue;
+    if (minMoonSep > 0 && moonSepAtMax != null && moonSepAtMax < minMoonSep) continue;
     // Each sample represents an interval of stepMinutes. N samples cover
     // (N-1) intervals, so minutes-above is (samplesAbove - 1) × stepMinutes
     // when there's at least one above-min sample; the previous version was
@@ -492,6 +540,7 @@ app.get('/api/planner', (req, res) => {
       first_above_at: firstAbove,
       last_above_at: lastAbove,
       minutes_above_min: minutesAbove,
+      moon_separation_deg: moonSepAtMax != null ? Math.round(moonSepAtMax * 10) / 10 : null,
     });
   }
 
@@ -501,7 +550,10 @@ app.get('/api/planner', (req, res) => {
     location: { lat, lon },
     window: { start: start.toISOString(), end: end.toISOString(), step_minutes: stepMinutes },
     min_altitude: minAlt,
+    min_moon_sep: minMoonSep || null,
     moon: moonPhase(start),
+    astro_dark_bands: astroDarkBands,
+    moon_up_bands: moonUpBands,
     targets: enriched.slice(0, limit),
   });
 });
@@ -633,6 +685,117 @@ app.get('/api/observations.csv', (_req, res) => {
   res.send(lines.join('\n'));
 });
 
+// iCalendar feed of dark-sky weekends (Fri–Sun) over the next 12 months,
+// anchored on each new moon. Subscribe in any calendar app for a one-glance
+// view of the best imaging windows.
+app.get('/api/calendar/dark-moon.ics', (_req, res) => {
+  const now = new Date();
+  const ICS_DT = (d) => `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+  const SYNODIC_MS = 29.530588853 * 86_400_000;
+
+  // Find each new moon in the next year by stepping ~one synodic month and
+  // refining via local search. moonPhase().phase is 0 at new moon, so we
+  // minimise that against zero, accounting for the 0/1 wraparound.
+  const events = [];
+  for (let i = 0; i < 13; i++) {
+    let centre = new Date(now.getTime() + i * SYNODIC_MS);
+    // Refine ±2 days at hour granularity.
+    let best = centre;
+    let bestPhase = 1;
+    for (let h = -48; h <= 48; h++) {
+      const t = new Date(centre.getTime() + h * 3_600_000);
+      const p = moonPhase(t).phase;
+      const dist = Math.min(p, 1 - p);
+      if (dist < bestPhase) { bestPhase = dist; best = t; }
+    }
+    if (best.getTime() < now.getTime() - 86_400_000) continue;
+
+    // Pick the Saturday closest to the new moon as the centre of the weekend.
+    const day = best.getUTCDay();           // 0=Sun..6=Sat
+    const offsetToSat = day <= 3 ? (6 - day) : -(day - 6);
+    const sat = new Date(Date.UTC(best.getUTCFullYear(), best.getUTCMonth(), best.getUTCDate() + offsetToSat));
+    const fri = new Date(sat.getTime() - 86_400_000);
+    const monAfter = new Date(sat.getTime() + 2 * 86_400_000);   // exclusive end
+
+    const uid = `dark-moon-${ICS_DT(fri)}@deepskylog`;
+    events.push([
+      'BEGIN:VEVENT',
+      `UID:${uid}`,
+      `DTSTART;VALUE=DATE:${ICS_DT(fri)}`,
+      `DTEND;VALUE=DATE:${ICS_DT(monAfter)}`,
+      'SUMMARY:Dark sky weekend (new moon)',
+      `DESCRIPTION:New moon near ${best.toISOString().slice(0, 10)}. Weekend Friday–Sunday window of darkest skies.`,
+      'TRANSP:TRANSPARENT',
+      'END:VEVENT',
+    ].join('\r\n'));
+  }
+
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//DeepSkyLog//Dark-moon weekends//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:DeepSkyLog dark-moon weekends',
+    ...events,
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  res.set('Content-Type', 'text/calendar; charset=utf-8');
+  res.set('Content-Disposition', 'inline; filename="deepskylog-dark-moon.ics"');
+  res.send(ics);
+});
+
+// Weather lookup. Calls the free Open-Meteo archive API for the hour that
+// matches the supplied date/lat/lon and returns mean cloud cover, temperature,
+// humidity, and a coarse "transparency hint" (good if cloud_cover < 30%,
+// poor if > 70%). Used by the upload form to suggest values for the
+// transparency dropdown when the user clicks "Fetch weather". Admin-only
+// because it's a small outbound network call we don't want randos triggering.
+app.get('/api/admin/weather', basicAuth, async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  const at = req.query.at ? new Date(String(req.query.at)) : null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !at || Number.isNaN(at.getTime())) {
+    return res.status(400).json({ error: 'lat, lon and at (ISO datetime) required' });
+  }
+  const date = at.toISOString().slice(0, 10);
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}`
+    + `&start_date=${date}&end_date=${date}`
+    + `&hourly=cloud_cover,temperature_2m,dew_point_2m,relative_humidity_2m`
+    + `&timezone=UTC`;
+  let data;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(`upstream ${r.status}`);
+    data = await r.json();
+  } catch (err) {
+    return res.status(502).json({ error: `weather fetch failed: ${err.message}` });
+  }
+  const hour = at.getUTCHours();
+  const cloud = data?.hourly?.cloud_cover?.[hour];
+  const temp = data?.hourly?.temperature_2m?.[hour];
+  const dew = data?.hourly?.dew_point_2m?.[hour];
+  const hum = data?.hourly?.relative_humidity_2m?.[hour];
+  let transparencyHint = null;       // map cloud cover -> 1..5 scale
+  if (typeof cloud === 'number') {
+    if (cloud < 10) transparencyHint = 5;
+    else if (cloud < 30) transparencyHint = 4;
+    else if (cloud < 60) transparencyHint = 3;
+    else if (cloud < 85) transparencyHint = 2;
+    else transparencyHint = 1;
+  }
+  res.json({
+    cloud_cover_pct: typeof cloud === 'number' ? cloud : null,
+    temperature_c: typeof temp === 'number' ? temp : null,
+    dew_point_c: typeof dew === 'number' ? dew : null,
+    relative_humidity_pct: typeof hum === 'number' ? hum : null,
+    transparency_hint: transparencyHint,
+    source: 'open-meteo archive',
+    fetched_at: new Date().toISOString(),
+  });
+});
+
 app.get('/api/filters', (_req, res) => {
   const telescopes = db
     .prepare(
@@ -742,6 +905,33 @@ app.get('/api/objects/:id', (req, res) => {
     attempts_count: observations.length,
     featured_observation_id: featuredObservation?.id ?? null,
   });
+});
+
+// Admin: edit a list_object's aliases. Body is { aliases: ["NGC1976", "M42", …] }.
+// Aliases are normalised to uppercase + whitespace-stripped tokens; an empty
+// array is allowed (clears the column). Stored as a JSON array in the
+// `aliases` column so json_each() in the cross-list ticking query keeps
+// working.
+app.patch('/api/admin/objects/:id', basicAuth, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const existing = db.prepare('SELECT id FROM list_objects WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Object not found' });
+
+  if (!Array.isArray(req.body?.aliases)) {
+    return res.status(400).json({ error: 'aliases must be an array of strings' });
+  }
+  const cleaned = req.body.aliases
+    .map((s) => String(s).trim().toUpperCase().replace(/\s+/g, ''))
+    .filter(Boolean);
+  const unique = [...new Set(cleaned)];
+  for (const a of unique) {
+    if (a.length > 40) return res.status(400).json({ error: `alias too long: ${a}` });
+  }
+
+  db.prepare('UPDATE list_objects SET aliases = ? WHERE id = ?')
+    .run(unique.length ? JSON.stringify(unique) : null, id);
+  res.json({ id, aliases: unique });
 });
 
 app.get('/api/admin/config', basicAuth, (_req, res) => {
@@ -1158,7 +1348,73 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
     )
     .all();
 
-  res.json({ totals, lists, recent, telescopes, heatmap });
+  // Lifetime panel — derived totals that motivate the daily user.
+  // - integration_hours: SUM(stack_count * exposure_seconds) / 3600
+  //   (stack_count defaults to 1 so single-frame observations still count).
+  // - this_year: observations whose effective date falls in the current UTC
+  //   year, judged from observed_at when set, falling back to created_at.
+  // - longest/current streak: consecutive UTC days containing at least one
+  //   observation, computed in JS off the same heatmap rows.
+  const lifetime = db
+    .prepare(
+      `SELECT
+         SUM(COALESCE(stack_count, 1) * COALESCE(exposure_seconds, 0)) / 3600.0
+           AS integration_hours,
+         COUNT(*) AS observations_total,
+         COUNT(DISTINCT NULLIF(catalog || catalog_number, '')) AS distinct_targets,
+         (SELECT COUNT(*) FROM observations
+            WHERE substr(COALESCE(observed_at, created_at), 1, 4)
+                  = strftime('%Y','now')) AS observations_this_year
+       FROM observations`,
+    )
+    .get();
+
+  const days = db
+    .prepare(
+      `SELECT DISTINCT substr(COALESCE(observed_at, created_at), 1, 10) AS day
+         FROM observations
+         WHERE COALESCE(observed_at, created_at) IS NOT NULL
+         ORDER BY day`,
+    )
+    .all()
+    .map((r) => r.day);
+
+  const oneDay = 86_400_000;
+  let longest = 0, current = 0, run = 0, prev = null;
+  for (const d of days) {
+    const t = Date.parse(d + 'T00:00:00Z');
+    if (prev != null && t - prev === oneDay) run += 1; else run = 1;
+    if (run > longest) longest = run;
+    prev = t;
+  }
+  // current streak ends today (UTC) — count back from today.
+  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+  const dayset = new Set(days);
+  for (let i = 0; ; i++) {
+    const d = new Date(today.getTime() - i * oneDay).toISOString().slice(0, 10);
+    if (dayset.has(d)) current += 1;
+    else if (i === 0) continue;       // missing today still allowed; don't end yet
+    else break;
+  }
+
+  lifetime.integration_hours = lifetime.integration_hours
+    ? Number(lifetime.integration_hours.toFixed(1)) : 0;
+  lifetime.longest_streak_days = longest;
+  lifetime.current_streak_days = current;
+
+  res.json({ totals, lifetime, lists, recent, telescopes, heatmap });
+});
+
+// Bundled NGC/IC fallback used by the upload form when the typed target
+// isn't in any seeded list. Returns enough metadata to pre-fill catalog,
+// catalog_number, ra/dec, type and constellation so a free-form NGC
+// observation behaves like a list-backed one.
+app.get('/api/admin/objects/lookup', basicAuth, (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  const hit = ngc.lookup(q);
+  if (!hit) return res.status(404).json({ error: 'no NGC/IC match' });
+  res.json(hit);
 });
 
 app.get('/api/admin/objects', basicAuth, (req, res) => {
@@ -1368,6 +1624,7 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const seeing = clamp(body.seeing, 1, 5);
   const transparency = clamp(body.transparency, 1, 5);
   const bortle = clamp(body.bortle, 1, 9);
+  const sqm = clamp(body.sqm, 14, 22.5);
 
   const stackCount = body.stack_count != null && body.stack_count !== ''
     ? Math.max(0, Math.floor(Number(body.stack_count))) : null;
@@ -1515,13 +1772,13 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
         aperture, image_path, thumbnail_path, exif_json, rating,
         latitude, longitude, seeing, transparency, moon_phase,
         moon_phase_name, bortle, stack_count, gain, filter_name, device_json,
-        object_type, ra_hours, dec_degrees)
+        object_type, ra_hours, dec_degrees, sqm)
      VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
              @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
              @aperture, @image_path, @thumbnail_path, @exif_json, @rating,
              @latitude, @longitude, @seeing, @transparency, @moon_phase,
              @moon_phase_name, @bortle, @stack_count, @gain, @filter_name, @device_json,
-             @object_type, @ra_hours, @dec_degrees)`,
+             @object_type, @ra_hours, @dec_degrees, @sqm)`,
   );
 
   const completeList = db.prepare(
@@ -1563,6 +1820,7 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       object_type: observationObjectType,
       ra_hours: observationRaHours,
       dec_degrees: observationDecDegrees,
+      sqm,
     });
 
     const observationId = Number(result.lastInsertRowid);
@@ -1648,6 +1906,7 @@ app.patch('/api/admin/observations/:id', basicAuth, (req, res) => {
   if ('seeing' in body)           updates.seeing = clamp(body.seeing, 1, 5);
   if ('transparency' in body)     updates.transparency = clamp(body.transparency, 1, 5);
   if ('bortle' in body)           updates.bortle = clamp(body.bortle, 1, 9);
+  if ('sqm' in body)              updates.sqm = clamp(body.sqm, 14, 22.5);
   if ('stack_count' in body)      updates.stack_count = num(body.stack_count);
   if ('exposure_seconds' in body) updates.exposure_seconds = num(body.exposure_seconds);
   if ('iso' in body)              updates.iso = num(body.iso);

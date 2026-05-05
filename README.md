@@ -14,7 +14,9 @@ list, and publish a public gallery and map of where you image from.
   single upload of e.g. M42 also ticks NGC 1976 in any list that names it.
 - **Tonight + Planner.** `/tonight.html` shows what's up right now;
   `/planner.html` projects altitude across an entire night for a chosen
-  date and location.
+  date+time and location, with astronomical-dark and moon-up bands and
+  a moon-distance filter so you can rule out targets too close to the
+  moon at their best altitude.
 - **Solar System ephemeris.** Sun, Moon, and the eight major planets
   carry an `ephemeris` tag instead of stored coordinates; the server
   computes live RA/Dec/magnitude on every fetch.
@@ -23,10 +25,29 @@ list, and publish a public gallery and map of where you image from.
 - **Admin behind HTTP Basic Auth** with a configurable port and a version
   chip in the header that compares against `main` on GitHub. Per-IP rate
   limit on auth failures.
-- **Drag-and-drop upload** with EXIF + watermark OCR + JSON sidecar
-  parsing — drop a Seestar JPG and the form pre-fills target, telescope,
-  date, location, exposure, gain, filter. Tesseract.js language data is
-  bundled with the Docker image so OCR works on first upload.
+- **Drag-and-drop upload** with EXIF + watermark OCR + filename + JSON
+  sidecar parsing — drop a Seestar JPG and the form pre-fills target,
+  telescope, date, location, GPS, exposure, gain, filter, stack count.
+  Multi-file drops queue up for sequential review; shared fields
+  (telescope, target, location) carry across the queue. Tesseract.js
+  language data is bundled with the Docker image so OCR works on first
+  upload.
+- **NGC/IC fallback.** When the typed target isn't in any seeded list,
+  a bundled OpenNGC dataset (~7,500 objects) auto-fills catalog,
+  RA/Dec, type, and constellation so any NGC/IC observation behaves
+  like a list-backed one.
+- **Comets and free-form objects.** Object-type selector + per-observation
+  RA/Dec on the upload form lets you log moving targets without a
+  catalog entry; gallery and filters pick them up via the comet type.
+- **Sky quality + weather.** SQM-L (mag/arcsec²) field with bidirectional
+  Bortle ↔ SQM conversion, optional one-click Open-Meteo weather fetch
+  that surfaces cloud cover / temp / dew point and pre-fills the
+  transparency hint.
+- **Configurable site name.** Re-brand the install via the admin
+  dashboard — public + admin pages read it on every load.
+- **Dark-moon iCalendar feed** at `/api/calendar/dark-moon.ics` —
+  subscribe in any calendar app for a one-glance view of the next
+  twelve months of new-moon weekends.
 - **Multi-attempt support.** Log many photos of the same object, mark one
   as featured for the cover image, compare any two side-by-side.
 - **Edit / delete / feature** every observation. Equipment library lets
@@ -39,9 +60,14 @@ list, and publish a public gallery and map of where you image from.
   observation.
 - **Backups.** `./backup.sh` snapshots the database + uploads. The admin
   dashboard lists every archive with a one-click Restore.
-- **Activity heatmap.** Last 365 days of observations on the admin
-  dashboard, GitHub-contribution-graph style.
-- **CSV export** of every observation, all 30+ columns.
+- **Activity heatmap + lifetime stats.** Last 365 days of observations
+  on the admin dashboard, GitHub-contribution-graph style. Lifetime
+  panel shows integration hours, distinct targets, observations this
+  year, and longest + current observing streak.
+- **CSV export** of every observation, all 30+ columns, plus the
+  iCalendar feed for new-moon weekends.
+- **Object aliases editor** — admin UI on the per-object page lets you
+  add aliases (e.g. NGC 1976 ↔ M42) so cross-list ticking picks them up.
 - **Smoke test suite.** `npm test` boots a throwaway server and drives
   every endpoint; runs in ~1 s; CI runs it on every push.
 

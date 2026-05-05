@@ -35,6 +35,9 @@ const ratingValue = document.getElementById('rating-value');
 const seeingInput = document.getElementById('seeing-input');
 const transparencyInput = document.getElementById('transparency-input');
 const bortleInput = document.getElementById('bortle-input');
+const sqmInput = document.getElementById('sqm-input');
+const fetchWeatherBtn = document.getElementById('fetch-weather-btn');
+const weatherSummary = document.getElementById('weather-summary');
 const moonDisplay = document.getElementById('moon-display');
 const sidecarInput = document.getElementById('sidecar-input');
 const sidecarSummary = document.getElementById('sidecar-summary');
@@ -458,12 +461,54 @@ function resolveObjectFromInput() {
   objectHint.textContent = 'Not in a seeded list — will be logged as a free-form observation.';
 }
 
+// When the user pauses typing on a name that wasn't matched by the seeded
+// search, hit the bundled NGC/IC fallback. Pre-fills catalog/RA/Dec/type so
+// a free-form NGC observation behaves like a list-backed one. We only run
+// the lookup once per unique value to avoid hammering the endpoint.
+let lookupSeq = 0;
+const lookupCache = new Map();   // normalised query -> response or null
+async function ngcLookup(value) {
+  const key = value.toUpperCase().replace(/\s+/g, '');
+  if (lookupCache.has(key)) return lookupCache.get(key);
+  const seq = ++lookupSeq;
+  try {
+    const res = await fetch(`/api/admin/objects/lookup?q=${encodeURIComponent(value)}`);
+    if (seq !== lookupSeq) return null;
+    if (res.status === 404) { lookupCache.set(key, null); return null; }
+    if (!res.ok) return null;
+    const data = await res.json();
+    lookupCache.set(key, data);
+    return data;
+  } catch { return null; }
+}
+async function tryNgcFallback() {
+  const v = objectInput.value.trim();
+  if (!v || objectIdField.value || catalogInput.value) return;
+  const hit = await ngcLookup(v);
+  if (!hit) return;
+  // Only fill if the user still hasn't matched a list_object and hasn't
+  // typed something else in the meantime.
+  if (objectInput.value.trim() !== v) return;
+  catalogInput.value = hit.catalog;
+  catalogNumberInput.value = hit.catalog_number;
+  if (hit.object_type && !objectTypeInput.value) objectTypeInput.value = hit.object_type;
+  if (hit.ra_hours != null && !raHoursInput.value) raHoursInput.value = hit.ra_hours.toFixed(4);
+  if (hit.dec_degrees != null && !decDegreesInput.value) decDegreesInput.value = hit.dec_degrees.toFixed(4);
+  objectHint.textContent = `${hit.source}: ${hit.name}${hit.constellation ? ' · ' + hit.constellation : ''}${hit.magnitude != null ? ' · mag ' + hit.magnitude : ''}`;
+}
+
+let typingTimer = null;
 objectInput.addEventListener('input', () => {
   resolveObjectFromInput();
   const v = objectInput.value.trim();
   if (v.length >= 1) searchObjects(v);
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(tryNgcFallback, 350);
 });
-objectInput.addEventListener('change', resolveObjectFromInput);
+objectInput.addEventListener('change', () => {
+  resolveObjectFromInput();
+  tryNgcFallback();
+});
 
 document.getElementById('cancel-btn').addEventListener('click', async () => {
   if (currentStage) {
@@ -494,6 +539,7 @@ function resetForm() {
   moonDisplay.value = '';
   latitudeInput.value = '';
   longitudeInput.value = '';
+  if (sqmInput) sqmInput.value = '';
   useImageGpsBtn.disabled = true;
   useImageGpsBtn.title = 'No GPS in image EXIF';
   seestarJsonField.value = '';
@@ -520,6 +566,88 @@ function advanceQueue() {
 
 dateInput.addEventListener('change', updateMoonPreview);
 dateInput.addEventListener('input', updateMoonPreview);
+
+// Fetch weather button: enabled when we have a date and GPS coords. Calls
+// /api/admin/weather (Open-Meteo archive) and pre-fills the transparency
+// dropdown if the user hasn't already set one.
+function refreshWeatherBtn() {
+  if (!fetchWeatherBtn) return;
+  const hasGps = latitudeInput.value !== '' && longitudeInput.value !== '';
+  fetchWeatherBtn.disabled = !(dateInput.value && hasGps);
+  fetchWeatherBtn.title = fetchWeatherBtn.disabled
+    ? 'Need a date and lat/lon to fetch weather.'
+    : 'Fetch historical weather from Open-Meteo';
+}
+[dateInput, latitudeInput, longitudeInput].forEach((i) => {
+  i.addEventListener('input', refreshWeatherBtn);
+  i.addEventListener('change', refreshWeatherBtn);
+});
+refreshWeatherBtn();
+fetchWeatherBtn?.addEventListener('click', async () => {
+  if (fetchWeatherBtn.disabled) return;
+  weatherSummary.textContent = 'Fetching…';
+  try {
+    const params = new URLSearchParams({
+      lat: latitudeInput.value,
+      lon: longitudeInput.value,
+      at: new Date(dateInput.value).toISOString(),
+    });
+    const res = await fetch(`/api/admin/weather?${params}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const w = await res.json();
+    const bits = [];
+    if (w.cloud_cover_pct != null) bits.push(`☁ ${w.cloud_cover_pct}%`);
+    if (w.temperature_c != null) bits.push(`${w.temperature_c}°C`);
+    if (w.dew_point_c != null) bits.push(`dew ${w.dew_point_c}°C`);
+    if (w.relative_humidity_pct != null) bits.push(`RH ${w.relative_humidity_pct}%`);
+    weatherSummary.textContent = bits.length ? bits.join(' · ') : 'No data for that hour.';
+    if (w.transparency_hint && !transparencyInput.value) {
+      transparencyInput.value = String(w.transparency_hint);
+    }
+  } catch (err) {
+    weatherSummary.textContent = `Failed: ${err.message}`;
+  }
+});
+
+// Bortle ↔ SQM conversion. The mapping is the canonical Bortle/SQM scale
+// used by darksitefinder.com / Sky Quality Meters; we pick the centre of
+// each Bortle band when going Bortle→SQM, and pick the nearest band when
+// going SQM→Bortle. Editing one updates the other unless the user has
+// already typed a value into the target field.
+const BORTLE_TO_SQM_CENTRE = { 1: 21.85, 2: 21.7, 3: 21.4, 4: 20.95, 5: 20.45, 6: 19.5, 7: 18.5, 8: 17.85, 9: 17.4 };
+function sqmToBortle(sqm) {
+  if (!Number.isFinite(sqm)) return '';
+  if (sqm >= 21.8) return 1;
+  if (sqm >= 21.6) return 2;
+  if (sqm >= 21.2) return 3;
+  if (sqm >= 20.7) return 4;
+  if (sqm >= 20.0) return 5;
+  if (sqm >= 19.0) return 6;
+  if (sqm >= 18.0) return 7;
+  if (sqm >= 17.7) return 8;
+  return 9;
+}
+let suppressBortleSqmSync = false;
+bortleInput.addEventListener('change', () => {
+  if (suppressBortleSqmSync) return;
+  const v = Number(bortleInput.value);
+  if (!Number.isFinite(v) || !BORTLE_TO_SQM_CENTRE[v]) return;
+  suppressBortleSqmSync = true;
+  sqmInput.value = BORTLE_TO_SQM_CENTRE[v];
+  suppressBortleSqmSync = false;
+});
+sqmInput.addEventListener('input', () => {
+  if (suppressBortleSqmSync) return;
+  const v = Number(sqmInput.value);
+  const b = sqmToBortle(v);
+  if (b === '') return;
+  suppressBortleSqmSync = true;
+  bortleInput.value = String(b);
+  suppressBortleSqmSync = false;
+});
 
 useImageGpsBtn.addEventListener('click', () => {
   const lat = currentStage?.exif?.latitude;
@@ -550,6 +678,7 @@ form.addEventListener('submit', async (e) => {
     seeing: seeingInput.value || null,
     transparency: transparencyInput.value || null,
     bortle: bortleInput.value || null,
+    sqm: sqmInput.value !== '' ? Number(sqmInput.value) : null,
     stack_count: stackCountInput.value || null,
     exposure_seconds: exposureInput.value || null,
     gain: gainInput.value || null,

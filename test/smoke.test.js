@@ -528,6 +528,126 @@ test('smoke', async (t) => {
     });
   });
 
+  await t.test('admin stats includes lifetime panel with streak data', async () => {
+    const data = await fetchJsonAuthed('/api/admin/stats');
+    assert.ok(data.lifetime, 'lifetime block present');
+    assert.equal(typeof data.lifetime.observations_total, 'number');
+    assert.equal(typeof data.lifetime.distinct_targets, 'number');
+    assert.equal(typeof data.lifetime.observations_this_year, 'number');
+    assert.equal(typeof data.lifetime.longest_streak_days, 'number');
+    assert.equal(typeof data.lifetime.current_streak_days, 'number');
+  });
+
+  await t.test('SQM round-trips through upload + edit', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const jpeg = await buildSyntheticJpeg();
+    const fd = new FormData();
+    fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }), 'sqm.jpg');
+    const stage = await fetch(`${baseUrl}/api/admin/stage`, { method: 'POST', headers: auth, body: fd })
+      .then((r) => r.json());
+
+    const created = await fetch(`${baseUrl}/api/admin/observations`, {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stage_id: stage.stage_id,
+        object_name: 'M101', telescope: 'Seestar S30 Pro',
+        observed_at: '2026-04-19T22:00',
+        sqm: 21.4,
+      }),
+    }).then((r) => r.json());
+
+    const all = await (await fetch(`${baseUrl}/api/observations`)).json();
+    const row = all.find((o) => o.id === created.id);
+    assert.equal(row.sqm, 21.4);
+
+    // Out-of-range SQM clamps on PATCH (not rejected).
+    const patched = await fetch(`${baseUrl}/api/admin/observations/${created.id}`, {
+      method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sqm: 99 }),
+    }).then((r) => r.json());
+    assert.equal(patched.sqm, 22.5);
+  });
+
+  await t.test('object aliases editor: PATCH stores normalised array', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const messier = await fetchJsonAuthed('/api/lists/messier');
+    const m42 = messier.objects.find((o) => o.catalog_number === '42');
+    assert.ok(m42);
+
+    const res = await fetch(`${baseUrl}/api/admin/objects/${m42.id}`, {
+      method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aliases: ['ngc 1976', 'NGC1976', 'orion neb'] }),
+    });
+    assert.equal(res.status, 200);
+    const out = await res.json();
+    // Normalised: uppercased, whitespace-stripped, deduped.
+    assert.deepEqual(out.aliases.sort(), ['NGC1976', 'ORIONNEB']);
+
+    // Non-array body rejected.
+    const bad = await fetch(`${baseUrl}/api/admin/objects/${m42.id}`, {
+      method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aliases: 'NGC1976' }),
+    });
+    assert.equal(bad.status, 400);
+
+    // Restore so later tests aren't surprised.
+    await fetch(`${baseUrl}/api/admin/objects/${m42.id}`, {
+      method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aliases: [] }),
+    });
+  });
+
+  await t.test('dark-moon iCalendar feed has VEVENTs over the next year', async () => {
+    const res = await fetch(`${baseUrl}/api/calendar/dark-moon.ics`);
+    assert.equal(res.status, 200);
+    assert.ok(res.headers.get('content-type').includes('text/calendar'));
+    const text = await res.text();
+    assert.ok(text.startsWith('BEGIN:VCALENDAR'));
+    assert.ok(text.trimEnd().endsWith('END:VCALENDAR'));
+    const events = (text.match(/BEGIN:VEVENT/g) || []).length;
+    assert.ok(events >= 10 && events <= 14, `expected ~12 monthly VEVENTs, got ${events}`);
+  });
+
+  await t.test('planner exposes twilight + moon bands and moon separation', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const data = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=10&step_minutes=30`,
+    );
+    assert.ok(Array.isArray(data.astro_dark_bands));
+    assert.ok(Array.isArray(data.moon_up_bands));
+    if (data.targets[0]) {
+      // moon_separation_deg should be a number 0..180.
+      const sep = data.targets[0].moon_separation_deg;
+      assert.ok(sep == null || (sep >= 0 && sep <= 180));
+    }
+    // Filter knob is honoured: very large min_moon_sep prunes everything.
+    const pruned = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=10&min_moon_sep=180`,
+    );
+    assert.equal(pruned.targets.length, 0);
+  });
+
+  await t.test('NGC fallback resolves common designations', async () => {
+    const res = await fetch(`${baseUrl}/api/admin/objects/lookup?q=NGC7000`, {
+      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
+    });
+    assert.equal(res.status, 200);
+    const hit = await res.json();
+    assert.equal(hit.catalog, 'NGC');
+    assert.equal(hit.catalog_number, '7000');
+    assert.equal(typeof hit.ra_hours, 'number');
+    assert.equal(typeof hit.dec_degrees, 'number');
+    // NGC 7000 is the North America Nebula in Cygnus.
+    assert.equal(hit.constellation, 'Cyg');
+
+    // Unknown query -> 404.
+    const miss = await fetch(`${baseUrl}/api/admin/objects/lookup?q=NGC999999`, {
+      headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
+    });
+    assert.equal(miss.status, 404);
+  });
+
   await t.test('batch staging: many parallel stages succeed independently', async () => {
     const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
     const stages = await Promise.all(

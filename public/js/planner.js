@@ -7,11 +7,13 @@ const timeInput = document.getElementById('time-input');
 const latInput = document.getElementById('lat-input');
 const lonInput = document.getElementById('lon-input');
 const altInput = document.getElementById('alt-input');
+const moonSepInput = document.getElementById('moon-sep-input');
 const includeObserved = document.getElementById('include-observed');
 const locateBtn = document.getElementById('locate-btn');
 const runBtn = document.getElementById('run-btn');
 const status = document.getElementById('status');
 const moonLine = document.getElementById('moon-line');
+const bandsLine = document.getElementById('bands-line');
 const rows = document.getElementById('rows');
 
 const STORE_KEY = 'deepskylog.location';
@@ -59,10 +61,12 @@ async function load() {
 
   status.textContent = 'Computing…';
   rows.innerHTML = '';
+  const minMoonSep = Number(moonSepInput?.value) || 0;
   const params = new URLSearchParams({
     lat: String(lat), lon: String(lon),
     min_alt: String(minAlt),
   });
+  if (minMoonSep > 0) params.set('min_moon_sep', String(minMoonSep));
   if (time) {
     // Combine date+time as local — the resulting Date is correct UTC instant.
     const start = new Date(`${date}T${time}`);
@@ -91,10 +95,29 @@ async function load() {
   const end = new Date(data.window.end);
   moonLine.textContent = `Window: ${start.toLocaleString()} → ${end.toLocaleString()} · Moon at start: ${data.moon.name} (${moonPct}%)`;
 
+  // Twilight + moon-up bands let the user eyeball when it's actually dark
+  // and when the moon is interfering — no DSO planner is useful without
+  // those two facts.
+  function fmtBand(b) {
+    return `${fmtTime(b.start)}–${fmtTime(b.end)}`;
+  }
+  const bandsBits = [];
+  if (data.astro_dark_bands?.length) {
+    bandsBits.push(`Astro dark: ${data.astro_dark_bands.map(fmtBand).join(', ')}`);
+  } else {
+    bandsBits.push('No astronomical darkness in this window.');
+  }
+  if (data.moon_up_bands?.length) {
+    bandsBits.push(`Moon up: ${data.moon_up_bands.map(fmtBand).join(', ')}`);
+  } else {
+    bandsBits.push('Moon stays below horizon — full window usable.');
+  }
+  bandsLine.textContent = bandsBits.join(' · ');
+
   status.textContent = `${data.targets.length} target${data.targets.length === 1 ? '' : 's'} reaching ≥${minAlt}°`;
 
   if (!data.targets.length) {
-    rows.appendChild(el('tr', {}, el('td', { colspan: '9' },
+    rows.appendChild(el('tr', {}, el('td', { colspan: '10' },
       el('div', { class: 'empty-state', text: 'Nothing clears the minimum altitude during this window.' }))));
     return;
   }
@@ -109,6 +132,7 @@ async function load() {
       el('td', { text: fmtDeg(t.max_altitude) }),
       el('td', { text: fmtTime(t.max_altitude_at) }),
       el('td', { text: fmtMinutes(t.minutes_above_min) }),
+      el('td', { text: t.moon_separation_deg != null ? `${t.moon_separation_deg.toFixed(0)}°` : '—' }),
       el('td', { class: 'dim', text: t.list_name }),
     ));
   }

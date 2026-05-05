@@ -63,6 +63,78 @@ async function triggerPlateSolve(o) {
   }
 }
 
+// Aliases editor — chip per alias with an X to remove, plus a small input
+// to add a new one. Stays in sync with the server via PATCH /api/admin/objects/:id.
+function buildAliasesEditor(data) {
+  let aliases = [];
+  try { aliases = data.aliases ? JSON.parse(data.aliases) : []; }
+  catch { aliases = []; }
+  if (!Array.isArray(aliases)) aliases = [];
+
+  const wrap = el('div', { class: 'chip-row', style: 'gap:0.25rem; align-items:center; flex-wrap:wrap;' });
+  const status = el('span', { class: 'dim', style: 'margin-left:0.5rem;' });
+
+  function paint() {
+    wrap.innerHTML = '';
+    for (const a of aliases) {
+      const x = el('button', {
+        type: 'button',
+        class: 'edit-btn',
+        style: 'margin-left:0.25rem; padding:0 0.25rem;',
+        text: '×',
+      });
+      x.addEventListener('click', async () => {
+        aliases = aliases.filter((v) => v !== a);
+        await save();
+      });
+      wrap.appendChild(el('span', { class: 'chip' }, a, x));
+    }
+    const input = el('input', {
+      type: 'text', placeholder: 'add alias (e.g. NGC1976)',
+      style: 'min-width:12rem;',
+    });
+    const add = el('button', { type: 'button', class: 'button-link ghost-link', text: 'Add' });
+    const handleAdd = async () => {
+      const v = input.value.trim().toUpperCase().replace(/\s+/g, '');
+      if (!v) return;
+      if (aliases.includes(v)) { status.textContent = 'Already present.'; return; }
+      aliases = [...aliases, v];
+      input.value = '';
+      await save();
+    };
+    add.addEventListener('click', handleAdd);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleAdd(); } });
+    wrap.appendChild(input);
+    wrap.appendChild(add);
+    wrap.appendChild(status);
+  }
+
+  async function save() {
+    status.textContent = 'Saving…';
+    try {
+      const res = await fetch(`/api/admin/objects/${encodeURIComponent(data.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aliases }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const out = await res.json();
+      aliases = out.aliases || [];
+      status.textContent = 'Saved.';
+      paint();
+    } catch (err) {
+      status.textContent = `Failed: ${err.message}`;
+      paint();
+    }
+  }
+
+  paint();
+  return wrap;
+}
+
 async function deleteObservation(observationId) {
   if (!confirm(
     'Delete this observation? The image and thumbnail files will be removed and the catalog completion will be unticked if this was the only attempt.',
@@ -139,6 +211,8 @@ async function render() {
       metaList,
       el('h3', { style: 'margin-top:1.25rem;', text: 'List memberships' }),
       memberships,
+      el('h3', { style: 'margin-top:1.25rem;', text: 'Aliases' }),
+      buildAliasesEditor(data),
     ),
   ));
 

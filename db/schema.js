@@ -187,6 +187,13 @@ const MIGRATIONS = [
       ALTER TABLE observations ADD COLUMN dec_degrees REAL;
     `,
   },
+  {
+    id: 13,
+    name: 'add_observation_sqm',
+    up: `
+      ALTER TABLE observations ADD COLUMN sqm REAL;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

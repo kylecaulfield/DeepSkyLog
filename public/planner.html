@@ -45,6 +45,10 @@
           Min altitude (°)
           <input id="alt-input" type="number" step="1" min="0" max="90" value="30" />
         </label>
+        <label title="Hide targets within this many degrees of the moon at their best altitude">
+          Min moon sep (°)
+          <input id="moon-sep-input" type="number" step="1" min="0" max="180" value="0" />
+        </label>
         <label>
           <input id="include-observed" type="checkbox" /> Include observed
         </label>
@@ -53,7 +57,8 @@
         <span id="status" class="dim" style="margin-left:auto;"></span>
       </div>
 
-      <div id="moon-line" class="dim" style="margin-bottom: 0.75rem;"></div>
+      <div id="moon-line" class="dim" style="margin-bottom: 0.25rem;"></div>
+      <div id="bands-line" class="dim" style="margin-bottom: 0.75rem;"></div>
 
       <div class="table-wrapper">
         <table>
@@ -67,6 +72,7 @@
               <th>Max alt</th>
               <th>At</th>
               <th>Above min for</th>
+              <th>Moon Δ</th>
               <th>List</th>
             </tr>
           </thead>
