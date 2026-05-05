@@ -195,9 +195,22 @@
                 </select>
               </label>
               <label class="field">
+                <span>SQM (mag/arcsec²)</span>
+                <input id="sqm-input" name="sqm" type="number" step="0.01" min="14" max="22.5" placeholder="e.g. 21.4" />
+                <small id="sqm-hint" class="dim">Bortle ↔ SQM updates each other automatically.</small>
+              </label>
+              <label class="field">
                 <span>Moon phase</span>
                 <input id="moon-display" type="text" readonly placeholder="auto from date" />
               </label>
+            </div>
+
+            <div class="row">
+              <label class="field" style="flex:0 0 auto;">
+                <span>&nbsp;</span>
+                <button type="button" id="fetch-weather-btn" class="button-link ghost-link" disabled title="Fetch historical weather from Open-Meteo for this date and GPS coordinates">Fetch weather</button>
+              </label>
+              <span id="weather-summary" class="dim" style="align-self:flex-end; padding-bottom:0.5rem;"></span>
             </div>
 
             <fieldset class="sidecar">

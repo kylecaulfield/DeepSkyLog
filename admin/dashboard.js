@@ -70,12 +70,19 @@ function renderRecent(rows) {
     return;
   }
   for (const r of rows) {
-    const thumb = r.thumbnail_path
+    const thumbInner = r.thumbnail_path
       ? el('span', {
           class: 'thumb-chip',
           style: `background-image: url("/uploads/${r.thumbnail_path}")`,
         })
       : el('span', { class: 'thumb-chip empty', text: '—' });
+    // Link the thumbnail to the same destination as the catalog id cell so
+    // clicking the image opens the object detail page (which lists all
+    // attempts for that target). Free-form observations with no
+    // list_object stay un-linked.
+    const thumb = r.object_list_id
+      ? el('a', { href: `/admin/object.html?id=${r.object_list_id}`, title: 'Open object detail' }, thumbInner)
+      : thumbInner;
 
     const objectId = r.catalog && r.catalog_number ? `${r.catalog}${r.catalog_number}` : '—';
     const stars = r.rating ? '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating) : '—';
@@ -230,12 +237,32 @@ document.getElementById('backup-now')?.addEventListener('click', async () => {
   }
 });
 
+function renderLifetime(life) {
+  const wrap = document.getElementById('lifetime-stats');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const cells = [
+    ['Integration hours', life.integration_hours != null ? `${life.integration_hours.toFixed(1)} h` : '—'],
+    ['Distinct targets', life.distinct_targets ?? '—'],
+    ['This year', life.observations_this_year ?? 0],
+    ['Current streak', life.current_streak_days ? `${life.current_streak_days} d` : '—'],
+    ['Longest streak', life.longest_streak_days ? `${life.longest_streak_days} d` : '—'],
+  ];
+  for (const [label, value] of cells) {
+    wrap.appendChild(el('div', { class: 'stat' },
+      el('span', { class: 'stat-label', text: label }),
+      el('span', { class: 'stat-value', text: String(value) }),
+    ));
+  }
+}
+
 async function load() {
   try {
     const res = await fetch('/api/admin/stats');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     renderStats(data.totals || {});
+    if (data.lifetime) renderLifetime(data.lifetime);
     renderCatalogs(data.lists || []);
     renderRecent(data.recent || []);
     renderTelescopes(data.telescopes || []);

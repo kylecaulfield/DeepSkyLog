@@ -90,17 +90,14 @@ None of these have been started; pick the ones that fit your workflow.
 15. **RSS / Atom feed** — `/api/observations.rss` so friends can subscribe
     to your new captures. Reuses the same query as `/api/observations`,
     just renders XML instead of JSON.
-16. **Twilight + moon-up bands on the planner** — overlay astronomical
-    twilight start/end and moon-up window on the planner table so you can
-    eyeball the real imaging window. `lib/astro.js` already does altAz;
-    just need a "moon up?" computation per row.
-17. **Moon-distance filter on planner** — exclude targets within X° of the
-    moon (slider in the toolbar). One extra column in `/api/planner` plus
-    a client-side filter.
-18. **Object aliases editor** — admin UI to add `aliases` to a
-    `list_objects` row (the column already exists, no UI surfaces it).
-    Fixes the "M42 ↔ NGC 1976" cross-list ticking gaps without editing
-    the seed JS.
+16. ✅ **Twilight + moon-up bands on the planner** — astronomical-dark and
+    moon-up windows alongside the targets list; uses
+    `sunPosition`/`moonPosition` in `lib/astro.js`.
+17. ✅ **Moon-distance filter on planner** — `min_moon_sep` query param +
+    a "Min moon sep (°)" toolbar input; targets render their moon Δ.
+18. ✅ **Object aliases editor** — `PATCH /api/admin/objects/:id` plus a
+    chip-style editor on the admin object page. Aliases are stored
+    normalised so the existing cross-list ticking picks them up.
 19. **Custom list import (CSV)** — admin form that ingests a CSV
     (`catalog,catalog_number,name,ra_hours,dec_degrees,magnitude,
     constellation`) into a new `lists` row. Lets users seed their own
@@ -111,10 +108,9 @@ None of these have been started; pick the ones that fit your workflow.
 21. **Tagging / freeform labels** — `observation_tags(observation_id, tag)`
     table; tag chips on the upload form; filterable on the gallery and
     observations admin page.
-22. **Annual / lifetime stats panel** — block on the public dashboard
-    showing observations this year, distinct objects, hours under the
-    sky (sum of `exposure_seconds × stack_count` / 3600), longest single
-    session, current streak. Aggregation only — no schema changes.
+22. ✅ **Lifetime stats panel** — block on the admin dashboard showing
+    integration hours, distinct targets, observations this year, and
+    longest + current streak (UTC-day basis).
 23. **Notes templates** — admin-managed list of notes presets
     ("first light", "rejected — clouds rolled in", "sketch session").
     Stored as `note_templates(id, name, body)`; dropdown above the notes
@@ -162,10 +158,10 @@ None of these have been started; pick the ones that fit your workflow.
     Android can "Share to DeepSkyLog" from the camera roll, opening
     directly into the upload form with the file pre-attached. Builds on
     backlog item 10.
-34. **Catalog search beyond seeded lists** — fall back to a bundled
-    NGC2000 / IC dataset (or a local SIMBAD mirror) when the user types
-    an unknown target. Returns RA/Dec/type so the comet/free-form path
-    works for any object, not just the seeded ones.
+34. ✅ **Catalog search beyond seeded lists** — bundled OpenNGC dataset
+    (`db/seed/ngc.json`, ~7,500 objects ≤ mag 14) drives a
+    `GET /api/admin/objects/lookup` endpoint; the upload form auto-fills
+    catalog/RA/Dec/type when the user types an NGC/IC designation.
 35. **PDF logbook export** — server-side renders a printable monthly or
     yearly observing log as PDF. Uses something like pdfkit; cleanest
     if scoped to a single user / session.
@@ -184,3 +180,22 @@ None of these have been started; pick the ones that fit your workflow.
     target_id, payload_json)` written by every admin mutation. Dashboard
     table to browse recent edits/deletes. Becomes essential the moment
     multi-user lands.
+
+### Sky / weather data
+
+40. ✅ **Weather auto-fill from Open-Meteo** — `GET /api/admin/weather`
+    proxies the free Open-Meteo archive API for the date+lat/lon and
+    returns cloud cover, temperature, dew point, humidity, plus a 1–5
+    transparency hint that pre-fills the upload form.
+41. ✅ **SQM-L sky quality reading per observation** — new `sqm` column
+    (mag/arcsec²), input on the upload form, persisted alongside Bortle.
+42. ✅ **iCalendar dark-moon weekend feed** — `/api/calendar/dark-moon.ics`
+    serves Friday-Sunday windows around each new moon for the next year.
+    Subscribe in any calendar app.
+43. **Equipment usage stats per scope** — "Seestar S30 Pro: 47 nights,
+    1,200 frames, avg rating 3.8" panel under the existing telescope
+    chips. Pure aggregation, no schema change.
+44. **Slack/Discord webhook on new observation** — outbound POST to a
+    configured URL on each finalised observation. One env var, ~30 lines.
+45. ✅ **Bortle ↔ SQM converter** — typing into either the Bortle or SQM
+    field updates the other on the upload form (centre-of-band mapping).
