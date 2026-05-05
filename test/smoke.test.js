@@ -528,6 +528,49 @@ test('smoke', async (t) => {
     });
   });
 
+  await t.test('public per-observation detail with prev/next siblings', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    // Stage two M81 observations so we can exercise sibling navigation.
+    const messier = await fetchJsonAuthed('/api/lists/messier');
+    const m81 = messier.objects.find((o) => o.catalog_number === '81');
+    assert.ok(m81);
+    const ids = [];
+    for (const day of ['2026-04-10T22:00', '2026-04-12T22:00']) {
+      const jpeg = await buildSyntheticJpeg();
+      const fd = new FormData();
+      fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }), 'm81.jpg');
+      const stage = await fetch(`${baseUrl}/api/admin/stage`, { method: 'POST', headers: auth, body: fd })
+        .then((r) => r.json());
+      const obs = await fetch(`${baseUrl}/api/admin/observations`, {
+        method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stage_id: stage.stage_id,
+          object_id: m81.id, catalog: 'M', catalog_number: '81',
+          object_name: "Bode's Galaxy", telescope: 'Seestar S30 Pro',
+          observed_at: day,
+        }),
+      }).then((r) => r.json());
+      ids.push(obs.id);
+    }
+    // First (earlier) observation: no prev, has next.
+    const first = await (await fetch(`${baseUrl}/api/observations/${ids[0]}`)).json();
+    assert.equal(first.observation.id, ids[0]);
+    assert.equal(first.observation.list_object_id, m81.id);
+    assert.equal(first.observation.list_object_name, "Bode's Galaxy");
+    assert.equal(first.prev_id, null);
+    assert.equal(first.next_id, ids[1]);
+    assert.equal(first.sibling_count, 2);
+    assert.equal(first.sibling_index, 0);
+    // Last observation: has prev, no next.
+    const second = await (await fetch(`${baseUrl}/api/observations/${ids[1]}`)).json();
+    assert.equal(second.prev_id, ids[0]);
+    assert.equal(second.next_id, null);
+    assert.equal(second.sibling_index, 1);
+    // Unknown id -> 404.
+    const miss = await fetch(`${baseUrl}/api/observations/99999`);
+    assert.equal(miss.status, 404);
+  });
+
   await t.test('admin stats includes lifetime panel with streak data', async () => {
     const data = await fetchJsonAuthed('/api/admin/stats');
     assert.ok(data.lifetime, 'lifetime block present');

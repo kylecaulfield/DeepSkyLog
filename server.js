@@ -685,6 +685,62 @@ app.get('/api/observations.csv', (_req, res) => {
   res.send(lines.join('\n'));
 });
 
+// Public per-observation detail endpoint. Joins to the catalog row when the
+// observation is list-backed and finds the previous / next siblings under
+// the same target (matched on the same catalog+number tokens used by the
+// cross-list ticking) so the public page can offer prev/next nav.
+app.get('/api/observations/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const row = db
+    .prepare(
+      `SELECT o.*,
+              lo.id            AS list_object_id,
+              lo.name          AS list_object_name,
+              lo.object_type   AS list_object_type,
+              lo.constellation AS list_object_constellation,
+              lo.ra_hours      AS list_object_ra_hours,
+              lo.dec_degrees   AS list_object_dec_degrees,
+              lo.magnitude     AS list_object_magnitude,
+              l.slug           AS list_slug,
+              l.name           AS list_name
+         FROM observations o
+         LEFT JOIN list_objects lo ON lo.id = o.object_id
+         LEFT JOIN lists l ON l.id = lo.list_id
+         WHERE o.id = ?`,
+    )
+    .get(id);
+  if (!row) return res.status(404).json({ error: 'Observation not found' });
+
+  // Siblings: every observation that shares the same catalog+number
+  // (case- and whitespace-insensitive). Same predicate as the object
+  // detail page uses, so results agree.
+  const token = `${row.catalog || ''}${row.catalog_number || ''}`.toUpperCase().replace(/\s+/g, '');
+  const siblings = token
+    ? db
+        .prepare(
+          `SELECT id, observed_at, created_at, thumbnail_path
+             FROM observations
+             WHERE UPPER(REPLACE(catalog || catalog_number, ' ', '')) = ?
+             ORDER BY COALESCE(observed_at, created_at) ASC, id ASC`,
+        )
+        .all(token)
+    : [{ id: row.id, observed_at: row.observed_at, created_at: row.created_at, thumbnail_path: row.thumbnail_path }];
+
+  const idx = siblings.findIndex((s) => s.id === row.id);
+  const prev = idx > 0 ? siblings[idx - 1] : null;
+  const next = idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1] : null;
+
+  res.json({
+    observation: row,
+    siblings,
+    prev_id: prev?.id ?? null,
+    next_id: next?.id ?? null,
+    sibling_index: idx >= 0 ? idx : 0,
+    sibling_count: siblings.length,
+  });
+});
+
 // iCalendar feed of dark-sky weekends (Fri–Sun) over the next 12 months,
 // anchored on each new moon. Subscribe in any calendar app for a one-glance
 // view of the best imaging windows.

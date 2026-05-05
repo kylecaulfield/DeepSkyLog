@@ -185,7 +185,14 @@ async function render() {
       if (conditionBits.length) {
         captionChildren.push(el('small', { class: 'dim', text: conditionBits.join(' · ') }));
       }
-      grid.appendChild(el('div', { class: 'gallery-item' + (isFeatured ? ' is-featured' : '') },
+      // Wrap the tile in a link so the public viewer can drill into the
+      // full per-observation detail page (location map, moon phase,
+      // notes, prev/next within the same target).
+      grid.appendChild(el('a', {
+          class: 'gallery-item' + (isFeatured ? ' is-featured' : ''),
+          href: `/observation.html?id=${encodeURIComponent(o.id)}`,
+          style: 'text-decoration:none; color:inherit;',
+        },
         thumb,
         el('div', { class: 'caption' }, ...captionChildren),
       ));

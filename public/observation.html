@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; Observation</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet"
+          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin="" />
+    <style>
+      .obs-hero { display:grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 1.25rem; }
+      @media (max-width: 800px) { .obs-hero { grid-template-columns: 1fr; } }
+      .obs-photo img { width:100%; height:auto; border-radius: 8px; display:block; }
+      .obs-photo .empty { padding: 3rem 1rem; text-align: center; border: 1px dashed var(--border, #444); border-radius: 8px; }
+      .obs-nav { display:flex; gap:0.5rem; align-items:center; justify-content:space-between; margin: 0.5rem 0 1rem; }
+      .obs-nav .pos { font-size:0.85em; }
+      .moon-card { display:flex; gap:0.75rem; align-items:center; padding: 0.5rem 0.75rem; border:1px solid var(--border, #333); border-radius: 6px; }
+      .moon-svg { width: 56px; height: 56px; flex: 0 0 auto; }
+      #obs-map { height: 240px; border-radius: 6px; margin-top: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/" data-nav="home">Dashboard</a>
+        <a href="/tonight.html" data-nav="tonight">Tonight</a>
+        <a href="/planner.html" data-nav="planner">Planner</a>
+        <a href="/gallery.html" data-nav="gallery">Gallery</a>
+        <a href="/map.html" data-nav="map">Map</a>
+      </nav>
+    </header>
+    <main id="root">
+      <p class="muted">Loading observation&hellip;</p>
+    </main>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+    <script type="module" src="/js/observation.js"></script>
+    <script type="module" src="/js/site-name.js"></script>
+  </body>
+</html>
