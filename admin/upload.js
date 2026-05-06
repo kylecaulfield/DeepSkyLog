@@ -352,6 +352,8 @@ function onStaged(res) {
 
   // GPS: enable the "Use image GPS" button when EXIF has coords, and pre-fill
   // the lat/lon inputs only if the user hasn't typed something already.
+  // Setting .value programmatically does NOT fire input/change events, so
+  // we kick the auto-weather and history lookups manually below.
   const hasGps = typeof res.exif?.latitude === 'number' && typeof res.exif?.longitude === 'number';
   useImageGpsBtn.disabled = !hasGps;
   if (hasGps) {
@@ -360,6 +362,11 @@ function onStaged(res) {
     if (!longitudeInput.value) longitudeInput.value = res.exif.longitude.toFixed(6);
   } else {
     useImageGpsBtn.title = 'No GPS in image EXIF';
+  }
+  refreshWeatherBtn();
+  if (latitudeInput.value && longitudeInput.value) {
+    maybeAutoFillFromLocationHistory();
+    if (dateInput.value) maybeAutoFetchWeather();
   }
 
   const metaSource = res.kind === 'fits' ? 'FITS header' : 'EXIF';
@@ -440,6 +447,13 @@ async function searchObjects(q) {
   for (const o of rows) {
     const label = `${o.catalog}${o.catalog_number}${o.name ? ' — ' + o.name : ''}`;
     objectCache.set(label.toLowerCase(), o);
+    // Also key by the bare catalog id (e.g. "m31") and the bare object
+    // name ("andromeda galaxy") so a guess that comes from EXIF or a
+    // filename — which is just "M31", not the full datalist label —
+    // still resolves to the catalog row and pre-fills catalog +
+    // catalog_number.
+    objectCache.set(`${o.catalog}${o.catalog_number}`.toLowerCase(), o);
+    if (o.name) objectCache.set(o.name.toLowerCase(), o);
     const opt = document.createElement('option');
     opt.value = label;
     opt.textContent = `${o.list_name}${o.constellation ? ' · ' + o.constellation : ''}`;
@@ -569,7 +583,9 @@ dateInput.addEventListener('input', updateMoonPreview);
 
 // Fetch weather button: enabled when we have a date and GPS coords. Calls
 // /api/admin/weather (Open-Meteo archive) and pre-fills the transparency
-// dropdown if the user hasn't already set one.
+// dropdown if the user hasn't already set one. Also runs automatically the
+// first time both inputs are populated for a given stage so the user
+// doesn't have to click anything for the common case.
 function refreshWeatherBtn() {
   if (!fetchWeatherBtn) return;
   const hasGps = latitudeInput.value !== '' && longitudeInput.value !== '';
@@ -578,13 +594,8 @@ function refreshWeatherBtn() {
     ? 'Need a date and lat/lon to fetch weather.'
     : 'Fetch historical weather from Open-Meteo';
 }
-[dateInput, latitudeInput, longitudeInput].forEach((i) => {
-  i.addEventListener('input', refreshWeatherBtn);
-  i.addEventListener('change', refreshWeatherBtn);
-});
-refreshWeatherBtn();
-fetchWeatherBtn?.addEventListener('click', async () => {
-  if (fetchWeatherBtn.disabled) return;
+async function runWeatherFetch() {
+  if (!fetchWeatherBtn || fetchWeatherBtn.disabled) return;
   weatherSummary.textContent = 'Fetching…';
   try {
     const params = new URLSearchParams({
@@ -610,7 +621,61 @@ fetchWeatherBtn?.addEventListener('click', async () => {
   } catch (err) {
     weatherSummary.textContent = `Failed: ${err.message}`;
   }
+}
+let lastAutoWeatherKey = '';
+async function maybeAutoFetchWeather() {
+  if (!fetchWeatherBtn || fetchWeatherBtn.disabled) return;
+  // Only re-run when the (date, lat, lon) tuple actually changes, so the
+  // user can keep editing other fields without us hammering the upstream.
+  const key = `${dateInput.value}|${latitudeInput.value}|${longitudeInput.value}`;
+  if (key === lastAutoWeatherKey) return;
+  lastAutoWeatherKey = key;
+  await runWeatherFetch();
+}
+[dateInput, latitudeInput, longitudeInput].forEach((i) => {
+  i.addEventListener('input', () => { refreshWeatherBtn(); maybeAutoFetchWeather(); });
+  i.addEventListener('change', () => { refreshWeatherBtn(); maybeAutoFetchWeather(); });
 });
+[latitudeInput, longitudeInput].forEach((i) => {
+  i.addEventListener('change', maybeAutoFillFromLocationHistory);
+});
+refreshWeatherBtn();
+fetchWeatherBtn?.addEventListener('click', () => { lastAutoWeatherKey = ''; runWeatherFetch(); });
+
+// Bortle / SQM auto-fill from past observations at nearby coords. There's
+// no public Bortle API worth using; instead we offer the median of the
+// observer's own readings within ~5 km. After one observation per site,
+// the field becomes effectively automatic.
+let lastLocationStatsKey = '';
+async function maybeAutoFillFromLocationHistory() {
+  const lat = Number(latitudeInput.value);
+  const lon = Number(longitudeInput.value);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+  const key = `${lat.toFixed(4)}|${lon.toFixed(4)}`;
+  if (key === lastLocationStatsKey) return;
+  lastLocationStatsKey = key;
+  try {
+    const res = await fetch(`/api/admin/location-stats?lat=${lat}&lon=${lon}&radius_km=5`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.count) return;
+    if (data.bortle != null && !bortleInput.value) {
+      // Bortle dropdown wants integer 1-9; round the median.
+      const b = Math.max(1, Math.min(9, Math.round(data.bortle)));
+      suppressBortleSqmSync = true;
+      bortleInput.value = String(b);
+      suppressBortleSqmSync = false;
+    }
+    if (data.sqm != null && !sqmInput.value) {
+      suppressBortleSqmSync = true;
+      sqmInput.value = data.sqm;
+      suppressBortleSqmSync = false;
+    }
+    if (data.location && !locationInput.value) {
+      locationInput.value = data.location;
+    }
+  } catch { /* best effort */ }
+}
 
 // Bortle ↔ SQM conversion. The mapping is the canonical Bortle/SQM scale
 // used by darksitefinder.com / Sky Quality Meters; we pick the centre of

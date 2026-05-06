@@ -528,6 +528,42 @@ test('smoke', async (t) => {
     });
   });
 
+  await t.test('location-stats: median Bortle/SQM at nearby coords', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    // Stage two observations at the same coords with Bortle 4 + SQM 21.4.
+    const messier = await fetchJsonAuthed('/api/lists/messier');
+    const m13 = messier.objects.find((o) => o.catalog_number === '13');
+    assert.ok(m13);
+    for (let i = 0; i < 2; i++) {
+      const jpeg = await buildSyntheticJpeg();
+      const fd = new FormData();
+      fd.set('image', new Blob([jpeg], { type: 'image/jpeg' }), `m13-${i}.jpg`);
+      const stage = await fetch(`${baseUrl}/api/admin/stage`, { method: 'POST', headers: auth, body: fd })
+        .then((r) => r.json());
+      await fetch(`${baseUrl}/api/admin/observations`, {
+        method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stage_id: stage.stage_id,
+          object_id: m13.id, catalog: 'M', catalog_number: '13',
+          object_name: 'Hercules Cluster', telescope: 'Test',
+          observed_at: '2026-04-19T22:00',
+          latitude: 51.5, longitude: -0.1,
+          bortle: 4, sqm: 21.4,
+          location: 'Garden',
+        }),
+      });
+    }
+    // Lookup at (51.5, -0.1) should hit those two rows.
+    const hit = await fetchJsonAuthed('/api/admin/location-stats?lat=51.5&lon=-0.1&radius_km=5');
+    assert.equal(hit.count, 2);
+    assert.equal(hit.bortle, 4);
+    assert.equal(hit.sqm, 21.4);
+    assert.equal(hit.location, 'Garden');
+    // 200 km away → no hits, count: 0.
+    const miss = await fetchJsonAuthed('/api/admin/location-stats?lat=53&lon=2&radius_km=5');
+    assert.equal(miss.count, 0);
+  });
+
   await t.test('public per-observation detail with prev/next siblings', async () => {
     const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
     // Stage two M81 observations so we can exercise sibling navigation.
