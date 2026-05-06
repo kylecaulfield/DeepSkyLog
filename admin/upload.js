@@ -314,26 +314,24 @@ function renderQueue() {
 function setActiveStage(idx) {
   const item = stageQueue[idx];
   if (!item) return;
-  // Reset only per-image fields; preserve user-typed shared fields like
-  // telescope, target, location, rating, notes for the next item in batch.
+  // resetPerImageFields() clears every per-frame field including the
+  // object block; onStaged() then re-fills from the new item's EXIF /
+  // filename guess. Shared-across-batch fields (telescope, location,
+  // rating, conditions, notes) are intentionally preserved.
   resetPerImageFields();
   onStaged(item);
   renderQueue();
-  // Re-resolve the carried-over object value against the new item: this
-  // re-runs both the seeded match and the NGC fallback so e.g. an IC410
-  // typed for the previous chip still auto-fills catalog when you switch
-  // back to it from a chip whose EXIF named M42.
-  if (objectInput.value.trim()) {
-    searchObjects(objectInput.value.trim());
-    setTimeout(() => { resolveObjectFromInput(); tryNgcFallback(); }, 150);
-  }
 }
 
 function resetPerImageFields() {
   stageIdField.value = '';
   exifSummary.innerHTML = '';
   previewImg.removeAttribute('src');
-  // Per-image: date, GPS, exposure/gain/stack/filter, sidecar JSON.
+  // Per-image: date, GPS, exposure/gain/stack/filter, sidecar JSON, and
+  // the object/catalog/RA-Dec block. Each Seestar filename embeds its own
+  // target, so it's wrong to carry the first chip's value (e.g. C4) over
+  // a queue of mixed targets — every chip's onStaged() refills these from
+  // its own EXIF/filename guess.
   dateInput.value = '';
   latitudeInput.value = '';
   longitudeInput.value = '';
@@ -345,6 +343,14 @@ function resetPerImageFields() {
   filterInput.value = '';
   seestarJsonField.value = '';
   moonDisplay.value = '';
+  objectInput.value = '';
+  objectIdField.value = '';
+  catalogInput.value = '';
+  catalogNumberInput.value = '';
+  objectTypeInput.value = '';
+  raHoursInput.value = '';
+  decDegreesInput.value = '';
+  objectHint.textContent = '';
 }
 
 function onStaged(res) {
