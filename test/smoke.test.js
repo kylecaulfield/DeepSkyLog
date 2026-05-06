@@ -725,6 +725,19 @@ test('smoke', async (t) => {
       headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
     });
     assert.equal(miss.status, 404);
+
+    // Leading zeros in OpenNGC names ("IC0410") must collide with the
+    // unpadded form users type ("IC410"). Regression for the bug where
+    // typing IC410 silently failed to auto-fill catalog/RA/Dec.
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const ic410 = await fetch(`${baseUrl}/api/admin/objects/lookup?q=IC410`, { headers: auth });
+    assert.equal(ic410.status, 200, 'IC410 should resolve via the unpadded form');
+    const ic = await ic410.json();
+    assert.equal(ic.catalog, 'IC');
+    assert.equal(ic.catalog_number, '410');
+    // "ic 410" with whitespace and lowercase still works.
+    const sloppy = await fetch(`${baseUrl}/api/admin/objects/lookup?q=ic%20410`, { headers: auth });
+    assert.equal(sloppy.status, 200);
   });
 
   await t.test('batch staging: many parallel stages succeed independently', async () => {
