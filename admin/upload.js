@@ -386,7 +386,11 @@ function onStaged(res) {
   if (targetGuess && !objectInput.value) {
     objectInput.value = targetGuess;
     searchObjects(targetGuess);
-    setTimeout(resolveObjectFromInput, 150);
+    // Setting .value programmatically doesn't fire 'input', so we have to
+    // run the resolver and the NGC fallback explicitly. Resolver first so
+    // a seeded match wins; fallback fills catalog/RA/Dec for everything
+    // else (e.g. an EXIF target of "IC 410" that isn't in any seed).
+    setTimeout(() => { resolveObjectFromInput(); tryNgcFallback(); }, 150);
   }
 
   // Total integration time from the watermark ("52min") goes into the
