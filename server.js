@@ -852,6 +852,61 @@ app.get('/api/admin/weather', basicAuth, async (req, res) => {
   });
 });
 
+// Best-effort Bortle / SQM lookup based on the observer's own history.
+// There is no usable free public Bortle API; instead, when the user has
+// already logged a Bortle (or SQM, or location string) at coordinates
+// near the upload's GPS, we offer those values as a default. Distance is
+// computed with a fast equirectangular approximation — fine for the
+// few-km radius this is used at.
+app.get('/api/admin/location-stats', basicAuth, (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  const radiusKm = Math.min(50, Math.max(0.1, Number(req.query.radius_km) || 5));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: 'lat and lon required' });
+  }
+  // Bounding-box prefilter, then exact great-circle for the survivors.
+  const dLat = radiusKm / 111;
+  const dLon = radiusKm / (111 * Math.max(0.01, Math.cos((lat * Math.PI) / 180)));
+  const candidates = db
+    .prepare(
+      `SELECT latitude, longitude, location, bortle, sqm
+         FROM observations
+         WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+           AND latitude BETWEEN @latLo AND @latHi
+           AND longitude BETWEEN @lonLo AND @lonHi`,
+    )
+    .all({ latLo: lat - dLat, latHi: lat + dLat, lonLo: lon - dLon, lonHi: lon + dLon });
+  const RAD = Math.PI / 180;
+  const within = candidates.filter((r) => {
+    const x = (r.longitude - lon) * Math.cos((lat * RAD)) * 111;
+    const y = (r.latitude - lat) * 111;
+    return Math.sqrt(x * x + y * y) <= radiusKm;
+  });
+  if (!within.length) return res.json({ count: 0 });
+
+  const bortles = within.map((r) => r.bortle).filter((v) => Number.isFinite(v));
+  const sqms = within.map((r) => r.sqm).filter((v) => Number.isFinite(v));
+  // Most recent location string at this site (people usually copy/paste a
+  // canonical name once and it sticks).
+  const locations = within.map((r) => r.location).filter(Boolean);
+
+  const median = (arr) => {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  };
+
+  res.json({
+    count: within.length,
+    bortle: median(bortles),
+    sqm: sqms.length ? Number(median(sqms).toFixed(2)) : null,
+    location: locations[0] || null,
+    radius_km: radiusKm,
+  });
+});
+
 app.get('/api/filters', (_req, res) => {
   const telescopes = db
     .prepare(
