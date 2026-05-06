@@ -319,6 +319,14 @@ function setActiveStage(idx) {
   resetPerImageFields();
   onStaged(item);
   renderQueue();
+  // Re-resolve the carried-over object value against the new item: this
+  // re-runs both the seeded match and the NGC fallback so e.g. an IC410
+  // typed for the previous chip still auto-fills catalog when you switch
+  // back to it from a chip whose EXIF named M42.
+  if (objectInput.value.trim()) {
+    searchObjects(objectInput.value.trim());
+    setTimeout(() => { resolveObjectFromInput(); tryNgcFallback(); }, 150);
+  }
 }
 
 function resetPerImageFields() {
@@ -475,7 +483,14 @@ function resolveObjectFromInput() {
     objectHint.textContent = `${match.list_name} · ${match.object_type || ''} ${match.constellation ? '· ' + match.constellation : ''}`;
     return;
   }
+  // No seeded match. Clear any catalog/number/object-type that came from a
+  // previous match so a stale "M / 42" doesn't block the NGC fallback for
+  // the new value. The user can still type catalog/number manually after
+  // they're done editing the object field; we only clobber here when the
+  // object input is what's actively driving the form.
   objectIdField.value = '';
+  catalogInput.value = '';
+  catalogNumberInput.value = '';
   objectHint.textContent = 'Not in a seeded list — will be logged as a free-form observation.';
 }
 
@@ -501,11 +516,15 @@ async function ngcLookup(value) {
 }
 async function tryNgcFallback() {
   const v = objectInput.value.trim();
-  if (!v || objectIdField.value || catalogInput.value) return;
+  // Only skip when there's a real seeded match (object_id set). The
+  // catalog/catalog_number guards from the previous version blocked the
+  // lookup whenever a previous match left those fields populated, even
+  // when the user had since changed the object — so e.g. typing IC410
+  // after editing M42 silently failed to auto-fill.
+  if (!v || objectIdField.value) return;
   const hit = await ngcLookup(v);
   if (!hit) return;
-  // Only fill if the user still hasn't matched a list_object and hasn't
-  // typed something else in the meantime.
+  // Only fill if the user hasn't typed something else in the meantime.
   if (objectInput.value.trim() !== v) return;
   catalogInput.value = hit.catalog;
   catalogNumberInput.value = hit.catalog_number;
