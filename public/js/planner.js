@@ -133,7 +133,7 @@ async function load() {
       el('td', { text: fmtTime(t.max_altitude_at) }),
       el('td', { text: fmtMinutes(t.minutes_above_min) }),
       el('td', { text: t.moon_separation_deg != null ? `${t.moon_separation_deg.toFixed(0)}°` : '—' }),
-      el('td', { class: 'dim', text: t.list_name }),
+      el('td', { class: 'dim list-cell', text: t.list_name }),
     ));
   }
 }
