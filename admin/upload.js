@@ -353,7 +353,7 @@ function resetPerImageFields() {
   objectHint.textContent = '';
 }
 
-function onStaged(res) {
+async function onStaged(res) {
   currentStage = res;
   stageIdField.value = res.stage_id;
   previewImg.src = res.preview_url;
@@ -399,12 +399,14 @@ function onStaged(res) {
   const targetGuess = res.guesses?.target?.raw || res.exif?.object_name;
   if (targetGuess && !objectInput.value) {
     objectInput.value = targetGuess;
-    searchObjects(targetGuess);
-    // Setting .value programmatically doesn't fire 'input', so we have to
-    // run the resolver and the NGC fallback explicitly. Resolver first so
-    // a seeded match wins; fallback fills catalog/RA/Dec for everything
-    // else (e.g. an EXIF target of "IC 410" that isn't in any seed).
-    setTimeout(() => { resolveObjectFromInput(); tryNgcFallback(); }, 150);
+    // Wait for the seeded search so the cache is populated before we
+    // resolve. The previous setTimeout(150) raced the fetch on slow
+    // networks — by the time it fired, objectCache was still empty,
+    // resolveObjectFromInput cleared catalog/number, and the NGC
+    // fallback then 404'd for Messier IDs that aren't in OpenNGC.
+    await searchObjects(targetGuess);
+    resolveObjectFromInput();
+    if (!objectIdField.value) await tryNgcFallback();
   }
 
   // Total integration time from the watermark ("52min") goes into the
