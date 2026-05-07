@@ -260,6 +260,17 @@ th, td {
   white-space: nowrap;
 }
 
+/* Long list names ("Astronomical League — Globular Clusters",
+   "Planetary Nebulae for Smart Scopes") were forcing the planner table
+   wider than its container and sliding off the right edge. Allow that
+   one cell to wrap and cap its width so the rest of the columns stay
+   on one line. */
+td.list-cell {
+  white-space: normal;
+  max-width: 16rem;
+  line-height: 1.2;
+}
+
 thead th {
   position: sticky;
   top: 0;
