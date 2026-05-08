@@ -407,6 +407,13 @@ function onStaged(res) {
     setTimeout(() => { resolveObjectFromInput(); tryNgcFallback(); }, 150);
   }
 
+  // Sub-exposure (per frame): prefer the EXIF / filename value the server
+  // already extracted; fall back to the OCR'd total integration so legacy
+  // behaviour is preserved if no per-frame value is known. The user can
+  // override either way.
+  if (res.exif?.exposure_seconds != null && !exposureInput.value) {
+    exposureInput.value = res.exif.exposure_seconds;
+  }
   // Total integration time from the watermark ("52min") goes into the
   // exposure input only if the user hasn't filled it from EXIF or sidecar.
   const totalExposure = res.guesses?.total_exposure_seconds;
