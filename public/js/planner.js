@@ -117,18 +117,22 @@ async function load() {
   status.textContent = `${data.targets.length} target${data.targets.length === 1 ? '' : 's'} reaching ≥${minAlt}°`;
 
   if (!data.targets.length) {
-    rows.appendChild(el('tr', {}, el('td', { colspan: '10' },
+    rows.appendChild(el('tr', {}, el('td', { colspan: '11' },
       el('div', { class: 'empty-state', text: 'Nothing clears the minimum altitude during this window.' }))));
     return;
   }
 
   for (const t of data.targets) {
-    rows.appendChild(el('tr', { class: t.observed ? 'observed' : '' },
+    // Dim targets that are below the horizon at the chosen moment so the
+    // user can see at a glance which ones are already up.
+    const below = t.altitude_at_start != null && t.altitude_at_start < 0;
+    rows.appendChild(el('tr', { class: [t.observed ? 'observed' : '', below ? 'dim' : ''].filter(Boolean).join(' ') },
       el('td', {}, el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
       el('td', { text: t.name || '—' }),
       el('td', { text: typeLabel(t.object_type) }),
       el('td', { text: t.constellation || '—' }),
       el('td', { text: t.magnitude != null ? Number(t.magnitude).toFixed(1) : '—' }),
+      el('td', { text: fmtDeg(t.altitude_at_start) }),
       el('td', { text: fmtDeg(t.max_altitude) }),
       el('td', { text: fmtTime(t.max_altitude_at) }),
       el('td', { text: fmtMinutes(t.minutes_above_min) }),
