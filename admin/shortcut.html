@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; iOS Shortcut</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/admin/admin.css" />
+    <style>
+      .recipe ol { padding-left: 1.4rem; }
+      .recipe li { margin: 0.6rem 0; line-height: 1.45; }
+      .recipe code, .recipe pre {
+        background: #1a0f08; padding: 0.1rem 0.45rem; border-radius: 4px;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 0.85em; color: var(--peach);
+      }
+      .recipe pre {
+        display: block; padding: 0.6rem 0.8rem; margin: 0.4rem 0;
+        white-space: pre-wrap; word-break: break-all;
+      }
+      .copy-row {
+        display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
+        margin: 0.25rem 0 0.5rem;
+      }
+      .copy-row code { flex: 1; min-width: 0; overflow-x: auto; }
+      .copy-row button {
+        font-size: 0.7rem; padding: 0.25rem 0.6rem;
+        background: var(--accent-2); color: #000; border: none; border-radius: 4px;
+        cursor: pointer; text-transform: uppercase; letter-spacing: 0.1em;
+      }
+      .copy-row button.copied { background: var(--success); }
+      .step-hint { color: var(--fg-dim); font-size: 0.88em; }
+      .badge-inline {
+        display: inline-block; padding: 0.05rem 0.4rem; background: var(--accent-2);
+        color: #000; border-radius: 3px; font-size: 0.78em; font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog · Admin</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/">Public site</a>
+        <a href="/admin/">Dashboard</a>
+        <a href="/admin/observations.html">Observations</a>
+        <a href="/admin/equipment.html">Equipment</a>
+        <a href="/admin/upload.html">Upload</a>
+      </nav>
+    </header>
+    <main>
+      <h1 class="page-title">iOS share-sheet shortcut</h1>
+      <p class="page-subtitle">
+        Install once on your iPhone, then "Share → DeepSkyLog" from the Seestar
+        app (or anywhere else that exports an image) creates an observation here
+        in one tap.
+      </p>
+
+      <section class="section">
+        <h2>Why this isn't a one-tap install</h2>
+        <p class="dim">
+          Apple requires shortcuts to be signed on a Mac before they can install
+          without warnings. Until you build a signed version once and host it on
+          iCloud, the practical path is the recipe below — about five minutes on
+          your phone. Once it's built, every future upload is one tap.
+        </p>
+      </section>
+
+      <section class="section">
+        <h2>Before you start</h2>
+        <ol class="recipe">
+          <li>
+            On your iPhone, open <strong>Settings → Shortcuts</strong> and turn on
+            <strong>Allow Untrusted Shortcuts</strong>. (You only need this if you
+            ever want to import a `.shortcut` file from outside the App Store —
+            building one by hand doesn't require it, but it's good to flip on
+            anyway.)
+          </li>
+          <li>
+            Open the <strong>Shortcuts</strong> app and tap the <strong>+</strong>
+            in the top-right to start a new shortcut. Name it
+            <code>DeepSkyLog</code>.
+          </li>
+          <li>
+            Tap the shortcut's <strong>(i)</strong> info icon and turn on
+            <strong>Show in Share Sheet</strong>. Set <strong>Share Sheet Types</strong>
+            to <em>Images</em> only.
+          </li>
+        </ol>
+      </section>
+
+      <section class="section recipe">
+        <h2>The actions</h2>
+        <ol>
+          <li>
+            <strong>Receive [Images] input from Share Sheet</strong> — already in
+            place from the toggle above.
+          </li>
+
+          <li>
+            <strong>Get Contents of URL</strong> — first call: stage the file.
+            <div class="copy-row">
+              <span class="badge-inline">URL</span>
+              <code id="url-stage">…</code>
+              <button data-copy="url-stage">Copy</button>
+            </div>
+            Set <strong>Method</strong> to <code>POST</code>.<br>
+            Tap <strong>Headers</strong>, leave empty.<br>
+            Under <strong>Advanced</strong>, switch <strong>Request Body</strong>
+            to <code>Form</code>. Add one entry:
+            <ul>
+              <li><strong>Key</strong>: <code>image</code></li>
+              <li><strong>Type</strong>: <code>File</code></li>
+              <li><strong>Value</strong>: <code>Shortcut Input</code> (variable)</li>
+            </ul>
+            Open <strong>Advanced → Authentication</strong>, choose
+            <code>Basic</code>, set <strong>User</strong> to
+            <code>admin</code> and <strong>Password</strong> to the same
+            <code>ADMIN_PASSWORD</code> you use to log in here.
+          </li>
+
+          <li>
+            <strong>Get Dictionary Value</strong> — pull <code>stage_id</code>
+            out of the response.
+            <div class="copy-row">
+              <span class="badge-inline">Key</span>
+              <code>stage_id</code>
+              <button data-copy-text="stage_id">Copy</button>
+            </div>
+            Set the dictionary to the <em>Contents of URL</em> variable from the
+            previous step.
+          </li>
+
+          <li>
+            <strong>Set Variable</strong> — save the dictionary value as a
+            variable named <code>stage</code>. Makes the next action cleaner.
+          </li>
+
+          <li>
+            <strong>Ask for Input</strong> <em>(optional)</em> — prompt for the
+            target name. Question: <code>What is this an image of?</code>,
+            <strong>Input Type</strong>: <code>Text</code>, <strong>Default
+            Answer</strong>: <code>(leave blank)</code>. Save as variable
+            <code>target</code>. Skip this step if you'd rather always log as
+            free-form and edit the target later in the web admin.
+          </li>
+
+          <li>
+            <strong>Get Contents of URL</strong> — second call: finalize the
+            observation.
+            <div class="copy-row">
+              <span class="badge-inline">URL</span>
+              <code id="url-finalize">…</code>
+              <button data-copy="url-finalize">Copy</button>
+            </div>
+            <strong>Method</strong>: <code>POST</code>.<br>
+            <strong>Headers</strong>: add one — <code>Content-Type</code>:
+            <code>application/json</code>.<br>
+            <strong>Request Body</strong>: <code>JSON</code>. Build the object:
+            <ul>
+              <li><code>stage_id</code> → variable <code>stage</code></li>
+              <li><code>object_name</code> → variable <code>target</code>
+                  <span class="step-hint">(or skip if you didn't add the prompt)</span></li>
+              <li><code>telescope</code> → <code>Seestar S50</code>
+                  <span class="step-hint">(set to whatever you image with)</span></li>
+              <li><code>observed_at</code> → <em>Current Date</em>, format ISO 8601</li>
+            </ul>
+            Repeat the same <strong>Basic auth</strong> setup as in step 2 under
+            <strong>Advanced</strong>.
+          </li>
+
+          <li>
+            <strong>Get Dictionary Value</strong> — read the new observation id.
+            Key: <code>id</code>, Dictionary: <em>Contents of URL</em> from the
+            previous step. (Optional but it makes the notification informative.)
+          </li>
+
+          <li>
+            <strong>Show Notification</strong> — body:
+            <code>Saved observation #<em>Dictionary Value</em></code> using the
+            id from the previous step. Title: <code>DeepSkyLog</code>.
+          </li>
+        </ol>
+      </section>
+
+      <section class="section">
+        <h2>Test it</h2>
+        <ol class="recipe">
+          <li>Tap the play button at the top of the shortcut. It'll prompt you to
+              pick a photo. Pick anything. You should see a notification with the
+              new observation number, and the image should appear under
+              <a href="/admin/observations.html">Observations</a>.</li>
+          <li>Now share an image from your Seestar app (or from Photos →
+              Share). The "DeepSkyLog" entry should appear in the share sheet
+              alongside Messages, Mail, etc.</li>
+        </ol>
+      </section>
+
+      <section class="section">
+        <h2>Tweaks</h2>
+        <ul class="recipe">
+          <li><strong>No prompt at all.</strong> Skip step 5 and drop
+              <code>object_name</code> from step 6's JSON. The shortcut becomes
+              one-tap and you edit the target on the web later.</li>
+          <li><strong>Multiple images.</strong> Wrap steps 2–8 in a
+              <em>Repeat with Each</em> action over <em>Shortcut Input</em> so
+              dragging multiple images at once stages each one.</li>
+          <li><strong>Different telescope per session.</strong> Replace the
+              hardcoded telescope in step 6's JSON with a <em>Choose from List</em>
+              action listing your scopes.</li>
+        </ul>
+      </section>
+
+      <section class="section">
+        <h2>Endpoints reference</h2>
+        <p class="dim">In case you want to wire this up from somewhere other than
+            iOS Shortcuts (Tasker, n8n, curl, …):</p>
+        <pre id="curl-sample">…</pre>
+      </section>
+    </main>
+    <script type="module" src="/admin/version.js"></script>
+    <script type="module" src="/js/site-name.js"></script>
+    <script>
+      // Fill the host-specific bits client-side so the page works on any
+      // install (localhost, ngrok, kylecaulfield.com, …).
+      const origin = window.location.origin;
+      document.getElementById('url-stage').textContent = `${origin}/api/admin/stage`;
+      document.getElementById('url-finalize').textContent = `${origin}/api/admin/observations`;
+      document.getElementById('curl-sample').textContent =
+        `# 1. Stage the file\n` +
+        `STAGE=$(curl -s -u admin:PASSWORD -F image=@/path/to/image.jpg \\\n` +
+        `  ${origin}/api/admin/stage | jq -r .stage_id)\n\n` +
+        `# 2. Finalize\n` +
+        `curl -s -u admin:PASSWORD -H 'Content-Type: application/json' \\\n` +
+        `  -d "{\\"stage_id\\":\\"$STAGE\\",\\"telescope\\":\\"Seestar S50\\",\\"observed_at\\":\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\"}" \\\n` +
+        `  ${origin}/api/admin/observations`;
+
+      // Generic copy-to-clipboard handler for any [data-copy] / [data-copy-text]
+      // button on the page.
+      document.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('button[data-copy], button[data-copy-text]');
+        if (!btn) return;
+        const text = btn.dataset.copyText
+          ?? document.getElementById(btn.dataset.copy)?.textContent;
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          const orig = btn.textContent;
+          btn.textContent = 'Copied';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1400);
+        } catch {
+          alert('Copy failed — long-press to select.');
+        }
+      });
+    </script>
+  </body>
+</html>
