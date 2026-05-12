@@ -282,6 +282,12 @@ thead th {
   letter-spacing: 0.14em;
 }
 
+/* Sortable header: clickable, with a small arrow when active. */
+thead th[data-sort] { cursor: pointer; user-select: none; }
+thead th[data-sort]:hover { background: var(--peach); }
+thead th[data-sort].sort-asc::after  { content: ' ▲'; font-size: 0.65em; }
+thead th[data-sort].sort-desc::after { content: ' ▼'; font-size: 0.65em; }
+
 tbody tr:hover { background: #1a0f08; }
 tbody tr.observed { background: rgba(153, 204, 153, 0.12); }
 tbody tr.observed:hover { background: rgba(153, 204, 153, 0.2); }

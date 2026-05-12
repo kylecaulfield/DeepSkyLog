@@ -47,6 +47,50 @@ function fmtMinutes(m) {
   return mm ? `${h}h ${mm}m` : `${h}h`;
 }
 
+// Per-column extractors. Strings sort case-insensitively; nullish values
+// always sink to the bottom regardless of direction.
+const COLUMN_GETTERS = {
+  object:        (t) => `${t.catalog || ''}${t.catalog_number || ''}`.toLowerCase(),
+  name:          (t) => (t.name || '').toLowerCase(),
+  type:          (t) => (t.object_type || '').toLowerCase(),
+  constellation: (t) => (t.constellation || '').toLowerCase(),
+  magnitude:     (t) => (t.magnitude == null ? null : Number(t.magnitude)),
+  alt_now:       (t) => (t.altitude_at_start == null ? null : t.altitude_at_start),
+  max_alt:       (t) => (t.max_altitude == null ? null : t.max_altitude),
+  max_alt_at:    (t) => (t.max_altitude_at ? Date.parse(t.max_altitude_at) : null),
+  above_min:     (t) => t.minutes_above_min ?? null,
+  moon_sep:      (t) => (t.moon_separation_deg == null ? null : t.moon_separation_deg),
+  list:          (t) => (t.list_name || '').toLowerCase(),
+};
+
+let lastTargets = [];
+let sortKey = 'alt_now';      // default sort: altitude at chosen time, descending
+let sortDir = 'desc';
+
+function sortTargets(targets) {
+  const get = COLUMN_GETTERS[sortKey] || COLUMN_GETTERS.alt_now;
+  const factor = sortDir === 'asc' ? 1 : -1;
+  return [...targets].sort((a, b) => {
+    const av = get(a), bv = get(b);
+    // null/undefined always go to the bottom
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (av < bv) return -1 * factor;
+    if (av > bv) return 1 * factor;
+    return 0;
+  });
+}
+
+function updateHeaderIndicators() {
+  document.querySelectorAll('#planner-head th[data-sort]').forEach((th) => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === sortKey) {
+      th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
 async function load() {
   const lat = Number(latInput.value);
   const lon = Number(lonInput.value);
@@ -116,13 +160,19 @@ async function load() {
 
   status.textContent = `${data.targets.length} target${data.targets.length === 1 ? '' : 's'} reaching ≥${minAlt}°`;
 
-  if (!data.targets.length) {
+  lastTargets = data.targets || [];
+  renderRows();
+}
+
+function renderRows() {
+  rows.innerHTML = '';
+  if (!lastTargets.length) {
     rows.appendChild(el('tr', {}, el('td', { colspan: '11' },
       el('div', { class: 'empty-state', text: 'Nothing clears the minimum altitude during this window.' }))));
     return;
   }
-
-  for (const t of data.targets) {
+  const sorted = sortTargets(lastTargets);
+  for (const t of sorted) {
     // Dim targets that are below the horizon at the chosen moment so the
     // user can see at a glance which ones are already up.
     const below = t.altitude_at_start != null && t.altitude_at_start < 0;
@@ -140,7 +190,25 @@ async function load() {
       el('td', { class: 'dim list-cell', text: t.list_name }),
     ));
   }
+  updateHeaderIndicators();
 }
+
+// Header clicks toggle direction on the active column, or switch to a
+// new column with a sensible default direction (descending for numeric
+// "bigger-is-better" columns, ascending for textual ones).
+document.getElementById('planner-head')?.addEventListener('click', (e) => {
+  const th = e.target.closest('th[data-sort]');
+  if (!th) return;
+  const key = th.dataset.sort;
+  if (key === sortKey) {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortKey = key;
+    sortDir = ['magnitude', 'object', 'name', 'type', 'constellation', 'list', 'max_alt_at'].includes(key)
+      ? 'asc' : 'desc';
+  }
+  renderRows();
+});
 
 locateBtn.addEventListener('click', () => {
   if (!navigator.geolocation) {
