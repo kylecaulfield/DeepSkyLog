@@ -500,6 +500,8 @@ app.get('/api/planner', (req, res) => {
     let firstAbove = null;
     let lastAbove = null;
     let moonSepAtMax = null;
+    let altAtStart = null;       // altitude at the very start of the window
+    let azAtStart = null;
 
     for (let i = 0; i < samples.length; i++) {
       const { date, moonEq } = samples[i];
@@ -514,6 +516,10 @@ app.get('/api/planner', (req, res) => {
       if (raHours == null || decDeg == null) continue;
       const pos = altAz({ raHours, decDeg, lat, lon, date });
       if (!pos) continue;
+      if (i === 0) {
+        altAtStart = pos.altitude;
+        azAtStart = pos.azimuth;
+      }
       if (pos.altitude > maxAlt) {
         maxAlt = pos.altitude;
         maxAt = date.toISOString();
@@ -535,6 +541,8 @@ app.get('/api/planner', (req, res) => {
     const minutesAbove = samplesAbove > 0 ? (samplesAbove - 1) * stepMinutes : 0;
     enriched.push({
       ...row,
+      altitude_at_start: altAtStart,
+      azimuth_at_start: azAtStart,
       max_altitude: maxAlt,
       max_altitude_at: maxAt,
       first_above_at: firstAbove,
@@ -544,7 +552,11 @@ app.get('/api/planner', (req, res) => {
     });
   }
 
-  enriched.sort((a, b) => b.max_altitude - a.max_altitude);
+  // Sort by altitude at the chosen start time, descending; targets that
+  // are already up rise to the top, ones still below the horizon at the
+  // chosen moment fall to the bottom (but stay listed because they may
+  // come up later in the window).
+  enriched.sort((a, b) => (b.altitude_at_start ?? -Infinity) - (a.altitude_at_start ?? -Infinity));
 
   res.json({
     location: { lat, lon },
