@@ -91,9 +91,22 @@
             <span class="dim" style="font-size:0.85em;">Site name</span>
             <input id="site-name-input" type="text" maxlength="80" required style="min-width:18rem;" />
           </label>
+          <label style="display:flex; flex-direction:column; gap:0.25rem;">
+            <span class="dim" style="font-size:0.85em;">Default latitude</span>
+            <input id="default-latitude-input" type="number" step="any" min="-90" max="90" placeholder="51.4769" style="min-width:9rem;" />
+          </label>
+          <label style="display:flex; flex-direction:column; gap:0.25rem;">
+            <span class="dim" style="font-size:0.85em;">Default longitude</span>
+            <input id="default-longitude-input" type="number" step="any" min="-180" max="180" placeholder="-0.0005" style="min-width:9rem;" />
+          </label>
           <button type="submit" class="button-link">Save</button>
           <span id="settings-status" class="dim"></span>
         </form>
+        <p class="dim" style="margin:0.5rem 0 0; font-size:0.85em;">
+          Default location is used as a fallback when an image has no EXIF GPS
+          and the watermark OCR couldn't extract coordinates. Leave blank to
+          require manual entry instead.
+        </p>
       </section>
 
       <section class="section">

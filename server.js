@@ -1074,6 +1074,9 @@ app.get('/api/settings', (_req, res) => {
   const rows = db.prepare(`SELECT key, value FROM site_settings`).all();
   const out = { site_name: 'DeepSkyLog' };
   for (const r of rows) out[r.key] = r.value;
+  // Coerce known numeric keys for the client's convenience.
+  if (out.default_latitude != null) out.default_latitude = Number(out.default_latitude);
+  if (out.default_longitude != null) out.default_longitude = Number(out.default_longitude);
   res.json(out);
 });
 
@@ -1085,6 +1088,30 @@ app.put('/api/admin/settings', basicAuth, (req, res) => {
     if (!trimmed) return res.status(400).json({ error: 'site_name cannot be empty' });
     if (trimmed.length > 80) return res.status(400).json({ error: 'site_name max 80 chars' });
     updates.push(['site_name', trimmed]);
+  }
+  // Default observer location — auto-applied when EXIF/OCR don't yield
+  // coordinates. Empty string clears it.
+  if ('default_latitude' in body) {
+    const v = body.default_latitude;
+    if (v === '' || v === null) updates.push(['default_latitude', '']);
+    else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < -90 || n > 90) {
+        return res.status(400).json({ error: 'default_latitude must be a number between -90 and 90' });
+      }
+      updates.push(['default_latitude', String(n)]);
+    }
+  }
+  if ('default_longitude' in body) {
+    const v = body.default_longitude;
+    if (v === '' || v === null) updates.push(['default_longitude', '']);
+    else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < -180 || n > 180) {
+        return res.status(400).json({ error: 'default_longitude must be a number between -180 and 180' });
+      }
+      updates.push(['default_longitude', String(n)]);
+    }
   }
   if (!updates.length) return res.status(400).json({ error: 'no settings to update' });
   const stmt = db.prepare(
