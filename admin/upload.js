@@ -389,9 +389,17 @@ async function onStaged(res) {
   if (hasGps) {
     latitudeInput.value = res.exif.latitude.toFixed(6);
     longitudeInput.value = res.exif.longitude.toFixed(6);
-    if (gpsHint) gpsHint.textContent = `Auto-filled from image EXIF (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)}).`;
+    if (gpsHint) {
+      const source = res.guesses?.from_ocr ? 'watermark OCR' : 'image EXIF';
+      gpsHint.textContent = `Auto-filled from ${source} (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)}).`;
+    }
   } else if (gpsHint) {
-    gpsHint.textContent = 'No GPS in image EXIF — enter coordinates manually to enable weather + Bortle lookup.';
+    // Be specific about why we couldn't fill — helps the user know whether
+    // to retry, switch firmware, or just type the coords by hand.
+    let reason = 'No GPS in image EXIF';
+    if (res.guesses?.from_ocr) reason += ' and the watermark OCR text didn\'t include readable coordinates';
+    else if (res.guesses?.ocr_error) reason += ` and watermark OCR failed (${res.guesses.ocr_error})`;
+    gpsHint.textContent = `${reason} — enter coordinates manually to enable weather + Bortle lookup.`;
   }
   if (latitudeInput.value && longitudeInput.value) {
     maybeAutoFillFromLocationHistory();
