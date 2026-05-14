@@ -127,10 +127,7 @@
                 <span>Longitude</span>
                 <input id="longitude-input" name="longitude" type="number" step="any" min="-180" max="180" placeholder="-0.0005" />
               </label>
-              <div class="field" style="flex:0 0 auto; align-self:flex-end;">
-                <span style="display:block; visibility:hidden;">&nbsp;</span>
-                <button type="button" id="use-image-gps" class="button-link ghost-link" disabled title="Copy GPS from the image's EXIF">Use image GPS</button>
-              </div>
+              <small id="gps-hint" class="dim" style="flex-basis:100%; margin-top:-0.4rem;"></small>
             </div>
 
             <label class="field">
@@ -206,11 +203,7 @@
             </div>
 
             <div class="row">
-              <div class="field" style="flex:0 0 auto;">
-                <span style="display:block; visibility:hidden;">&nbsp;</span>
-                <button type="button" id="fetch-weather-btn" class="button-link ghost-link" disabled title="Fetch historical weather from Open-Meteo for this date and GPS coordinates">Fetch weather</button>
-              </div>
-              <span id="weather-summary" class="dim" style="align-self:flex-end; padding-bottom:0.5rem;"></span>
+              <span id="weather-summary" class="dim" style="flex:1; align-self:flex-end; padding-bottom:0.5rem;"></span>
             </div>
 
             <fieldset class="sidecar">
