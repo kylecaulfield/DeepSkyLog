@@ -27,7 +27,7 @@
 
       <section class="section">
         <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload image">
-          <input id="file-input" type="file" accept="image/*,.fit,.fits" hidden multiple />
+          <input id="file-input" type="file" accept="image/*" hidden multiple />
           <div class="dropzone-inner">
             <div class="dropzone-icon" aria-hidden="true">◎</div>
             <p><strong>Drag &amp; drop</strong> images here</p>
@@ -127,10 +127,10 @@
                 <span>Longitude</span>
                 <input id="longitude-input" name="longitude" type="number" step="any" min="-180" max="180" placeholder="-0.0005" />
               </label>
-              <label class="field" style="flex:0 0 auto; align-self:flex-end;">
-                <span>&nbsp;</span>
+              <div class="field" style="flex:0 0 auto; align-self:flex-end;">
+                <span style="display:block; visibility:hidden;">&nbsp;</span>
                 <button type="button" id="use-image-gps" class="button-link ghost-link" disabled title="Copy GPS from the image's EXIF">Use image GPS</button>
-              </label>
+              </div>
             </div>
 
             <label class="field">
@@ -206,10 +206,10 @@
             </div>
 
             <div class="row">
-              <label class="field" style="flex:0 0 auto;">
-                <span>&nbsp;</span>
+              <div class="field" style="flex:0 0 auto;">
+                <span style="display:block; visibility:hidden;">&nbsp;</span>
                 <button type="button" id="fetch-weather-btn" class="button-link ghost-link" disabled title="Fetch historical weather from Open-Meteo for this date and GPS coordinates">Fetch weather</button>
-              </label>
+              </div>
               <span id="weather-summary" class="dim" style="align-self:flex-end; padding-bottom:0.5rem;"></span>
             </div>
 
