@@ -282,27 +282,45 @@ async function loadSiteSettings() {
     if (!res.ok) return;
     const data = await res.json();
     input.value = data.site_name || '';
+    const latIn = document.getElementById('default-latitude-input');
+    const lonIn = document.getElementById('default-longitude-input');
+    if (latIn) latIn.value = data.default_latitude != null ? data.default_latitude : '';
+    if (lonIn) lonIn.value = data.default_longitude != null ? data.default_longitude : '';
   } catch { /* leave blank */ }
 }
 
 document.getElementById('settings-form')?.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const input = document.getElementById('site-name-input');
+  const latIn = document.getElementById('default-latitude-input');
+  const lonIn = document.getElementById('default-longitude-input');
   const status = document.getElementById('settings-status');
   const value = input.value.trim();
   if (!value) { status.textContent = 'Site name cannot be empty.'; return; }
+  // Both default lat/lon must be present or both blank — half-set
+  // coordinates aren't useful.
+  const latRaw = latIn?.value.trim() ?? '';
+  const lonRaw = lonIn?.value.trim() ?? '';
+  if ((latRaw === '') !== (lonRaw === '')) {
+    status.textContent = 'Set both default lat and lon, or leave both blank.';
+    return;
+  }
   status.textContent = 'Saving…';
   try {
     const res = await fetch('/api/admin/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ site_name: value }),
+      body: JSON.stringify({
+        site_name: value,
+        default_latitude: latRaw === '' ? '' : Number(latRaw),
+        default_longitude: lonRaw === '' ? '' : Number(lonRaw),
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${res.status}`);
     }
-    status.textContent = 'Saved. Refresh to see the new branding.';
+    status.textContent = 'Saved.';
   } catch (err) {
     status.textContent = `Failed: ${err.message}`;
   }

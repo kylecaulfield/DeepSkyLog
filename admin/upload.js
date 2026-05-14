@@ -26,6 +26,16 @@ const decDegreesInput = document.getElementById('dec-degrees-input');
 const latitudeInput = document.getElementById('latitude-input');
 const longitudeInput = document.getElementById('longitude-input');
 const gpsHint = document.getElementById('gps-hint');
+const useDeviceLocationBtn = document.getElementById('use-device-location');
+
+// Fetched once on load from /api/settings. Used as a last-resort fallback
+// when EXIF and watermark OCR both fail.
+let defaultLatitude = null;
+let defaultLongitude = null;
+fetch('/api/settings').then((r) => r.ok ? r.json() : null).then((s) => {
+  if (typeof s?.default_latitude === 'number') defaultLatitude = s.default_latitude;
+  if (typeof s?.default_longitude === 'number') defaultLongitude = s.default_longitude;
+}).catch(() => {});
 const titleInput = document.getElementById('title-input');
 const telescopeSelect = document.getElementById('telescope-select');
 const telescopeHint = document.getElementById('telescope-hint');
@@ -393,13 +403,21 @@ async function onStaged(res) {
       const source = res.guesses?.from_ocr ? 'watermark OCR' : 'image EXIF';
       gpsHint.textContent = `Auto-filled from ${source} (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)}).`;
     }
+  } else if (defaultLatitude != null && defaultLongitude != null) {
+    // Admin-configured default home location wins over leaving the field
+    // empty. The user can still overwrite manually for one-off remote sites.
+    latitudeInput.value = defaultLatitude.toFixed(6);
+    longitudeInput.value = defaultLongitude.toFixed(6);
+    if (gpsHint) {
+      gpsHint.textContent = `Auto-filled from saved default location (${defaultLatitude.toFixed(4)}, ${defaultLongitude.toFixed(4)}). Override above if you're imaging from somewhere else.`;
+    }
   } else if (gpsHint) {
     // Be specific about why we couldn't fill — helps the user know whether
     // to retry, switch firmware, or just type the coords by hand.
     let reason = 'No GPS in image EXIF';
     if (res.guesses?.from_ocr) reason += ' and the watermark OCR text didn\'t include readable coordinates';
     else if (res.guesses?.ocr_error) reason += ` and watermark OCR failed (${res.guesses.ocr_error})`;
-    gpsHint.textContent = `${reason} — enter coordinates manually to enable weather + Bortle lookup.`;
+    gpsHint.textContent = `${reason} — tap "Use this device's location" or enter coordinates manually.`;
   }
   if (latitudeInput.value && longitudeInput.value) {
     maybeAutoFillFromLocationHistory();
@@ -728,6 +746,32 @@ async function maybeAutoFillFromLocationHistory() {
     }
   } catch { /* best effort */ }
 }
+
+// "Use this device's location" — wraps the Geolocation API, fills the
+// lat/lon inputs from the browser, and kicks the same auto-fetches the
+// inputs would fire via input/change. Most useful on phones (~5 m).
+useDeviceLocationBtn?.addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    if (gpsHint) gpsHint.textContent = 'Geolocation API not available in this browser.';
+    return;
+  }
+  if (gpsHint) gpsHint.textContent = 'Requesting location…';
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      latitudeInput.value = pos.coords.latitude.toFixed(6);
+      longitudeInput.value = pos.coords.longitude.toFixed(6);
+      if (gpsHint) {
+        gpsHint.textContent = `Auto-filled from device GPS (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}, ±${Math.round(pos.coords.accuracy)} m).`;
+      }
+      maybeAutoFillFromLocationHistory();
+      if (dateInput.value) maybeAutoFetchWeather();
+    },
+    (err) => {
+      if (gpsHint) gpsHint.textContent = `Geolocation failed: ${err.message}.`;
+    },
+    { enableHighAccuracy: true, timeout: 10_000 },
+  );
+});
 
 // Bortle ↔ SQM conversion. The mapping is the canonical Bortle/SQM scale
 // used by darksitefinder.com / Sky Quality Meters; we pick the centre of
