@@ -177,7 +177,13 @@ dropzone.addEventListener('drop', (e) => {
   if (files?.length) handleFiles(files);
 });
 fileInput.addEventListener('change', () => {
-  if (fileInput.files?.length) handleFiles(fileInput.files);
+  if (!fileInput.files?.length) return;
+  // Snapshot synchronously — iOS revokes the FileList entries quickly
+  // when the picker closes — and reset the input so re-picking the same
+  // image fires change again.
+  const snapshot = Array.from(fileInput.files);
+  fileInput.value = '';
+  handleFiles(snapshot);
 });
 sidecarInput.addEventListener('change', () => {
   const file = sidecarInput.files?.[0];
@@ -230,7 +236,10 @@ async function applySidecar(file) {
   else sidecarSummary.textContent = 'Sidecar parsed but no recognised fields found.';
 }
 
-function handleFiles(files) {
+async function handleFiles(files) {
+  // Snapshot eagerly: iOS Safari's Photos picker delivers FileList entries
+  // lazily, and firing N parallel uploads against that lazy list dropped
+  // most of them on the floor with no error visible to the user.
   const list = Array.from(files);
   const json = list.find(isJsonFile);
   const captures = list.filter((f) => isImageFile(f) || isFitsFile(f));
@@ -238,9 +247,19 @@ function handleFiles(files) {
     setStatus('Drop an image, a FITS file, a Seestar .json, or any combination.', 'error');
     return;
   }
-
-  for (const file of captures) uploadStaged(file).catch(() => {});
+  // Sidecar JSON applies to whatever's currently active — apply it first so
+  // the form has its values before the first stage finishes.
   if (json) applySidecar(json);
+  // Stage one at a time. Slower than the old parallel fan-out, but it's the
+  // only pattern that works reliably with iOS multi-pick. setStatus errors
+  // are surfaced individually instead of silently swallowed.
+  for (const file of captures) {
+    try {
+      await uploadStaged(file);
+    } catch (err) {
+      setStatus(`Upload of ${file.name || 'a file'} failed: ${err.message || err}`, 'error');
+    }
+  }
 }
 
 function handleFile(file) {
