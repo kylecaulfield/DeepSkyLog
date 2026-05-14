@@ -25,7 +25,7 @@ const raHoursInput = document.getElementById('ra-hours-input');
 const decDegreesInput = document.getElementById('dec-degrees-input');
 const latitudeInput = document.getElementById('latitude-input');
 const longitudeInput = document.getElementById('longitude-input');
-const useImageGpsBtn = document.getElementById('use-image-gps');
+const gpsHint = document.getElementById('gps-hint');
 const titleInput = document.getElementById('title-input');
 const telescopeSelect = document.getElementById('telescope-select');
 const telescopeHint = document.getElementById('telescope-hint');
@@ -36,7 +36,6 @@ const seeingInput = document.getElementById('seeing-input');
 const transparencyInput = document.getElementById('transparency-input');
 const bortleInput = document.getElementById('bortle-input');
 const sqmInput = document.getElementById('sqm-input');
-const fetchWeatherBtn = document.getElementById('fetch-weather-btn');
 const weatherSummary = document.getElementById('weather-summary');
 const moonDisplay = document.getElementById('moon-display');
 const sidecarInput = document.getElementById('sidecar-input');
@@ -354,8 +353,8 @@ function resetPerImageFields() {
   dateInput.value = '';
   latitudeInput.value = '';
   longitudeInput.value = '';
-  useImageGpsBtn.disabled = true;
-  useImageGpsBtn.title = 'No GPS in image EXIF';
+  if (gpsHint) gpsHint.textContent = '';
+  if (weatherSummary) weatherSummary.textContent = '';
   exposureInput.value = '';
   gainInput.value = '';
   stackCountInput.value = '';
@@ -383,20 +382,17 @@ async function onStaged(res) {
     : toLocalDatetimeValue(null);
   updateMoonPreview();
 
-  // GPS: enable the "Use image GPS" button when EXIF has coords, and pre-fill
-  // the lat/lon inputs only if the user hasn't typed something already.
-  // Setting .value programmatically does NOT fire input/change events, so
-  // we kick the auto-weather and history lookups manually below.
+  // GPS: pre-fill lat/lon directly from EXIF — no button click required.
+  // Setting .value programmatically doesn't fire input/change events, so
+  // the location-history lookup and weather fetch are kicked manually.
   const hasGps = typeof res.exif?.latitude === 'number' && typeof res.exif?.longitude === 'number';
-  useImageGpsBtn.disabled = !hasGps;
   if (hasGps) {
-    useImageGpsBtn.title = `Use image GPS (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)})`;
-    if (!latitudeInput.value) latitudeInput.value = res.exif.latitude.toFixed(6);
-    if (!longitudeInput.value) longitudeInput.value = res.exif.longitude.toFixed(6);
-  } else {
-    useImageGpsBtn.title = 'No GPS in image EXIF';
+    latitudeInput.value = res.exif.latitude.toFixed(6);
+    longitudeInput.value = res.exif.longitude.toFixed(6);
+    if (gpsHint) gpsHint.textContent = `Auto-filled from image EXIF (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)}).`;
+  } else if (gpsHint) {
+    gpsHint.textContent = 'No GPS in image EXIF — enter coordinates manually to enable weather + Bortle lookup.';
   }
-  refreshWeatherBtn();
   if (latitudeInput.value && longitudeInput.value) {
     maybeAutoFillFromLocationHistory();
     if (dateInput.value) maybeAutoFetchWeather();
@@ -611,8 +607,8 @@ function resetForm() {
   latitudeInput.value = '';
   longitudeInput.value = '';
   if (sqmInput) sqmInput.value = '';
-  useImageGpsBtn.disabled = true;
-  useImageGpsBtn.title = 'No GPS in image EXIF';
+  if (gpsHint) gpsHint.textContent = '';
+  if (weatherSummary) weatherSummary.textContent = '';
   seestarJsonField.value = '';
   sidecarSummary.textContent = 'Optional. Drop the .json file Seestar saves alongside the image and stack count, exposure, gain and filter all auto-fill. Without it we read EXIF and OCR the watermark band.';
   setStatus('');
@@ -639,21 +635,13 @@ dateInput.addEventListener('change', updateMoonPreview);
 dateInput.addEventListener('input', updateMoonPreview);
 
 // Fetch weather button: enabled when we have a date and GPS coords. Calls
-// /api/admin/weather (Open-Meteo archive) and pre-fills the transparency
-// dropdown if the user hasn't already set one. Also runs automatically the
-// first time both inputs are populated for a given stage so the user
-// doesn't have to click anything for the common case.
-function refreshWeatherBtn() {
-  if (!fetchWeatherBtn) return;
-  const hasGps = latitudeInput.value !== '' && longitudeInput.value !== '';
-  fetchWeatherBtn.disabled = !(dateInput.value && hasGps);
-  fetchWeatherBtn.title = fetchWeatherBtn.disabled
-    ? 'Need a date and lat/lon to fetch weather.'
-    : 'Fetch historical weather from Open-Meteo';
-}
+// /api/admin/weather (Open-Meteo archive). Auto-runs whenever date + GPS
+// are populated; pre-fills the transparency dropdown if the user hasn't
+// set one. No button — the user just sees the summary appear.
 async function runWeatherFetch() {
-  if (!fetchWeatherBtn || fetchWeatherBtn.disabled) return;
-  weatherSummary.textContent = 'Fetching…';
+  const hasGps = latitudeInput.value !== '' && longitudeInput.value !== '';
+  if (!dateInput.value || !hasGps) return;
+  weatherSummary.textContent = 'Fetching weather…';
   try {
     const params = new URLSearchParams({
       lat: latitudeInput.value,
@@ -676,12 +664,13 @@ async function runWeatherFetch() {
       transparencyInput.value = String(w.transparency_hint);
     }
   } catch (err) {
-    weatherSummary.textContent = `Failed: ${err.message}`;
+    weatherSummary.textContent = `Weather fetch failed: ${err.message}`;
   }
 }
 let lastAutoWeatherKey = '';
 async function maybeAutoFetchWeather() {
-  if (!fetchWeatherBtn || fetchWeatherBtn.disabled) return;
+  const hasGps = latitudeInput.value !== '' && longitudeInput.value !== '';
+  if (!dateInput.value || !hasGps) return;
   // Only re-run when the (date, lat, lon) tuple actually changes, so the
   // user can keep editing other fields without us hammering the upstream.
   const key = `${dateInput.value}|${latitudeInput.value}|${longitudeInput.value}`;
@@ -690,14 +679,12 @@ async function maybeAutoFetchWeather() {
   await runWeatherFetch();
 }
 [dateInput, latitudeInput, longitudeInput].forEach((i) => {
-  i.addEventListener('input', () => { refreshWeatherBtn(); maybeAutoFetchWeather(); });
-  i.addEventListener('change', () => { refreshWeatherBtn(); maybeAutoFetchWeather(); });
+  i.addEventListener('input', maybeAutoFetchWeather);
+  i.addEventListener('change', maybeAutoFetchWeather);
 });
 [latitudeInput, longitudeInput].forEach((i) => {
   i.addEventListener('change', maybeAutoFillFromLocationHistory);
 });
-refreshWeatherBtn();
-fetchWeatherBtn?.addEventListener('click', () => { lastAutoWeatherKey = ''; runWeatherFetch(); });
 
 // Bortle / SQM auto-fill from past observations at nearby coords. There's
 // no public Bortle API worth using; instead we offer the median of the
@@ -771,13 +758,6 @@ sqmInput.addEventListener('input', () => {
   suppressBortleSqmSync = false;
 });
 
-useImageGpsBtn.addEventListener('click', () => {
-  const lat = currentStage?.exif?.latitude;
-  const lon = currentStage?.exif?.longitude;
-  if (typeof lat !== 'number' || typeof lon !== 'number') return;
-  latitudeInput.value = lat.toFixed(6);
-  longitudeInput.value = lon.toFixed(6);
-});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
