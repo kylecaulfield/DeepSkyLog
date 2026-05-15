@@ -1499,8 +1499,13 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
     .all();
 
   // Lifetime panel — derived totals that motivate the daily user.
-  // - integration_hours: SUM(stack_count * exposure_seconds) / 3600
-  //   (stack_count defaults to 1 so single-frame observations still count).
+  // - integration_hours: the form's exposure_seconds field is used
+  //   inconsistently — sometimes per-frame sub (e.g. 10 s), sometimes the
+  //   total integration mined out of the watermark ("52 min" → 3120 s).
+  //   Multiplying by stack_count in both cases double-counts the totals
+  //   and produces 20,000-hour fantasy numbers. Heuristic: treat any
+  //   exposure_seconds ≤ 600 s (10 min) as a sub — multiply by stack;
+  //   anything larger is taken as the total integration on its own.
   // - this_year: observations whose effective date falls in the current UTC
   //   year, judged from observed_at when set, falling back to created_at.
   // - longest/current streak: consecutive UTC days containing at least one
@@ -1508,8 +1513,14 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
   const lifetime = db
     .prepare(
       `SELECT
-         SUM(COALESCE(stack_count, 1) * COALESCE(exposure_seconds, 0)) / 3600.0
-           AS integration_hours,
+         SUM(
+           CASE
+             WHEN COALESCE(exposure_seconds, 0) <= 0 THEN 0
+             WHEN COALESCE(exposure_seconds, 0) <= 600
+               THEN COALESCE(stack_count, 1) * exposure_seconds
+             ELSE exposure_seconds
+           END
+         ) / 3600.0 AS integration_hours,
          COUNT(*) AS observations_total,
          COUNT(DISTINCT NULLIF(catalog || catalog_number, '')) AS distinct_targets,
          (SELECT COUNT(*) FROM observations
