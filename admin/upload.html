@@ -128,9 +128,12 @@
                 <input id="longitude-input" name="longitude" type="number" step="any" min="-180" max="180" placeholder="-0.0005" />
               </label>
               <small id="gps-hint" class="dim" style="flex-basis:100%; margin-top:-0.4rem;"></small>
-              <small style="flex-basis:100%; margin-top:-0.2rem;">
-                <button type="button" id="use-device-location" class="linkish">📍 Use this device's location</button>
-              </small>
+              <div style="flex-basis:100%;">
+                <button type="button" id="use-device-location"
+                        style="background:none; border:none; color:var(--accent); padding:0; font-size:0.85rem; text-transform:none; letter-spacing:normal; text-decoration:underline; cursor:pointer;">
+                  📍 Use this device's location
+                </button>
+              </div>
             </div>
 
             <label class="field">
