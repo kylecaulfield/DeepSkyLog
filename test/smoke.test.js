@@ -707,6 +707,42 @@ test('smoke', async (t) => {
     assert.equal(pruned.targets.length, 0);
   });
 
+  await t.test('catalog filter restricts planner / seestar / tonight to chosen lists', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    // Planner without filter sees both Messier and Caldwell entries.
+    const unfiltered = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=10`,
+    );
+    const slugs = new Set(unfiltered.targets.map((t) => t.list_slug));
+    assert.ok(slugs.has('messier'));
+    assert.ok(slugs.has('caldwell'));
+    // Restrict to messier only — caldwell should disappear.
+    const messierOnly = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=10&lists=messier`,
+    );
+    const m_slugs = new Set(messierOnly.targets.map((t) => t.list_slug));
+    assert.deepEqual([...m_slugs], ['messier']);
+    // Unknown slug is silently ignored; result equals no-filter.
+    const bogus = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=10&lists=does-not-exist`,
+    );
+    assert.equal(bogus.targets.length, unfiltered.targets.length);
+    // Tonight honours the same filter param.
+    const tonightFiltered = await fetchJsonAuthed(
+      `/api/tonight?lat=51.5&lon=0&min_alt=0&lists=messier`,
+    );
+    const t_slugs = new Set(tonightFiltered.targets.map((t) => t.list_slug));
+    if (t_slugs.size) assert.deepEqual([...t_slugs], ['messier']);
+    // Seestar planner same.
+    const start = new Date('2026-01-15T22:00:00Z').toISOString();
+    const seestarFiltered = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&lists=messier`,
+    );
+    for (const s of seestarFiltered.slots) {
+      if (s.target) assert.equal(s.target.list_slug, 'messier');
+    }
+  });
+
   await t.test('Seestar planner returns hourly slots respecting alt window', async () => {
     // Pick a start far from sunrise at the target location so we always
     // get a non-trivial slot list. Start at 2026-01-15 22:00 UTC,

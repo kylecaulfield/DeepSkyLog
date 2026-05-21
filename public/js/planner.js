@@ -1,6 +1,19 @@
 import { fetchJson, el, typeLabel, highlightNav } from './common.js';
+import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 
 highlightNav('planner');
+
+let getCatalogSelection = () => [];
+mountCatalogFilter(document.getElementById('catalog-filter'), () => {
+  // Re-plan automatically when the catalog set changes — the user
+  // would otherwise have to tap Plan again.
+  load();
+}).then((fn) => {
+  getCatalogSelection = fn;
+  // If the page auto-ran load() before the filter was ready, re-run
+  // now that we know which catalogs the user wants.
+  if (rows.children.length) load();
+});
 
 const dateInput = document.getElementById('date-input');
 const timeInput = document.getElementById('time-input');
@@ -111,6 +124,8 @@ async function load() {
     min_alt: String(minAlt),
   });
   if (minMoonSep > 0) params.set('min_moon_sep', String(minMoonSep));
+  const catParam = selectionToParam(getCatalogSelection());
+  if (catParam) params.set('lists', catParam);
   if (time) {
     // Combine date+time as local — the resulting Date is correct UTC instant.
     const start = new Date(`${date}T${time}`);

@@ -398,6 +398,20 @@ app.get('/api/observations', (req, res) => {
 //   max_altitude / max_altitude_at — the apex
 //   above_min_minutes — minutes the target is above min_alt
 //   rises_at / sets_at / window_start / window_end (relative to query)
+// Parse a comma-separated `lists` query param into an array of validated
+// list slugs. Empty / missing / unrecognised entries are dropped; an empty
+// final array means "no filter — include everything", to keep the no-arg
+// case behaving exactly as before.
+function parseListSlugFilter(raw) {
+  if (!raw) return [];
+  const wanted = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+  if (!wanted.length) return [];
+  const valid = new Set(
+    db.prepare('SELECT slug FROM lists').all().map((r) => r.slug),
+  );
+  return wanted.filter((s) => valid.has(s));
+}
+
 app.get('/api/planner', (req, res) => {
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
@@ -435,6 +449,12 @@ app.get('/api/planner', (req, res) => {
   const stepMinutes = Math.max(1, Math.min(60, Number(req.query.step_minutes) || 10));
   const stepMs = stepMinutes * 60_000;
 
+  // Optional catalog filter — restrict to specific list slugs.
+  const listSlugs = parseListSlugFilter(req.query.lists);
+  const listClause = listSlugs.length
+    ? `AND l.slug IN (${listSlugs.map(() => '?').join(',')})`
+    : '';
+
   const rows = db
     .prepare(
       `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
@@ -445,10 +465,11 @@ app.get('/api/planner', (req, res) => {
                        WHERE lc.list_object_id = lo.id) AS observed
          FROM list_objects lo
          JOIN lists l ON l.id = lo.list_id
-         WHERE lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
-            OR lo.ephemeris IS NOT NULL`,
+         WHERE (lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
+            OR lo.ephemeris IS NOT NULL)
+           ${listClause}`,
     )
-    .all();
+    .all(...listSlugs);
 
   // Pre-compute sun and moon position+altitude across the window. Used for
   // both target-vs-moon separation and the twilight/moon-up bands surfaced
@@ -629,7 +650,12 @@ app.get('/api/seestar-planner', (req, res) => {
   }
 
   // Pull every list_object that has either coordinates or an ephemeris
-  // we can compute live (same predicate as /api/planner).
+  // we can compute live (same predicate as /api/planner). Honours the
+  // shared catalog filter so this page reflects the user's selection.
+  const listSlugs = parseListSlugFilter(req.query.lists);
+  const listClause = listSlugs.length
+    ? `AND l.slug IN (${listSlugs.map(() => '?').join(',')})`
+    : '';
   const rows = db
     .prepare(
       `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
@@ -640,10 +666,11 @@ app.get('/api/seestar-planner', (req, res) => {
                        WHERE lc.list_object_id = lo.id) AS observed
          FROM list_objects lo
          JOIN lists l ON l.id = lo.list_id
-         WHERE lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
-            OR lo.ephemeris IS NOT NULL`,
+         WHERE (lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
+            OR lo.ephemeris IS NOT NULL)
+           ${listClause}`,
     )
-    .all();
+    .all(...listSlugs);
 
   function coordsAt(row, date) {
     if (row.ephemeris) {
@@ -722,6 +749,10 @@ app.get('/api/tonight', (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 200, 500);
   const date = new Date();
 
+  const listSlugs = parseListSlugFilter(req.query.lists);
+  const listClause = listSlugs.length
+    ? `AND l.slug IN (${listSlugs.map(() => '?').join(',')})`
+    : '';
   const rows = db
     .prepare(
       `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
@@ -732,10 +763,11 @@ app.get('/api/tonight', (req, res) => {
                        WHERE lc.list_object_id = lo.id) AS observed
          FROM list_objects lo
          JOIN lists l ON l.id = lo.list_id
-         WHERE lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
-            OR lo.ephemeris IS NOT NULL`,
+         WHERE (lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
+            OR lo.ephemeris IS NOT NULL)
+           ${listClause}`,
     )
-    .all();
+    .all(...listSlugs);
 
   const enriched = [];
   for (const row of rows) {

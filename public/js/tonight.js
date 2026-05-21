@@ -1,6 +1,15 @@
 import { fetchJson, el, typeLabel, highlightNav } from './common.js';
+import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 
 highlightNav('tonight');
+
+let getCatalogSelection = () => [];
+mountCatalogFilter(document.getElementById('catalog-filter'), () => {
+  load();
+}).then((fn) => {
+  getCatalogSelection = fn;
+  if (rows.children.length) load();
+});
 
 const latInput = document.getElementById('lat-input');
 const lonInput = document.getElementById('lon-input');
@@ -48,6 +57,8 @@ async function load() {
     min_alt: String(minAlt),
   });
   if (includeObserved.checked) params.set('include_observed', '1');
+  const catParam = selectionToParam(getCatalogSelection());
+  if (catParam) params.set('lists', catParam);
 
   let data;
   try {
