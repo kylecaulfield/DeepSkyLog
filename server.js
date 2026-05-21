@@ -412,6 +412,22 @@ function parseListSlugFilter(raw) {
   return wanted.filter((s) => valid.has(s));
 }
 
+// Parse a comma-separated `types=` query param into an array of allowed
+// object type codes (uppercase, deduped). Empty = no filter. Same shape
+// as parseListSlugFilter so the callers stay symmetric.
+const VALID_OBJECT_TYPES = new Set([
+  'GC','OC','PN','SNR','DN','GAL','MW','AST','DS','STAR','MOON','PLAN','COMET',
+]);
+function parseTypeFilter(raw) {
+  if (!raw) return [];
+  const wanted = String(raw)
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  if (!wanted.length) return [];
+  return [...new Set(wanted.filter((t) => VALID_OBJECT_TYPES.has(t)))];
+}
+
 app.get('/api/planner', (req, res) => {
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
@@ -454,6 +470,14 @@ app.get('/api/planner', (req, res) => {
   const listClause = listSlugs.length
     ? `AND l.slug IN (${listSlugs.map(() => '?').join(',')})`
     : '';
+  // Optional type filter — drop any list_object whose type isn't ticked.
+  // NULL types stay in: they're free-form / unclassified rows the user
+  // would otherwise lose. The catch-all behaviour matches the catalog
+  // filter, where an unknown slug just gets ignored.
+  const typeAllow = parseTypeFilter(req.query.types);
+  const typeClause = typeAllow.length
+    ? `AND (lo.object_type IS NULL OR lo.object_type IN (${typeAllow.map(() => '?').join(',')}))`
+    : '';
 
   const rows = db
     .prepare(
@@ -467,9 +491,10 @@ app.get('/api/planner', (req, res) => {
          JOIN lists l ON l.id = lo.list_id
          WHERE (lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
             OR lo.ephemeris IS NOT NULL)
-           ${listClause}`,
+           ${listClause}
+           ${typeClause}`,
     )
-    .all(...listSlugs);
+    .all(...listSlugs, ...typeAllow);
 
   // Pre-compute sun and moon position+altitude across the window. Used for
   // both target-vs-moon separation and the twilight/moon-up bands surfaced
@@ -668,10 +693,14 @@ app.get('/api/seestar-planner', (req, res) => {
 
   // Pull every list_object that has either coordinates or an ephemeris
   // we can compute live (same predicate as /api/planner). Honours the
-  // shared catalog filter so this page reflects the user's selection.
+  // shared catalog + type filters so this page reflects the user's choices.
   const listSlugs = parseListSlugFilter(req.query.lists);
   const listClause = listSlugs.length
     ? `AND l.slug IN (${listSlugs.map(() => '?').join(',')})`
+    : '';
+  const typeAllow = parseTypeFilter(req.query.types);
+  const typeClause = typeAllow.length
+    ? `AND (lo.object_type IS NULL OR lo.object_type IN (${typeAllow.map(() => '?').join(',')}))`
     : '';
   const rows = db
     .prepare(
@@ -685,9 +714,10 @@ app.get('/api/seestar-planner', (req, res) => {
          JOIN lists l ON l.id = lo.list_id
          WHERE (lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
             OR lo.ephemeris IS NOT NULL)
-           ${listClause}`,
+           ${listClause}
+           ${typeClause}`,
     )
-    .all(...listSlugs);
+    .all(...listSlugs, ...typeAllow);
 
   function coordsAt(row, date) {
     if (row.ephemeris) {
@@ -793,6 +823,10 @@ app.get('/api/tonight', (req, res) => {
   const listClause = listSlugs.length
     ? `AND l.slug IN (${listSlugs.map(() => '?').join(',')})`
     : '';
+  const typeAllow = parseTypeFilter(req.query.types);
+  const typeClause = typeAllow.length
+    ? `AND (lo.object_type IS NULL OR lo.object_type IN (${typeAllow.map(() => '?').join(',')}))`
+    : '';
   const rows = db
     .prepare(
       `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
@@ -805,9 +839,10 @@ app.get('/api/tonight', (req, res) => {
          JOIN lists l ON l.id = lo.list_id
          WHERE (lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
             OR lo.ephemeris IS NOT NULL)
-           ${listClause}`,
+           ${listClause}
+           ${typeClause}`,
     )
-    .all(...listSlugs);
+    .all(...listSlugs, ...typeAllow);
 
   const enriched = [];
   for (const row of rows) {

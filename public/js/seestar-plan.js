@@ -1,5 +1,6 @@
 import { fetchJson, el, typeLabel, highlightNav } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
+import { mountTypeFilter, typesToParam } from './type-filter.js';
 import { mountDurationPicker } from './seestar-durations.js';
 
 highlightNav('seestar');
@@ -11,6 +12,7 @@ mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   getCatalogSelection = fn;
   if (rows.children.length) load();
 });
+const getTypeSelection = mountTypeFilter(document.getElementById('type-filter'), () => load());
 
 let getDurationParam = () => '';
 mountDurationPicker(document.getElementById('duration-filter'), () => {
@@ -74,6 +76,8 @@ async function load() {
   if (includeObserved.checked) params.set('include_observed', '1');
   const catParam = selectionToParam(getCatalogSelection());
   if (catParam) params.set('lists', catParam);
+  const typeParam = typesToParam(getTypeSelection());
+  if (typeParam) params.set('types', typeParam);
   const durParam = getDurationParam();
   if (durParam) params.set('durations', durParam);
 

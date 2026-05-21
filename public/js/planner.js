@@ -1,5 +1,6 @@
 import { fetchJson, el, typeLabel, highlightNav } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
+import { mountTypeFilter, typesToParam } from './type-filter.js';
 
 highlightNav('planner');
 
@@ -14,6 +15,7 @@ mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   // now that we know which catalogs the user wants.
   if (rows.children.length) load();
 });
+const getTypeSelection = mountTypeFilter(document.getElementById('type-filter'), () => load());
 
 const dateInput = document.getElementById('date-input');
 const timeInput = document.getElementById('time-input');
@@ -126,6 +128,8 @@ async function load() {
   if (minMoonSep > 0) params.set('min_moon_sep', String(minMoonSep));
   const catParam = selectionToParam(getCatalogSelection());
   if (catParam) params.set('lists', catParam);
+  const typeParam = typesToParam(getTypeSelection());
+  if (typeParam) params.set('types', typeParam);
   if (time) {
     // Combine date+time as local — the resulting Date is correct UTC instant.
     const start = new Date(`${date}T${time}`);
