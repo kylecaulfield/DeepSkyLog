@@ -570,6 +570,146 @@ app.get('/api/planner', (req, res) => {
   });
 });
 
+// Seestar session planner: from a chosen start time, hand out one target
+// per hour-long slot, stopping an hour before sunrise. Each target is
+// picked to be 'safe for a Seestar' — at slot start its altitude is at
+// least min_alt (default 50°), and at slot end it's no higher than
+// max_alt (default 80°) so the tube doesn't have to swing through
+// zenith. Each target is assigned to at most one slot.
+app.get('/api/seestar-planner', (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: 'lat and lon query params are required' });
+  }
+  const minAlt = Number.isFinite(Number(req.query.min_alt)) ? Number(req.query.min_alt) : 50;
+  const maxAlt = Number.isFinite(Number(req.query.max_alt)) ? Number(req.query.max_alt) : 80;
+  const includeObserved = req.query.include_observed === '1';
+  const start = req.query.start ? new Date(req.query.start) : new Date();
+  if (Number.isNaN(start.getTime())) {
+    return res.status(400).json({ error: 'invalid start time' });
+  }
+
+  // Find the next sunrise (sun altitude crossing 0 from below). Scan
+  // hour-by-hour up to 36 h ahead; refine to the nearest minute. If the
+  // sun never sets in this 36 h window (high-latitude summer) we cap the
+  // session at start + 12 h so the table doesn't run forever.
+  function sunAltAt(date) {
+    const eq = sunPosition(date);
+    const pos = altAz({ raHours: eq.raHours, decDeg: eq.decDeg, lat, lon, date });
+    return pos?.altitude ?? 0;
+  }
+  let sunrise = null;
+  let prev = sunAltAt(start);
+  for (let h = 1; h <= 36; h++) {
+    const t = new Date(start.getTime() + h * 3_600_000);
+    const cur = sunAltAt(t);
+    if (prev < 0 && cur >= 0) {
+      // Refine to the nearest minute.
+      let lo = new Date(t.getTime() - 3_600_000);
+      let hi = t;
+      for (let i = 0; i < 60; i++) {
+        const mid = new Date((lo.getTime() + hi.getTime()) / 2);
+        if (sunAltAt(mid) >= 0) hi = mid; else lo = mid;
+      }
+      sunrise = hi;
+      break;
+    }
+    prev = cur;
+  }
+  const sessionEnd = sunrise
+    ? new Date(sunrise.getTime() - 3_600_000)
+    : new Date(start.getTime() + 12 * 3_600_000);
+
+  // Slot grid: start, +1h, +2h, … each slot is start→start+1h. We don't
+  // start a new slot whose start ≥ sessionEnd.
+  const slots = [];
+  for (let t = start.getTime(); t < sessionEnd.getTime(); t += 3_600_000) {
+    slots.push({ start: new Date(t), end: new Date(t + 3_600_000) });
+  }
+
+  // Pull every list_object that has either coordinates or an ephemeris
+  // we can compute live (same predicate as /api/planner).
+  const rows = db
+    .prepare(
+      `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
+              lo.constellation, lo.ra_hours, lo.dec_degrees, lo.magnitude,
+              lo.ephemeris,
+              l.slug AS list_slug, l.name AS list_name,
+              EXISTS(SELECT 1 FROM list_completions lc
+                       WHERE lc.list_object_id = lo.id) AS observed
+         FROM list_objects lo
+         JOIN lists l ON l.id = lo.list_id
+         WHERE lo.ra_hours IS NOT NULL OR lo.dec_degrees IS NOT NULL
+            OR lo.ephemeris IS NOT NULL`,
+    )
+    .all();
+
+  function coordsAt(row, date) {
+    if (row.ephemeris) {
+      const eph = bodyPosition(row.ephemeris, date);
+      if (!eph) return null;
+      return { raHours: eph.raHours, decDeg: eph.decDeg };
+    }
+    if (row.ra_hours == null || row.dec_degrees == null) return null;
+    return { raHours: row.ra_hours, decDeg: row.dec_degrees };
+  }
+
+  const assignedIds = new Set();
+  const plan = slots.map((slot) => {
+    // Score every eligible target for this slot and take the best one.
+    let best = null;
+    for (const row of rows) {
+      if (!includeObserved && row.observed) continue;
+      if (assignedIds.has(row.id)) continue;
+      const eqStart = coordsAt(row, slot.start);
+      const eqEnd = coordsAt(row, slot.end);
+      if (!eqStart || !eqEnd) continue;
+      const posStart = altAz({ ...eqStart, lat, lon, date: slot.start });
+      const posEnd = altAz({ ...eqEnd, lat, lon, date: slot.end });
+      if (!posStart || !posEnd) continue;
+      if (posStart.altitude < minAlt) continue;
+      if (posEnd.altitude > maxAlt) continue;
+      // Prefer the target that's lowest at start (most window to climb)
+      // but still above min_alt — keeps zenith-bound targets for later
+      // slots when they're more useful. Tie-break on brightness.
+      const score = -posStart.altitude * 1000 - (row.magnitude ?? 99);
+      if (!best || score > best.score) {
+        best = { row, posStart, posEnd, score };
+      }
+    }
+    if (!best) return { ...{ slot_start: slot.start.toISOString(), slot_end: slot.end.toISOString() }, target: null };
+    assignedIds.add(best.row.id);
+    const { row, posStart, posEnd } = best;
+    return {
+      slot_start: slot.start.toISOString(),
+      slot_end: slot.end.toISOString(),
+      target: {
+        id: row.id,
+        catalog: row.catalog, catalog_number: row.catalog_number,
+        name: row.name, object_type: row.object_type, constellation: row.constellation,
+        magnitude: row.magnitude,
+        list_slug: row.list_slug, list_name: row.list_name,
+        observed: !!row.observed,
+        altitude_at_start: posStart.altitude,
+        altitude_at_end: posEnd.altitude,
+        azimuth_at_start: posStart.azimuth,
+        azimuth_at_end: posEnd.azimuth,
+      },
+    };
+  });
+
+  res.json({
+    location: { lat, lon },
+    window: { start: start.toISOString(), end: sessionEnd.toISOString() },
+    sunrise: sunrise ? sunrise.toISOString() : null,
+    min_altitude: minAlt,
+    max_altitude: maxAlt,
+    moon: moonPhase(start),
+    slots: plan,
+  });
+});
+
 app.get('/api/tonight', (req, res) => {
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
