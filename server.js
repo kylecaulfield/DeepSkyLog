@@ -642,12 +642,29 @@ app.get('/api/seestar-planner', (req, res) => {
     ? new Date(sunrise.getTime() - 3_600_000)
     : new Date(start.getTime() + 12 * 3_600_000);
 
-  // Slot grid: start, +1h, +2h, … each slot is start→start+1h. We don't
-  // start a new slot whose start ≥ sessionEnd.
-  const slots = [];
-  for (let t = start.getTime(); t < sessionEnd.getTime(); t += 3_600_000) {
-    slots.push({ start: new Date(t), end: new Date(t + 3_600_000) });
+  // Per-object-type recommended imaging durations (minutes). The defaults
+  // are based on Seestar community conventions for f/4-5 smart-scope
+  // stacks. Override via the durations query param, e.g.:
+  //   durations=GAL:90,GC:20,OC:15
+  // Anything not in the map (or set to <= 0) falls back to defaultDur.
+  const DEFAULT_DURATIONS = {
+    GAL: 90, DN: 60, SNR: 90, PN: 45, MW: 30, COMET: 30,
+    GC: 20, OC: 15, PLAN: 10, AST: 10,
+    DS: 5, STAR: 5, MOON: 5,
+  };
+  const defaultDur = 60;
+  const userDurations = {};
+  if (req.query.durations) {
+    for (const piece of String(req.query.durations).split(',')) {
+      const [k, v] = piece.split(':').map((s) => s.trim());
+      const n = Number(v);
+      if (k && Number.isFinite(n) && n > 0 && n <= 360) userDurations[k.toUpperCase()] = n;
+    }
   }
+  const durationFor = (type) => {
+    const t = (type || '').toUpperCase();
+    return userDurations[t] ?? DEFAULT_DURATIONS[t] ?? defaultDur;
+  };
 
   // Pull every list_object that has either coordinates or an ephemeris
   // we can compute live (same predicate as /api/planner). Honours the
@@ -682,49 +699,71 @@ app.get('/api/seestar-planner', (req, res) => {
     return { raHours: row.ra_hours, decDeg: row.dec_degrees };
   }
 
+  // Variable-duration slot walk. Walk forward from `start`; at each step
+  // we look at every eligible target, compute its altitude at the step's
+  // start AND at start+durationFor(target.type). Keep targets where the
+  // start altitude ≥ minAlt, the end altitude ≤ maxAlt, AND the slot
+  // doesn't run past sessionEnd. Pick the lowest qualifying alt_start so
+  // climbing targets get priority, then advance time by the chosen
+  // target's duration. If nothing fits at the current moment, advance by
+  // 15 min and retry — covers the common "wait 15 minutes for the next
+  // good target to clear 50°" case without spinning forever.
   const assignedIds = new Set();
-  const plan = slots.map((slot) => {
-    // Score every eligible target for this slot and take the best one.
+  const plan = [];
+  let cursor = start.getTime();
+  let stalled = 0;
+  while (cursor < sessionEnd.getTime()) {
+    const slotStart = new Date(cursor);
     let best = null;
     for (const row of rows) {
       if (!includeObserved && row.observed) continue;
       if (assignedIds.has(row.id)) continue;
-      const eqStart = coordsAt(row, slot.start);
-      const eqEnd = coordsAt(row, slot.end);
+      const dur = durationFor(row.object_type);
+      const slotEndMs = cursor + dur * 60_000;
+      if (slotEndMs > sessionEnd.getTime()) continue;
+      const slotEnd = new Date(slotEndMs);
+      const eqStart = coordsAt(row, slotStart);
+      const eqEnd = coordsAt(row, slotEnd);
       if (!eqStart || !eqEnd) continue;
-      const posStart = altAz({ ...eqStart, lat, lon, date: slot.start });
-      const posEnd = altAz({ ...eqEnd, lat, lon, date: slot.end });
+      const posStart = altAz({ ...eqStart, lat, lon, date: slotStart });
+      const posEnd = altAz({ ...eqEnd, lat, lon, date: slotEnd });
       if (!posStart || !posEnd) continue;
       if (posStart.altitude < minAlt) continue;
       if (posEnd.altitude > maxAlt) continue;
-      // Prefer the target that's lowest at start (most window to climb)
-      // but still above min_alt — keeps zenith-bound targets for later
-      // slots when they're more useful. Tie-break on brightness.
       const score = -posStart.altitude * 1000 - (row.magnitude ?? 99);
       if (!best || score > best.score) {
-        best = { row, posStart, posEnd, score };
+        best = { row, posStart, posEnd, score, dur, slotEnd };
       }
     }
-    if (!best) return { ...{ slot_start: slot.start.toISOString(), slot_end: slot.end.toISOString() }, target: null };
+    if (!best) {
+      stalled += 1;
+      // Bail after an hour of stalled retries — no point looping forever.
+      if (stalled > 4) break;
+      cursor += 15 * 60_000;
+      continue;
+    }
+    stalled = 0;
     assignedIds.add(best.row.id);
-    const { row, posStart, posEnd } = best;
-    return {
-      slot_start: slot.start.toISOString(),
-      slot_end: slot.end.toISOString(),
+    plan.push({
+      slot_start: slotStart.toISOString(),
+      slot_end: best.slotEnd.toISOString(),
+      duration_minutes: best.dur,
       target: {
-        id: row.id,
-        catalog: row.catalog, catalog_number: row.catalog_number,
-        name: row.name, object_type: row.object_type, constellation: row.constellation,
-        magnitude: row.magnitude,
-        list_slug: row.list_slug, list_name: row.list_name,
-        observed: !!row.observed,
-        altitude_at_start: posStart.altitude,
-        altitude_at_end: posEnd.altitude,
-        azimuth_at_start: posStart.azimuth,
-        azimuth_at_end: posEnd.azimuth,
+        id: best.row.id,
+        catalog: best.row.catalog, catalog_number: best.row.catalog_number,
+        name: best.row.name, object_type: best.row.object_type,
+        constellation: best.row.constellation,
+        magnitude: best.row.magnitude,
+        list_slug: best.row.list_slug, list_name: best.row.list_name,
+        observed: !!best.row.observed,
+        altitude_at_start: best.posStart.altitude,
+        altitude_at_end: best.posEnd.altitude,
+        azimuth_at_start: best.posStart.azimuth,
+        azimuth_at_end: best.posEnd.azimuth,
       },
-    };
-  });
+    });
+    cursor = best.slotEnd.getTime();
+  }
 
   res.json({
     location: { lat, lon },
@@ -733,6 +772,7 @@ app.get('/api/seestar-planner', (req, res) => {
     min_altitude: minAlt,
     max_altitude: maxAlt,
     moon: moonPhase(start),
+    durations: { ...DEFAULT_DURATIONS, ...userDurations, _default: defaultDur },
     slots: plan,
   });
 });
