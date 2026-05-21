@@ -23,7 +23,7 @@
     </header>
     <main>
       <h1 class="page-title">Seestar session planner</h1>
-      <p class="page-subtitle" id="subtitle">One target per hour from now until an hour before sunrise. Each pick is above your minimum altitude at the slot start, and stays under the zenith-avoidance ceiling by the slot end.</p>
+      <p class="page-subtitle" id="subtitle">Targets allocated by per-type imaging duration, running from now until an hour before sunrise. Each pick is above your minimum altitude at the slot start and stays under the zenith-avoidance ceiling by the slot end.</p>
 
       <div class="toolbar">
         <label>
@@ -46,6 +46,7 @@
           <input id="include-observed" type="checkbox" /> Include observed
         </label>
         <span id="catalog-filter"></span>
+        <span id="duration-filter"></span>
         <button type="button" id="locate-btn">Use my location</button>
         <button type="button" id="run-btn">Plan</button>
         <span id="status" class="dim" style="margin-left:auto;"></span>
@@ -59,6 +60,7 @@
           <thead>
             <tr>
               <th>Slot</th>
+              <th>Duration</th>
               <th>Object</th>
               <th>Name</th>
               <th>Type</th>

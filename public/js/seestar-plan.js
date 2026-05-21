@@ -1,5 +1,6 @@
 import { fetchJson, el, typeLabel, highlightNav } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
+import { mountDurationPicker } from './seestar-durations.js';
 
 highlightNav('seestar');
 
@@ -8,6 +9,14 @@ mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   load();
 }).then((fn) => {
   getCatalogSelection = fn;
+  if (rows.children.length) load();
+});
+
+let getDurationParam = () => '';
+mountDurationPicker(document.getElementById('duration-filter'), () => {
+  load();
+}).then((fn) => {
+  getDurationParam = fn;
   if (rows.children.length) load();
 });
 
@@ -65,6 +74,8 @@ async function load() {
   if (includeObserved.checked) params.set('include_observed', '1');
   const catParam = selectionToParam(getCatalogSelection());
   if (catParam) params.set('lists', catParam);
+  const durParam = getDurationParam();
+  if (durParam) params.set('durations', durParam);
 
   let data;
   try {
@@ -88,16 +99,18 @@ async function load() {
   status.textContent = `${filled} of ${data.slots.length} slot${data.slots.length === 1 ? '' : 's'} filled`;
 
   if (!data.slots.length) {
-    rows.appendChild(el('tr', {}, el('td', { colspan: '10' },
+    rows.appendChild(el('tr', {}, el('td', { colspan: '11' },
       el('div', { class: 'empty-state', text: 'No imaging window — sunrise is within the next hour.' }))));
     return;
   }
 
   for (const slot of data.slots) {
     const slotLabel = `${fmtTime(slot.slot_start)} – ${fmtTime(slot.slot_end)}`;
+    const dur = slot.duration_minutes != null ? `${slot.duration_minutes} min` : '—';
     if (!slot.target) {
       rows.appendChild(el('tr', { class: 'dim' },
         el('td', { text: slotLabel }),
+        el('td', { text: dur }),
         el('td', { colspan: '9', class: 'empty-state', text: 'No target in altitude range that hasn\'t been used yet.' }),
       ));
       continue;
@@ -105,6 +118,7 @@ async function load() {
     const t = slot.target;
     rows.appendChild(el('tr', { class: t.observed ? 'observed' : '' },
       el('td', { text: slotLabel }),
+      el('td', { text: dur }),
       el('td', {}, el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
       el('td', { text: t.name || '—' }),
       el('td', { text: typeLabel(t.object_type) }),

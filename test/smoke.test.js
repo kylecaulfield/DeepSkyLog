@@ -743,7 +743,7 @@ test('smoke', async (t) => {
     }
   });
 
-  await t.test('Seestar planner returns hourly slots respecting alt window', async () => {
+  await t.test('Seestar planner returns variable-duration slots in alt window', async () => {
     // Pick a start far from sunrise at the target location so we always
     // get a non-trivial slot list. Start at 2026-01-15 22:00 UTC,
     // observer at (51.5, 0) — guaranteed dark night in January.
@@ -752,23 +752,39 @@ test('smoke', async (t) => {
       `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=50&max_alt=80`,
     );
     assert.ok(Array.isArray(data.slots), 'slots present');
-    assert.ok(data.slots.length >= 4, `expected several hourly slots, got ${data.slots.length}`);
-    // Sunrise should be in the morning.
+    assert.ok(data.slots.length >= 4, `expected several slots, got ${data.slots.length}`);
+    assert.ok(typeof data.durations === 'object' && data.durations._default,
+      'durations map returned');
+    // Sunrise should be in the morning. Window ends an hour before.
     assert.ok(data.sunrise, 'sunrise computed');
-    // Window end = sunrise - 1h.
     const end = new Date(data.window.end).getTime();
     const sunrise = new Date(data.sunrise).getTime();
     assert.equal(sunrise - end, 3_600_000, 'window ends an hour before sunrise');
-    // Every assigned target must be in the [50, 80] window at slot start
-    // and end, and no target may be assigned twice.
+    // Each slot's end equals start + duration_minutes, every target is
+    // in the alt window, no duplicates, and no slot runs past session end.
     const seen = new Set();
     for (const s of data.slots) {
-      if (!s.target) continue;
-      assert.ok(!seen.has(s.target.id), `target ${s.target.id} assigned twice`);
-      seen.add(s.target.id);
-      assert.ok(s.target.altitude_at_start >= 50, 'alt_start >= min');
-      assert.ok(s.target.altitude_at_end <= 80, 'alt_end <= max');
+      assert.equal(typeof s.duration_minutes, 'number');
+      if (s.target) {
+        assert.ok(!seen.has(s.target.id), `target ${s.target.id} assigned twice`);
+        seen.add(s.target.id);
+        assert.ok(s.target.altitude_at_start >= 50, 'alt_start >= min');
+        assert.ok(s.target.altitude_at_end <= 80, 'alt_end <= max');
+      }
+      const sEnd = new Date(s.slot_end).getTime();
+      const sStart = new Date(s.slot_start).getTime();
+      assert.equal((sEnd - sStart) / 60_000, s.duration_minutes, 'slot end matches duration');
+      assert.ok(sEnd <= end, 'slot ends at or before session end');
     }
+    // With huge custom durations (90 min for everything), we should get
+    // fewer slots than the default mix.
+    const huge = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=50&max_alt=80&durations=GAL:90,GC:90,OC:90,PN:90,DN:90,SNR:90,MW:90,AST:90,DS:90,STAR:90,MOON:90,PLAN:90,COMET:90`,
+    );
+    assert.ok(huge.slots.every((s) => !s.target || s.duration_minutes === 90),
+      'all targeted slots use the custom 90-min duration');
+    assert.ok(huge.slots.filter((s) => s.target).length <= data.slots.filter((s) => s.target).length,
+      'longer durations yield ≤ default slot count');
   });
 
   await t.test('NGC fallback resolves common designations', async () => {
