@@ -707,6 +707,34 @@ test('smoke', async (t) => {
     assert.equal(pruned.targets.length, 0);
   });
 
+  await t.test('Seestar planner returns hourly slots respecting alt window', async () => {
+    // Pick a start far from sunrise at the target location so we always
+    // get a non-trivial slot list. Start at 2026-01-15 22:00 UTC,
+    // observer at (51.5, 0) — guaranteed dark night in January.
+    const start = new Date('2026-01-15T22:00:00Z').toISOString();
+    const data = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=50&max_alt=80`,
+    );
+    assert.ok(Array.isArray(data.slots), 'slots present');
+    assert.ok(data.slots.length >= 4, `expected several hourly slots, got ${data.slots.length}`);
+    // Sunrise should be in the morning.
+    assert.ok(data.sunrise, 'sunrise computed');
+    // Window end = sunrise - 1h.
+    const end = new Date(data.window.end).getTime();
+    const sunrise = new Date(data.sunrise).getTime();
+    assert.equal(sunrise - end, 3_600_000, 'window ends an hour before sunrise');
+    // Every assigned target must be in the [50, 80] window at slot start
+    // and end, and no target may be assigned twice.
+    const seen = new Set();
+    for (const s of data.slots) {
+      if (!s.target) continue;
+      assert.ok(!seen.has(s.target.id), `target ${s.target.id} assigned twice`);
+      seen.add(s.target.id);
+      assert.ok(s.target.altitude_at_start >= 50, 'alt_start >= min');
+      assert.ok(s.target.altitude_at_end <= 80, 'alt_end <= max');
+    }
+  });
+
   await t.test('NGC fallback resolves common designations', async () => {
     const res = await fetch(`${baseUrl}/api/admin/objects/lookup?q=NGC7000`, {
       headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
