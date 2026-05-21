@@ -1,5 +1,6 @@
 import { fetchJson, el, typeLabel, highlightNav } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
+import { mountTypeFilter, typesToParam } from './type-filter.js';
 
 highlightNav('tonight');
 
@@ -10,6 +11,7 @@ mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   getCatalogSelection = fn;
   if (rows.children.length) load();
 });
+const getTypeSelection = mountTypeFilter(document.getElementById('type-filter'), () => load());
 
 const latInput = document.getElementById('lat-input');
 const lonInput = document.getElementById('lon-input');
@@ -59,6 +61,8 @@ async function load() {
   if (includeObserved.checked) params.set('include_observed', '1');
   const catParam = selectionToParam(getCatalogSelection());
   if (catParam) params.set('lists', catParam);
+  const typeParam = typesToParam(getTypeSelection());
+  if (typeParam) params.set('types', typeParam);
 
   let data;
   try {

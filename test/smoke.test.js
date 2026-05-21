@@ -743,6 +743,43 @@ test('smoke', async (t) => {
     }
   });
 
+  await t.test('object-type filter prunes types from planner / seestar / tonight', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    // Planner with only galaxies — every assigned target must be a GAL
+    // (or have a null type via the COALESCE fallback path, but seeded
+    // rows always have a type).
+    const galOnly = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=10&types=GAL`,
+    );
+    assert.ok(galOnly.targets.length > 0, 'still finds galaxies');
+    for (const tgt of galOnly.targets) {
+      assert.equal(tgt.object_type, 'GAL', `non-GAL slipped through: ${tgt.object_type}`);
+    }
+    // Excluding all sensible deep-sky types should empty the planner.
+    const planetsOnly = await fetchJsonAuthed(
+      `/api/planner?lat=51.5&lon=0&date=${today}&min_alt=0&types=COMET`,
+    );
+    for (const tgt of planetsOnly.targets) {
+      assert.equal(tgt.object_type, 'COMET');
+    }
+    // Seestar planner honours the same filter — no GC targets when GC
+    // isn't ticked.
+    const start = new Date('2026-01-15T22:00:00Z').toISOString();
+    const seestarNoGC = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&types=GAL,DN,PN,SNR,OC,MW,AST,STAR,DS,COMET,PLAN,MOON`,
+    );
+    for (const s of seestarNoGC.slots) {
+      if (s.target) assert.notEqual(s.target.object_type, 'GC');
+    }
+    // Tonight honours it too.
+    const tonightGalOnly = await fetchJsonAuthed(
+      `/api/tonight?lat=51.5&lon=0&min_alt=0&types=GAL`,
+    );
+    for (const t of tonightGalOnly.targets) {
+      assert.equal(t.object_type, 'GAL');
+    }
+  });
+
   await t.test('Seestar planner returns variable-duration slots in alt window', async () => {
     // Pick a start far from sunrise at the target location so we always
     // get a non-trivial slot list. Start at 2026-01-15 22:00 UTC,
