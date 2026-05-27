@@ -199,3 +199,113 @@ None of these have been started; pick the ones that fit your workflow.
     configured URL on each finalised observation. One env var, ~30 lines.
 45. ✅ **Bortle ↔ SQM converter** — typing into either the Bortle or SQM
     field updates the other on the upload form (centre-of-band mapping).
+
+## Open bugs / hardening (audit, 2026-05)
+
+A sweep of the codebase after the planner / Seestar planner / upload-flow
+expansions. Listed roughly by user-visible impact, not effort.
+
+### Should fix soon
+
+46. **No cache-busting on `/js/*.js`.** Static page `<script type="module"
+    src="/js/foo.js">` URLs never change, so when a Docker build ships
+    new JS the browser keeps serving the old one until the user does a
+    hard refresh. Several "it's still broken" reports in this session
+    traced back to this. Fix: stamp `?v=<GIT_SHA>` into the script tags
+    server-side at request time, using the `GIT_SHA` build-arg the
+    docker workflow already passes.
+47. **`/admin/object.html?id=undefined` link generated for free-form
+    observations.** `admin/observations.js` lines ~93–98 wrap the
+    object cell in an anchor whenever `o.object_id || (o.catalog &&
+    o.catalog_number)` is truthy, but the href uses `o.object_id`
+    only — so a free-form catalog row (e.g. a comet observation typed
+    `C/2023 A3`) renders `<a href="/admin/object.html?id=undefined">`.
+    Either drop the anchor when `o.object_id` is null, or send the
+    user to `/admin/observations.html#row-N` instead.
+48. **`clamp()` returns NaN for unparseable numbers.** The helper at
+    line ~2031 reads `Math.max(lo, Math.min(hi, Number(v)))` — if
+    `Number(v)` is NaN, the math propagates NaN and we hand it to
+    `better-sqlite3`. Hard to hit through the UI (clients always send
+    digits) but a crafted POST `{rating:"abc"}` either errors out or
+    stores NULL silently. Fix: `Number.isFinite(n) ? clampedValue
+    : null`.
+49. **Seestar planner stalls bail after 1 h with no target.** The
+    walk-forward loop advances by 15 min when nothing fits and gives
+    up after 4 stalls in a row — fine for a sparse catalog filter on a
+    short night, but on a narrow `types=` selection it can end the
+    plan early instead of skipping over a dry hour and resuming when
+    something rises again. Better: keep stepping forward until
+    `sessionEnd`, only break on natural end.
+50. **OpenNGC alias collisions.** `lib/ngc.js` indexes both primary
+    name and every Common-name alias in a single `Map`, so when two
+    catalog entries share a common name (e.g. "Veil Nebula" maps to
+    multiple NGCs) only the first one wins. Symptom: typing a popular
+    alias picks an unexpected NGC. Fix: keep aliases in a separate
+    multimap and surface a "did you mean …?" picker when more than
+    one match exists.
+
+### Latent / security-adjacent
+
+51. **No CSRF protection on `/api/admin/*` write endpoints.** Basic-auth
+    is automatically attached by the browser, so any tab logged into
+    the admin can be tricked into POSTing a delete from a hostile
+    origin via `fetch(..., {credentials: 'include'})`. Fix: require
+    a same-origin header, a CSRF token, or switch admin to a session
+    cookie with `SameSite=Strict`.
+52. **No rate-limit on successful admin writes.** The per-IP sliding
+    window in `basicAuth` only counts failures; once authed, a bot
+    with the password can spam observations. Add a token bucket on
+    write endpoints to make abuse noisy.
+53. **Auth-failure window is in-memory only.** `authFailures` is a
+    plain Map, wiped on every restart. An attacker that can crash
+    the server (e.g. by stuffing an enormous FITS file through the
+    50 MB cap — multer drops it but allocations could still spike
+    on a tiny VPS) resets their lockout. Persist to SQLite or use
+    a sliding window keyed by a stable identifier.
+54. **No HTTPS redirect / HSTS.** Server speaks plain HTTP. If
+    deployed behind a reverse proxy without TLS termination
+    correctly configured, the admin password leaks in clear text.
+    Add a check at boot that warns when `TRUST_PROXY=1` is set
+    without `https://` being visible in `X-Forwarded-Proto`.
+55. **Open-Meteo proxy hammers upstream on every keystroke.** The
+    upload form auto-fetches weather whenever `(date, lat, lon)`
+    changes. While the client de-dupes consecutive identical
+    tuples, fast typing of the GPS field triggers many distinct
+    tuples in flight. Open-Meteo's free tier will 429 if you push
+    too fast. Debounce the auto-fetch by ~750 ms.
+56. **Tessdata cache is permanent on failure.** `lib/seestar_ocr.js`
+    sets `permanentlyDisabled = true` if init fails once, and
+    never retries even if the env recovers (e.g. CDN comes back up
+    or a sysadmin drops `eng.traineddata` into `vendor/tessdata/`).
+    Reset the flag on SIGHUP, or retry every N minutes.
+
+### Cosmetic / UX nits
+
+57. **`<tr class="dim">` only dims the text color.** Below-horizon
+    Seestar / planner rows inherit the dim foreground colour, but
+    anchor cells stay the regular accent orange so the visual
+    difference is subtle. Either dim the row background instead
+    or add an `tr.dim a { color: var(--muted); }` override.
+58. **Site-name script flashes the placeholder.** `js/site-name.js`
+    fetches `/api/settings` after the page parses, so the user sees
+    "DeepSkyLog" briefly before the configured name swaps in. Inject
+    the name server-side as a `<meta>` tag, or use a CSS variable
+    set inline in the page head.
+59. **The `_default: 60` in seestar planner response is unused.** Send
+    it or drop it — currently it sits in the JSON for nobody.
+60. **Free-form comet observation has no enforcement of RA/Dec.**
+    Choosing `object_type=COMET` on the upload form makes the comet
+    visible in the gallery, but if the user doesn't also enter
+    RA/Dec the planner can't compute alt-az and the comet vanishes
+    from `/api/planner` and `/api/seestar-planner`. Either flag the
+    missing coords on save, or surface a "won't appear in planners"
+    warning next to the comet option.
+61. **No way to delete a custom list.** The future-ideas backlog
+    item #19 (CSV list import) implies users can add lists — once
+    that ships, they'll need to be able to remove them too. Add the
+    delete path while doing #19.
+62. **`linkish` class still uppercases its label text everywhere it's
+    used.** Fixed for the "Use this device's location" link in PR #57,
+    but the original "browse your files" link on the upload dropzone
+    still uses it. Audit `.linkish` usages and either drop the class
+    entirely or document that it expects short labels.
