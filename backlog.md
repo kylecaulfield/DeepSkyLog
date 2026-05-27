@@ -192,7 +192,7 @@ None of these have been started; pick the ones that fit your workflow.
 42. ✅ **iCalendar dark-moon weekend feed** — `/api/calendar/dark-moon.ics`
     serves Friday-Sunday windows around each new moon for the next year.
     Subscribe in any calendar app.
-43. **Equipment usage stats per scope** — "Seestar S30 Pro: 47 nights,
+43. ✅ **Equipment usage stats per scope** — "Seestar S30 Pro: 47 nights,
     1,200 frames, avg rating 3.8" panel under the existing telescope
     chips. Pure aggregation, no schema change.
 44. **Slack/Discord webhook on new observation** — outbound POST to a

@@ -615,6 +615,15 @@ test('smoke', async (t) => {
     assert.equal(typeof data.lifetime.observations_this_year, 'number');
     assert.equal(typeof data.lifetime.longest_streak_days, 'number');
     assert.equal(typeof data.lifetime.current_streak_days, 'number');
+    // Per-telescope rollup: every entry must carry the richer fields,
+    // not just an observation count.
+    assert.ok(Array.isArray(data.telescopes), 'telescopes block present');
+    for (const t of data.telescopes) {
+      assert.equal(typeof t.telescope, 'string');
+      assert.equal(typeof t.count, 'number');
+      assert.equal(typeof t.nights, 'number');
+      assert.ok(t.integration_hours == null || typeof t.integration_hours === 'number');
+    }
   });
 
   await t.test('SQM round-trips through upload + edit', async () => {
