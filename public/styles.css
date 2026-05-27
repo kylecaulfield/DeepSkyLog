@@ -303,9 +303,13 @@ tbody tr.observed:hover { background: rgba(153, 204, 153, 0.2); }
   gap: 0.7rem;
   align-items: center;
   margin-bottom: 1rem;
-  padding: 0.75rem 1rem;
+  /* Extra left/right padding keeps content out of the corner curve when
+     the toolbar wraps to multiple rows; the radius is capped at 1.75rem
+     instead of var(--pill) (~999px) so it doesn't bite into "LATITUDE"
+     on row 1 or the trailing status text on row 2. */
+  padding: 0.75rem 1.5rem;
   background: var(--accent-2);
-  border-radius: var(--pill) 12px var(--pill) 12px;
+  border-radius: 1.75rem 12px 1.75rem 12px;
   color: #000;
 }
 
