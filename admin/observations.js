@@ -90,7 +90,10 @@ function renderRows() {
         })
       : el('span', { class: 'thumb-chip empty', text: '—' });
 
-    const objCell = (o.object_id || (o.catalog && o.catalog_number))
+    // Only build the link when we actually have an object_id; the old
+    // condition also fired for free-form catalog rows (e.g. typed
+    // 'C/2023 A3') and produced /admin/object.html?id=undefined.
+    const objCell = o.object_id
       ? el('a', {
           href: `/admin/object.html?id=${encodeURIComponent(o.object_id)}`,
           text: objectLabel(o),

@@ -855,6 +855,16 @@ test('smoke', async (t) => {
     // "ic 410" with whitespace and lowercase still works.
     const sloppy = await fetch(`${baseUrl}/api/admin/objects/lookup?q=ic%20410`, { headers: auth });
     assert.equal(sloppy.status, 200);
+
+    // Common-name alias shared by multiple rows ('Eagle Nebula' appears
+    // on both M16 (NGC 6611) and the surrounding nebulosity row).
+    // Regression for #50 — the brightest entry should win and the
+    // others surface as `alternates`.
+    const eagle = await fetch(`${baseUrl}/api/admin/objects/lookup?q=Eagle%20Nebula`, { headers: auth });
+    assert.equal(eagle.status, 200);
+    const e = await eagle.json();
+    assert.ok(Array.isArray(e.alternates) && e.alternates.length >= 1,
+      'shared aliases expose alternates');
   });
 
   await t.test('batch staging: many parallel stages succeed independently', async () => {
