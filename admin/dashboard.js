@@ -109,9 +109,31 @@ function renderTelescopes(telescopes) {
     wrap.appendChild(el('span', { class: 'dim', text: 'No telescopes logged yet.' }));
     return;
   }
+  // Render as a small table — chips lost too much info now that the
+  // rollup carries nights / frames / integration-hours / avg rating.
+  const tbl = el('table', { style: 'width:auto; font-size:0.85rem;' });
+  const head = el('thead', {}, el('tr', {},
+    el('th', { text: 'Telescope' }),
+    el('th', { text: 'Obs' }),
+    el('th', { text: 'Nights' }),
+    el('th', { text: 'Frames' }),
+    el('th', { text: 'Hours' }),
+    el('th', { text: 'Avg ★' }),
+  ));
+  const body = el('tbody');
   for (const t of telescopes) {
-    wrap.appendChild(el('span', { class: 'chip', text: `${t.telescope} · ${t.count}` }));
+    body.appendChild(el('tr', {},
+      el('td', { text: t.telescope }),
+      el('td', { text: String(t.count) }),
+      el('td', { text: t.nights != null ? String(t.nights) : '—' }),
+      el('td', { text: t.frames != null ? String(t.frames) : '—' }),
+      el('td', { text: t.integration_hours != null ? `${t.integration_hours.toFixed(1)} h` : '—' }),
+      el('td', { text: t.avg_rating != null ? Number(t.avg_rating).toFixed(2) : '—' }),
+    ));
   }
+  tbl.appendChild(head);
+  tbl.appendChild(body);
+  wrap.appendChild(tbl);
 }
 
 function renderHeatmap(rows) {

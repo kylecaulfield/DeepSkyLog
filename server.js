@@ -1757,9 +1757,30 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
     )
     .all();
 
+  // Per-telescope rollup: not just the observation count, but the things
+  // a Seestar / smart-scope user actually cares about — how many nights
+  // they've taken it out, how many frames stacked, total integration
+  // hours, average rating. The integration-hours expression uses the
+  // same heuristic as the lifetime panel (treat exposures > 600 s as
+  // pre-aggregated totals so we don't double-count).
   const telescopes = db
     .prepare(
-      `SELECT telescope, COUNT(*) AS count
+      `SELECT telescope,
+              COUNT(*) AS count,
+              COUNT(DISTINCT substr(COALESCE(observed_at, created_at), 1, 10)) AS nights,
+              SUM(COALESCE(stack_count, 1)) AS frames,
+              ROUND(
+                SUM(
+                  CASE
+                    WHEN COALESCE(exposure_seconds, 0) <= 0 THEN 0
+                    WHEN COALESCE(exposure_seconds, 0) <= 600
+                      THEN COALESCE(stack_count, 1) * exposure_seconds
+                    ELSE exposure_seconds
+                  END
+                ) / 3600.0,
+                1
+              ) AS integration_hours,
+              ROUND(AVG(rating), 2) AS avg_rating
          FROM observations
          WHERE telescope IS NOT NULL AND telescope != ''
          GROUP BY telescope
