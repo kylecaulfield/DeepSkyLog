@@ -180,6 +180,15 @@ const AUTH_FAIL_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_FAIL_MAX = 20;
 const authFailures = new Map();
 
+// Write-side rate limit: even with the right password, cap how many
+// POST/PUT/PATCH/DELETE calls a single IP can make per minute. Defends
+// against runaway scripts and stolen-credential abuse. Generous enough
+// that a normal batch-upload session (one stage + one observation per
+// image, every few seconds) stays under the cap.
+const WRITE_WINDOW_MS = 60 * 1000;
+const WRITE_MAX = 120;
+const writeHits = new Map();
+
 function clientIp(req) {
   return req.ip || req.socket?.remoteAddress || 'unknown';
 }
@@ -224,7 +233,21 @@ function basicAuth(req, res, next) {
     ok = timingSafeCompare(pass, ADMIN_PASSWORD);
   }
 
-  if (ok) return next();
+  if (ok) {
+    // Write-side rate limit (POST/PUT/PATCH/DELETE only — GETs stay
+    // unmetered so polling endpoints aren't penalised).
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      const hits = (writeHits.get(ip) || []).filter((t) => now - t < WRITE_WINDOW_MS);
+      if (hits.length >= WRITE_MAX) {
+        res.set('Retry-After', String(Math.ceil(WRITE_WINDOW_MS / 1000)));
+        writeHits.set(ip, hits);
+        return res.status(429).json({ error: 'Too many write requests' });
+      }
+      hits.push(now);
+      writeHits.set(ip, hits);
+    }
+    return next();
+  }
 
   fails.push(now);
   authFailures.set(ip, fails);
@@ -268,9 +291,21 @@ const stageUpload = multer({
   },
 });
 
-app.use('/admin', basicAuth, express.static(path.join(__dirname, 'admin')));
+// Cache policy for JS / CSS / HTML: force the browser to revalidate on
+// every visit so a fresh deploy reaches users without a hard refresh.
+// (The "it's still broken" reports during the upload-form work all
+// traced back to stale module scripts; ETag-only wasn't enough.) Image
+// uploads keep the default "cache forever" semantics — they're
+// addressed by content-unique paths under /uploads.
+function noStoreForCode(res, filePath) {
+  if (/\.(?:js|mjs|css|html)$/i.test(filePath)) {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  }
+}
+
+app.use('/admin', basicAuth, express.static(path.join(__dirname, 'admin'), { setHeaders: noStoreForCode }));
 app.use('/uploads', express.static(UPLOAD_DIR));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: noStoreForCode }));
 
 // Version info — preferred source is the env vars baked in at Docker build
 // time (workflow fills them from the triggering commit). For local `npm
@@ -2026,8 +2061,12 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const notes = body.notes ? String(body.notes).trim() : null;
   const observedAt = body.observed_at ? String(body.observed_at).trim() : null;
   const title = body.title ? String(body.title).trim() : null;
-  const clamp = (v, lo, hi) =>
-    v == null || v === '' ? null : Math.max(lo, Math.min(hi, Number(v)));
+  const clamp = (v, lo, hi) => {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(lo, Math.min(hi, n));
+  };
   const rating = clamp(body.rating, 1, 5);
   const seeing = clamp(body.seeing, 1, 5);
   const transparency = clamp(body.transparency, 1, 5);
@@ -2297,8 +2336,12 @@ app.patch('/api/admin/observations/:id', basicAuth, (req, res) => {
 
   // Whitelist of editable columns plus per-column type-coercion / clamping.
   const body = req.body || {};
-  const clamp = (v, lo, hi) =>
-    v == null || v === '' ? null : Math.max(lo, Math.min(hi, Number(v)));
+  const clamp = (v, lo, hi) => {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(lo, Math.min(hi, n));
+  };
   const str = (v, max = 200) =>
     v == null ? null : String(v).trim().slice(0, max) || null;
   const num = (v) => (v == null || v === '' ? null : Number(v));

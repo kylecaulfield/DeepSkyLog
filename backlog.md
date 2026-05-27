@@ -207,14 +207,14 @@ expansions. Listed roughly by user-visible impact, not effort.
 
 ### Should fix soon
 
-46. **No cache-busting on `/js/*.js`.** Static page `<script type="module"
+46. ✅ **No cache-busting on `/js/*.js`.** Static page `<script type="module"
     src="/js/foo.js">` URLs never change, so when a Docker build ships
     new JS the browser keeps serving the old one until the user does a
     hard refresh. Several "it's still broken" reports in this session
     traced back to this. Fix: stamp `?v=<GIT_SHA>` into the script tags
     server-side at request time, using the `GIT_SHA` build-arg the
     docker workflow already passes.
-47. **`/admin/object.html?id=undefined` link generated for free-form
+47. ✅ **`/admin/object.html?id=undefined` link generated for free-form
     observations.** `admin/observations.js` lines ~93–98 wrap the
     object cell in an anchor whenever `o.object_id || (o.catalog &&
     o.catalog_number)` is truthy, but the href uses `o.object_id`
@@ -222,7 +222,7 @@ expansions. Listed roughly by user-visible impact, not effort.
     `C/2023 A3`) renders `<a href="/admin/object.html?id=undefined">`.
     Either drop the anchor when `o.object_id` is null, or send the
     user to `/admin/observations.html#row-N` instead.
-48. **`clamp()` returns NaN for unparseable numbers.** The helper at
+48. ✅ **`clamp()` returns NaN for unparseable numbers.** The helper at
     line ~2031 reads `Math.max(lo, Math.min(hi, Number(v)))` — if
     `Number(v)` is NaN, the math propagates NaN and we hand it to
     `better-sqlite3`. Hard to hit through the UI (clients always send
@@ -236,7 +236,7 @@ expansions. Listed roughly by user-visible impact, not effort.
     plan early instead of skipping over a dry hour and resuming when
     something rises again. Better: keep stepping forward until
     `sessionEnd`, only break on natural end.
-50. **OpenNGC alias collisions.** `lib/ngc.js` indexes both primary
+50. ✅ **OpenNGC alias collisions.** `lib/ngc.js` indexes both primary
     name and every Common-name alias in a single `Map`, so when two
     catalog entries share a common name (e.g. "Veil Nebula" maps to
     multiple NGCs) only the first one wins. Symptom: typing a popular
@@ -252,7 +252,7 @@ expansions. Listed roughly by user-visible impact, not effort.
     origin via `fetch(..., {credentials: 'include'})`. Fix: require
     a same-origin header, a CSRF token, or switch admin to a session
     cookie with `SameSite=Strict`.
-52. **No rate-limit on successful admin writes.** The per-IP sliding
+52. ✅ **No rate-limit on successful admin writes.** The per-IP sliding
     window in `basicAuth` only counts failures; once authed, a bot
     with the password can spam observations. Add a token bucket on
     write endpoints to make abuse noisy.
