@@ -677,7 +677,7 @@ const SEESTAR_SCOPES = {
   s30:    { name: 'Seestar S30',    max_magnitude: 10.0,
             notes: '30 mm f/5, ~2.1°×1.2° FOV. Sweet spot: wide-field nebulae, bright clusters.' },
   s30pro: { name: 'Seestar S30 Pro', max_magnitude: 10.5,
-            notes: 'S30 FOV with a better sensor + EAF — about half a magnitude deeper.' },
+            notes: 'S30 FOV with a better sensor + EAF — about half a magnitude deeper, and the only Seestar that handles mosaic wide-field Milky Way shots well.' },
 };
 function parseSeestarScope(raw) {
   const k = String(raw || '').toLowerCase().replace(/\s+/g, '');
