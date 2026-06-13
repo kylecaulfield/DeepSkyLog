@@ -27,6 +27,23 @@
 
       <div class="toolbar">
         <label>
+          Date
+          <input id="date-input" type="date" />
+        </label>
+        <label>
+          Time
+          <input id="time-input" type="time" />
+        </label>
+        <label>
+          Telescope
+          <select id="telescope-input">
+            <option value="any">Any</option>
+            <option value="s50">Seestar S50</option>
+            <option value="s30">Seestar S30</option>
+            <option value="s30pro">Seestar S30 Pro</option>
+          </select>
+        </label>
+        <label>
           Latitude
           <input id="lat-input" type="number" step="any" placeholder="51.4769" />
         </label>
@@ -53,6 +70,7 @@
         <span id="status" class="dim" style="margin-left:auto;"></span>
       </div>
 
+      <div id="scope-line" class="dim" style="margin-bottom: 0.25rem;"></div>
       <div id="moon-line" class="dim" style="margin-bottom: 0.25rem;"></div>
       <div id="window-line" class="dim" style="margin-bottom: 0.75rem;"></div>
 
