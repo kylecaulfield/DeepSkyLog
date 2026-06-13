@@ -194,6 +194,21 @@ const MIGRATIONS = [
       ALTER TABLE observations ADD COLUMN sqm REAL;
     `,
   },
+  {
+    id: 14,
+    name: 'reset_milky_way_wide_for_renamed_entries',
+    // The wide-field MW list shipped initially with astrophysics-jargon
+    // names ('Galactic Core (Sgr A* region)', 'Vela SNR', etc.). v2
+    // renamed every row to its canonical 'slew to <target>' form and
+    // dropped the too-southern entries. Re-seed only runs when the row
+    // count is below the new entry count, so existing installs would
+    // keep the old names forever. Wipe the MWWF rows here so the seed
+    // loader inserts the new ones on next boot. Cross-list aliases
+    // re-tick on the next upload.
+    up: `
+      DELETE FROM list_objects WHERE catalog = 'MWWF';
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };
