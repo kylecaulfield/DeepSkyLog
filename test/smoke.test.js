@@ -789,6 +789,30 @@ test('smoke', async (t) => {
     }
   });
 
+  await t.test('Seestar planner: telescope filter caps target magnitude', async () => {
+    const start = new Date('2026-01-15T22:00:00Z').toISOString();
+    // S30 caps at mag 10. Every assigned target with a known magnitude
+    // must respect that; nulls (planets etc.) pass through.
+    const s30 = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80&telescope=s30`,
+    );
+    assert.equal(s30.scope?.key, 's30');
+    assert.equal(s30.scope?.max_magnitude, 10.0);
+    for (const s of s30.slots) {
+      if (!s.target) continue;
+      if (s.target.magnitude != null) {
+        assert.ok(s.target.magnitude <= 10.0,
+          `S30 admitted mag ${s.target.magnitude} on ${s.target.catalog}${s.target.catalog_number}`);
+      }
+    }
+    // Unknown scope falls back to "any" — no filter applied.
+    const fallback = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80&telescope=skywatcher-150p`,
+    );
+    assert.equal(fallback.scope?.key, 'any');
+    assert.equal(fallback.scope?.max_magnitude, null);
+  });
+
   await t.test('Seestar planner returns variable-duration slots in alt window', async () => {
     // Pick a start far from sunrise at the target location so we always
     // get a non-trivial slot list. Start at 2026-01-15 22:00 UTC,

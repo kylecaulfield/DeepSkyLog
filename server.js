@@ -657,6 +657,33 @@ app.get('/api/planner', (req, res) => {
 // least min_alt (default 50°), and at slot end it's no higher than
 // max_alt (default 80°) so the tube doesn't have to swing through
 // zenith. Each target is assigned to at most one slot.
+// Per-scope tuning for the Seestar planner. Magnitude caps are based on
+// what each model can actually pull faint detail out of in a one-night
+// stack at f/5; targets with NULL magnitudes (ephemeris bodies, free-
+// form rows) always pass through regardless of the chosen scope.
+//
+// FOV / aperture context, for the curious:
+//   S50      — 50 mm f/5, 250 mm fl, ~1.3° × 0.7° FOV. Best on
+//              medium-bright DSOs, planets, anything that needs scale.
+//   S30      — 30 mm f/5, 150 mm fl, ~2.1° × 1.2° FOV. Best on wide-
+//              field nebulae and bright star clusters; loses small
+//              compact targets in the bigger pixels.
+//   S30 Pro  — same optics as S30 with a better sensor + EAF; pulls
+//              ~0.5 mag deeper.
+const SEESTAR_SCOPES = {
+  any:    { name: 'Any',            max_magnitude: null },
+  s50:    { name: 'Seestar S50',    max_magnitude: 11.0,
+            notes: '50 mm f/5, ~1.3°×0.7° FOV. Sweet spot: medium-bright DSOs, planets.' },
+  s30:    { name: 'Seestar S30',    max_magnitude: 10.0,
+            notes: '30 mm f/5, ~2.1°×1.2° FOV. Sweet spot: wide-field nebulae, bright clusters.' },
+  s30pro: { name: 'Seestar S30 Pro', max_magnitude: 10.5,
+            notes: 'S30 FOV with a better sensor + EAF — about half a magnitude deeper.' },
+};
+function parseSeestarScope(raw) {
+  const k = String(raw || '').toLowerCase().replace(/\s+/g, '');
+  return SEESTAR_SCOPES[k] ? k : 'any';
+}
+
 app.get('/api/seestar-planner', (req, res) => {
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
@@ -666,6 +693,8 @@ app.get('/api/seestar-planner', (req, res) => {
   const minAlt = Number.isFinite(Number(req.query.min_alt)) ? Number(req.query.min_alt) : 50;
   const maxAlt = Number.isFinite(Number(req.query.max_alt)) ? Number(req.query.max_alt) : 80;
   const includeObserved = req.query.include_observed === '1';
+  const scopeKey = parseSeestarScope(req.query.telescope);
+  const scope = SEESTAR_SCOPES[scopeKey];
   const start = req.query.start ? new Date(req.query.start) : new Date();
   if (Number.isNaN(start.getTime())) {
     return res.status(400).json({ error: 'invalid start time' });
@@ -783,6 +812,11 @@ app.get('/api/seestar-planner', (req, res) => {
     for (const row of rows) {
       if (!includeObserved && row.observed) continue;
       if (assignedIds.has(row.id)) continue;
+      // Telescope cap: drop targets too faint for the chosen scope.
+      // NULL magnitudes (planets, ephemeris, free-form) always pass.
+      if (scope.max_magnitude != null
+          && row.magnitude != null
+          && Number(row.magnitude) > scope.max_magnitude) continue;
       const dur = durationFor(row.object_type);
       const slotEndMs = cursor + dur * 60_000;
       if (slotEndMs > sessionEnd.getTime()) continue;
@@ -838,6 +872,7 @@ app.get('/api/seestar-planner', (req, res) => {
     max_altitude: maxAlt,
     moon: moonPhase(start),
     durations: { ...DEFAULT_DURATIONS, ...userDurations, _default: defaultDur },
+    scope: { key: scopeKey, ...scope },
     slots: plan,
   });
 });

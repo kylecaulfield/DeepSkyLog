@@ -22,6 +22,9 @@ mountDurationPicker(document.getElementById('duration-filter'), () => {
   if (rows.children.length) load();
 });
 
+const dateInput = document.getElementById('date-input');
+const timeInput = document.getElementById('time-input');
+const telescopeInput = document.getElementById('telescope-input');
 const latInput = document.getElementById('lat-input');
 const lonInput = document.getElementById('lon-input');
 const minAltInput = document.getElementById('min-alt-input');
@@ -30,9 +33,31 @@ const includeObserved = document.getElementById('include-observed');
 const locateBtn = document.getElementById('locate-btn');
 const runBtn = document.getElementById('run-btn');
 const status = document.getElementById('status');
+const scopeLine = document.getElementById('scope-line');
 const moonLine = document.getElementById('moon-line');
 const windowLine = document.getElementById('window-line');
 const rows = document.getElementById('rows');
+
+// Default date / time to "now" in the user's local timezone — same
+// pattern the regular planner uses so 11pm-local doesn't roll into
+// the next UTC day. Persist telescope choice in localStorage so it
+// carries between visits.
+const pad = (n) => String(n).padStart(2, '0');
+const nowLocal = new Date();
+dateInput.value = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth() + 1)}-${pad(nowLocal.getDate())}`;
+timeInput.value = `${pad(nowLocal.getHours())}:${pad(nowLocal.getMinutes())}`;
+try {
+  const storedScope = localStorage.getItem('deepskylog.seestar_scope') || 'any';
+  if ([...telescopeInput.options].some((o) => o.value === storedScope)) {
+    telescopeInput.value = storedScope;
+  }
+} catch {}
+telescopeInput.addEventListener('change', () => {
+  try { localStorage.setItem('deepskylog.seestar_scope', telescopeInput.value); } catch {}
+  load();
+});
+dateInput.addEventListener('change', () => load());
+timeInput.addEventListener('change', () => load());
 
 const STORE_KEY = 'deepskylog.location';
 let stored = null;
@@ -67,11 +92,19 @@ async function load() {
 
   status.textContent = 'Planning…';
   rows.innerHTML = '';
+  // Combine date + time as local — the resulting Date is the correct
+  // UTC instant. Falls back to "now" if either input is empty (e.g.
+  // user cleared the date and tapped Plan).
+  let startISO = new Date().toISOString();
+  if (dateInput.value && timeInput.value) {
+    const candidate = new Date(`${dateInput.value}T${timeInput.value}`);
+    if (!Number.isNaN(candidate.getTime())) startISO = candidate.toISOString();
+  }
   const params = new URLSearchParams({
     lat: String(lat), lon: String(lon),
     min_alt: String(minAlt), max_alt: String(maxAlt),
-    // Start is always "now" — that's the whole point of the page.
-    start: new Date().toISOString(),
+    start: startISO,
+    telescope: telescopeInput.value || 'any',
   });
   if (includeObserved.checked) params.set('include_observed', '1');
   const catParam = selectionToParam(getCatalogSelection());
@@ -90,6 +123,17 @@ async function load() {
   }
 
   const moonPct = (data.moon.illumination * 100).toFixed(0);
+  // Scope summary: name + brief sweet-spot blurb + magnitude cap so
+  // the user knows which targets are being filtered out.
+  if (data.scope) {
+    const capBit = data.scope.max_magnitude != null
+      ? ` · cap ≤ mag ${data.scope.max_magnitude.toFixed(1)}`
+      : ' · no magnitude filter';
+    const notesBit = data.scope.notes ? ` · ${data.scope.notes}` : '';
+    scopeLine.textContent = `Scope: ${data.scope.name}${capBit}${notesBit}`;
+  } else {
+    scopeLine.textContent = '';
+  }
   moonLine.textContent = `Moon at start: ${data.moon.name} (${moonPct}% illuminated)`;
 
   const start = new Date(data.window.start);
