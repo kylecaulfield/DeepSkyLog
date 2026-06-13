@@ -10,6 +10,7 @@ const { AL_GLOBULARS } = require('./seed/al_globulars');
 const { SEESTAR_PLANETARY_NEBULAE } = require('./seed/planetary_nebulae');
 const { SEESTAR_OPEN_CLUSTERS } = require('./seed/open_clusters');
 const { SHARPLESS_BRIGHT } = require('./seed/sharpless_bright');
+const { MILKY_WAY_WIDE } = require('./seed/milky_way');
 const { SOLAR_SYSTEM } = require('./seed/solar_system');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -158,6 +159,7 @@ function seedCatalogs(db) {
     { slug: 'open-clusters-s50', name: 'Open Clusters for Smart Scopes', description: 'Bright open clusters that fit comfortably in a Seestar S50 / S30 field of view.', entries: SEESTAR_OPEN_CLUSTERS },
     { slug: 'planetary-nebulae-s50', name: 'Planetary Nebulae for Smart Scopes', description: 'Brighter planetary nebulae detectable with a Seestar S50 / S30.', entries: SEESTAR_PLANETARY_NEBULAE },
     { slug: 'sharpless-bright', name: 'Sharpless 2 (Bright Subset)', description: "S50-friendly large emission nebulae from Stewart Sharpless's 1959 catalog.",   entries: SHARPLESS_BRIGHT },
+    { slug: 'milky-way-wide',   name: 'Milky Way Wide-Field',     description: 'Big mosaic-style starscapes the Seestar S30 / S30 Pro can frame: galactic core, Cygnus rift, Heart+Soul, Barnard\'s Loop and friends.', entries: MILKY_WAY_WIDE },
     { slug: 'solar-system',     name: 'Solar System',             description: 'The Sun, the Moon and the eight major planets — positions are computed live from a low-precision Schlyter ephemeris.', entries: SOLAR_SYSTEM },
   ];
 
