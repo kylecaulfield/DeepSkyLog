@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; Sky Atlas</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      .atlas-shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        gap: 1rem;
+        align-items: stretch;
+      }
+      @media (max-width: 900px) {
+        .atlas-shell { grid-template-columns: 1fr; }
+      }
+      #sky {
+        height: calc(100vh - 220px);
+        min-height: 480px;
+        width: 100%;
+        background: #000;
+        border-radius: 0 14px 0 14px;
+        border: 1px solid var(--accent);
+        border-left: 10px solid var(--accent);
+        position: relative;
+        overflow: hidden;
+        cursor: grab;
+      }
+      #sky.dragging { cursor: grabbing; }
+      #sky canvas { display: block; }
+      #sky-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(8, 8, 12, 0.92);
+        border: 1px solid var(--accent);
+        color: var(--fg);
+        padding: 0.35rem 0.55rem;
+        font-size: 0.8rem;
+        border-radius: 4px;
+        max-width: 240px;
+        display: none;
+        z-index: 2;
+      }
+      .atlas-side {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+        font-size: 0.92rem;
+      }
+      .atlas-side .panel {
+        border: 1px solid var(--accent);
+        border-radius: 0 10px 0 10px;
+        padding: 0.7rem 0.85rem;
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .atlas-side .panel h3 {
+        margin: 0 0 0.4rem;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--peach);
+      }
+      .atlas-side .counts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.3rem 0.6rem;
+        font-variant-numeric: tabular-nums;
+      }
+      .atlas-side .counts .num { color: var(--peach); font-weight: 600; }
+      .atlas-side .layers label {
+        display: flex; align-items: center; gap: 0.5rem;
+        cursor: pointer; user-select: none;
+      }
+      .atlas-side .layers label + label { margin-top: 0.35rem; }
+      .atlas-side .targets {
+        display: flex; flex-direction: column; gap: 0.3rem;
+        max-height: 38vh; overflow-y: auto;
+      }
+      .atlas-side .targets a {
+        text-decoration: none;
+        color: var(--fg);
+        font-size: 0.86rem;
+        padding: 0.2rem 0.3rem;
+        border-radius: 3px;
+      }
+      .atlas-side .targets a:hover { background: rgba(255, 255, 255, 0.06); color: var(--peach); }
+      .atlas-side .hint { color: var(--fg-dim); font-size: 0.82rem; }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/" data-nav="home">Dashboard</a>
+        <a href="/tonight.html" data-nav="tonight">Tonight</a>
+        <a href="/planner.html" data-nav="planner">Planner</a>
+        <a href="/seestar.html" data-nav="seestar">Seestar planner</a>
+        <a href="/gallery.html" data-nav="gallery">Gallery</a>
+        <a href="/atlas.html" data-nav="atlas">Atlas</a>
+        <a href="/map.html" data-nav="map">Map</a>
+      </nav>
+    </header>
+    <main>
+      <h1 class="page-title">Sky atlas</h1>
+      <p class="page-subtitle" id="atlas-subtitle">
+        Drag to rotate, scroll to zoom &mdash; your plate-solved frames are
+        placed on a celestial globe at their solved coordinates.
+      </p>
+      <div class="atlas-shell">
+        <div id="sky" role="region" aria-label="3D celestial sphere">
+          <div id="sky-tooltip"></div>
+        </div>
+        <aside class="atlas-side">
+          <div class="panel">
+            <h3>Sky coverage</h3>
+            <div class="counts" id="atlas-counts">
+              <span>Solved frames</span><span class="num" id="cnt-solved">—</span>
+              <span>Unsolved</span><span class="num" id="cnt-unsolved">—</span>
+              <span>Solving now</span><span class="num" id="cnt-pending">—</span>
+              <span>Failed</span><span class="num" id="cnt-failed">—</span>
+            </div>
+            <p class="hint" id="atlas-hint" style="margin-top: 0.5rem;">
+              Frames without a plate solve sit on the map but not the globe.
+              Run them through Astrometry.net from the admin observation page
+              to add them here.
+            </p>
+          </div>
+          <div class="panel layers">
+            <h3>Layers</h3>
+            <label><input type="checkbox" id="layer-tiles" checked /> Observation tiles</label>
+            <label><input type="checkbox" id="layer-grid" checked /> RA / Dec grid</label>
+            <label><input type="checkbox" id="layer-stars" checked /> Reference stars</label>
+            <label><input type="checkbox" id="layer-ecliptic" /> Ecliptic</label>
+          </div>
+          <div class="panel">
+            <h3>Tiles</h3>
+            <div class="targets" id="atlas-targets">
+              <span class="hint">Loading&hellip;</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </main>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="/js/atlas.js"></script>
+    <script type="module" src="/js/site-name.js"></script>
+  </body>
+</html>

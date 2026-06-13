@@ -135,6 +135,17 @@ test('smoke', async (t) => {
     assert.ok(total > 400, `expected >400 objects total, got ${total}`);
   });
 
+  await t.test('atlas endpoint returns counts and solved array', async () => {
+    const res = await fetch(`${baseUrl}/api/observations/atlas`);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(Array.isArray(data.solved), 'solved is an array');
+    assert.ok(data.counts && typeof data.counts === 'object', 'counts present');
+    for (const key of ['solved', 'unsolved', 'pending', 'failed']) {
+      assert.equal(typeof data.counts[key], 'number', `counts.${key} is a number`);
+    }
+  });
+
   await t.test('admin auth: 401 without creds, 200 with', async () => {
     const noAuth = await fetch(`${baseUrl}/api/admin/config`);
     assert.equal(noAuth.status, 401);
