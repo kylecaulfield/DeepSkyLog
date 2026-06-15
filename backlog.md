@@ -81,6 +81,13 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   rotated by `solved_orientation_deg`. RA/Dec grid + 50 brightest stars
   + procedural ambient star field for orientation. Hover for tooltip,
   click to open the observation detail page.
+- ✅ **Catalog cross-reference** — `/admin/crossref.html` groups every
+  catalog entry by the physical sky target it names (connected components
+  of the alias graph), so one target shows all its designations across
+  every list (M42 = NGC1976 = Sh2-275 …). Flags unlinked entries within a
+  tunable arc-minute radius as "possible matches" with a one-click link
+  action that adds the missing aliases. Backed by `GET /api/admin/crossref`
+  and `POST /api/admin/crossref/link`.
 
 ## Future ideas
 

@@ -697,6 +697,68 @@ test('smoke', async (t) => {
     });
   });
 
+  await t.test('catalog cross-reference groups multi-name targets', async () => {
+    const norm = (s) => String(s).replace(/\s+/g, '').toUpperCase();
+    const xref = await fetchJsonAuthed('/api/admin/crossref');
+    assert.ok(Array.isArray(xref.groups), 'groups is an array');
+    assert.ok(Array.isArray(xref.suggestions), 'suggestions is an array');
+    for (const key of ['targets', 'multi', 'entries', 'suggestions']) {
+      assert.equal(typeof xref.counts[key], 'number', `counts.${key} numeric`);
+    }
+
+    // M42 is named M42 (Messier), NGC1976 (via Sh2-275 / MWWF aliases) and
+    // sits in more than one list — it should land in a single grouped target.
+    const orion = xref.groups.find((g) => {
+      const tokens = new Set(g.designations.map(norm));
+      return tokens.has('M42') && tokens.has('NGC1976');
+    });
+    assert.ok(orion, 'M42 and NGC1976 share a cross-reference group');
+    assert.ok(orion.multi, 'Orion group flagged multi-name');
+    const slugs = new Set(orion.members.map((m) => m.list_slug));
+    assert.ok(slugs.size >= 2, `Orion group spans >=2 lists, got ${slugs.size}`);
+  });
+
+  await t.test('cross-reference link joins two entries and rejects singletons', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const messier = await fetchJsonAuthed('/api/lists/messier');
+    const m1 = messier.objects.find((o) => o.catalog_number === '1');
+    const m2 = messier.objects.find((o) => o.catalog_number === '2');
+    assert.ok(m1 && m2);
+
+    // Fewer than two ids is a 400.
+    const bad = await fetch(`${baseUrl}/api/admin/crossref/link`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [m1.id] }),
+    });
+    assert.equal(bad.status, 400);
+
+    const res = await fetch(`${baseUrl}/api/admin/crossref/link`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [m1.id, m2.id] }),
+    });
+    assert.equal(res.status, 200);
+    const out = await res.json();
+    const byId = Object.fromEntries(out.updated.map((u) => [u.id, u.aliases]));
+    assert.ok(byId[m1.id].includes('M2'), 'M1 now aliases M2');
+    assert.ok(byId[m2.id].includes('M1'), 'M2 now aliases M1');
+
+    // They now share a cross-reference group.
+    const xref = await fetchJsonAuthed('/api/admin/crossref');
+    const joined = xref.groups.find((g) => {
+      const ids = new Set(g.members.map((m) => m.id));
+      return ids.has(m1.id) && ids.has(m2.id);
+    });
+    assert.ok(joined, 'M1 and M2 grouped after linking');
+
+    // Restore so later assertions aren't surprised.
+    for (const id of [m1.id, m2.id]) {
+      await fetch(`${baseUrl}/api/admin/objects/${id}`, {
+        method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aliases: [] }),
+      });
+    }
+  });
+
   await t.test('dark-moon iCalendar feed has VEVENTs over the next year', async () => {
     const res = await fetch(`${baseUrl}/api/calendar/dark-moon.ics`);
     assert.equal(res.status, 200);
