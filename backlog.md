@@ -93,7 +93,9 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   schedule per scope for the night. Backend allocates most-restrictive cap
   first (shared assigned-target set) so a deep S50 keeps the faint targets
   only it can reach; `fleet=s30:1,s30pro:2` query param, with the single
-  `telescope` path kept for back-compat.
+  `telescope` path kept for back-compat. Sessions auto-start 30 minutes
+  after sunset for the location (never before the requested start), and
+  Milky Way wide-field (MWWF) mosaics are scheduled only on the S30 Pro.
 - ✅ **Sortable table headers everywhere** — shared `makeTableSortable()`
   helper in `common.js` + auto-init `js/sortable.js` make every data table
   click-to-sort (list, tonight, seestar, admin observations / equipment /
