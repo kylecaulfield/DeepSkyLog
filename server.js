@@ -971,6 +971,51 @@ app.get('/api/observations/map', (_req, res) => {
   res.json(rows);
 });
 
+// Feeds the /atlas.html celestial-globe viewer. Returns every observation
+// whose plate solve gave us a sky position + radius, plus a count of the
+// solved-but-stalled, unsolved-and-queueable rows so the sidebar can nudge
+// the admin to run more solves.
+app.get('/api/observations/atlas', (_req, res) => {
+  const solved = db
+    .prepare(
+      `SELECT o.id, o.title, o.observed_at, o.thumbnail_path, o.image_path,
+              o.solved_ra_hours, o.solved_dec_degrees,
+              o.solved_radius_deg, o.solved_orientation_deg, o.solved_pixscale,
+              o.telescope, o.object_id,
+              lo.catalog AS object_catalog, lo.catalog_number AS object_catalog_number,
+              lo.name AS object_name, lo.object_type
+         FROM observations o
+         LEFT JOIN list_objects lo ON lo.id = o.object_id
+         WHERE o.solved_ra_hours IS NOT NULL
+           AND o.solved_dec_degrees IS NOT NULL
+           AND o.solved_radius_deg IS NOT NULL
+         ORDER BY COALESCE(o.observed_at, o.created_at) DESC`,
+    )
+    .all();
+
+  const counts = db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN solver_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN solver_status = 'failure' THEN 1 ELSE 0 END) AS failed,
+         SUM(CASE WHEN image_path IS NOT NULL
+                   AND (solver_status IS NULL OR solver_status = 'idle')
+                   AND solved_ra_hours IS NULL THEN 1 ELSE 0 END) AS unsolved
+         FROM observations`,
+    )
+    .get();
+
+  res.json({
+    solved,
+    counts: {
+      solved: solved.length,
+      pending: counts.pending || 0,
+      failed: counts.failed || 0,
+      unsolved: counts.unsolved || 0,
+    },
+  });
+});
+
 app.get('/api/observations.csv', (_req, res) => {
   const rows = db
     .prepare(

@@ -75,6 +75,12 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   exercises every endpoint; runs in ~1 s.
 - ✅ **CI** — `.github/workflows/test.yml` runs the smoke suite on every
   push and PR.
+- ✅ **Sky atlas** — `/atlas.html` renders an inside-out 3D celestial
+  globe (Three.js) where every plate-solved observation is placed as a
+  textured tile at its solved RA/Dec, sized by `solved_radius_deg` and
+  rotated by `solved_orientation_deg`. RA/Dec grid + 50 brightest stars
+  + procedural ambient star field for orientation. Hover for tooltip,
+  click to open the observation detail page.
 
 ## Future ideas
 
