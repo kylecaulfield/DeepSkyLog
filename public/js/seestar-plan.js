@@ -105,7 +105,15 @@ function fmtTime(iso) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// Generation token used to discard stale fetch responses. Multiple load()s
+// can run concurrently (auto-load on init + filter-mount Promises resolving
+// + count change events all fire one each); without this, each call's
+// post-fetch append would stack on top of earlier calls' appends, producing
+// duplicate schedule sections.
+let loadGen = 0;
+
 async function load() {
+  const myGen = ++loadGen;
   const lat = Number(latInput.value);
   const lon = Number(lonInput.value);
   const minAlt = Number(minAltInput.value);
@@ -151,9 +159,19 @@ async function load() {
   try {
     data = await fetchJson(`/api/seestar-planner?${params}`);
   } catch (err) {
+    if (myGen !== loadGen) return;
     status.textContent = `Failed: ${err.message}`;
     return;
   }
+
+  // Newer load() superseded us — let it do the painting.
+  if (myGen !== loadGen) return;
+
+  // Clear once more, in case an earlier (now-superseded) load() resolved
+  // and appended before us. Belt-and-braces: the gen check above already
+  // covers it, but this keeps the DOM authoritative even if a future edit
+  // reintroduces the race.
+  schedules.innerHTML = '';
 
   const moonPct = (data.moon.illumination * 100).toFixed(0);
   moonLine.textContent = `Moon at start: ${data.moon.name} (${moonPct}% illuminated)`;
