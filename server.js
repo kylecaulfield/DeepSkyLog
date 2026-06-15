@@ -1997,6 +1997,185 @@ app.get('/api/admin/objects', basicAuth, (req, res) => {
   res.json(rows);
 });
 
+// Angular separation (degrees) between two sky points. RA in decimal hours,
+// Dec in decimal degrees. Used by the cross-reference tool to spot catalog
+// entries that sit on the same patch of sky but aren't alias-linked yet.
+function angularSepDeg(ra1h, dec1, ra2h, dec2) {
+  const D2R = Math.PI / 180;
+  const r1 = ra1h * 15 * D2R;
+  const r2 = ra2h * 15 * D2R;
+  const d1 = dec1 * D2R;
+  const d2 = dec2 * D2R;
+  let c = Math.sin(d1) * Math.sin(d2) + Math.cos(d1) * Math.cos(d2) * Math.cos(r1 - r2);
+  c = Math.max(-1, Math.min(1, c));
+  return Math.acos(c) / D2R;
+}
+
+// Cross-reference tool: group every catalog entry into the physical sky
+// target it refers to. Two entries belong to the same target when they share
+// a designation through the alias graph (e.g. M42 ⇄ NGC1976 ⇄ Sh2-275). We
+// also surface pairs of *unlinked* groups that sit within `tol` degrees of
+// each other, so the admin can review and link likely-same targets that the
+// seed aliases missed.
+app.get('/api/admin/crossref', basicAuth, (req, res) => {
+  const tol = Math.min(Math.max(Number(req.query.tol) || 0.1, 0), 2); // degrees
+  const rows = db
+    .prepare(
+      `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
+              lo.ra_hours, lo.dec_degrees, lo.magnitude, lo.aliases,
+              l.slug AS list_slug, l.name AS list_name
+         FROM list_objects lo JOIN lists l ON l.id = lo.list_id`,
+    )
+    .all();
+
+  const graph = buildAliasGraph(db);
+
+  // Canonical group key for a token = the alphabetically-first token in its
+  // connected component, so the same group keys out identically every call.
+  const repFor = (token) => {
+    const t = normaliseToken(token);
+    const set = graph.get(t);
+    if (!set) return t;
+    let min = null;
+    for (const x of set) if (min === null || x < min) min = x;
+    return min;
+  };
+
+  const groups = new Map();
+  for (const row of rows) {
+    const token = normaliseToken(`${row.catalog}${row.catalog_number}`);
+    const rep = repFor(token);
+    if (!groups.has(rep)) {
+      groups.set(rep, {
+        key: rep,
+        name: null,
+        ra_hours: null,
+        dec_degrees: null,
+        members: [],
+        designations: new Map(), // normalised token -> display string
+        lists: new Map(),        // slug -> name
+      });
+    }
+    const g = groups.get(rep);
+    const aliases = parseAliases(row.aliases);
+    g.members.push({
+      id: row.id,
+      catalog: row.catalog,
+      catalog_number: row.catalog_number,
+      name: row.name,
+      object_type: row.object_type,
+      ra_hours: row.ra_hours,
+      dec_degrees: row.dec_degrees,
+      magnitude: row.magnitude,
+      aliases,
+      list_slug: row.list_slug,
+      list_name: row.list_name,
+    });
+    g.designations.set(token, `${row.catalog} ${row.catalog_number}`);
+    for (const a of aliases) {
+      const at = normaliseToken(a);
+      if (at && !g.designations.has(at)) g.designations.set(at, a);
+    }
+    g.lists.set(row.list_slug, row.list_name);
+    if (!g.name && row.name) g.name = row.name;
+    if (g.ra_hours == null && row.ra_hours != null) {
+      g.ra_hours = row.ra_hours;
+      g.dec_degrees = row.dec_degrees;
+    }
+  }
+
+  const groupList = [...groups.values()].map((g) => ({
+    key: g.key,
+    name: g.name,
+    ra_hours: g.ra_hours,
+    dec_degrees: g.dec_degrees,
+    designations: [...g.designations.values()],
+    lists: [...g.lists.entries()].map(([slug, name]) => ({ slug, name })),
+    members: g.members,
+    multi: g.lists.size > 1 || g.designations.size > 1,
+  }));
+
+  // Suggestions: distinct located groups whose representative coords sit
+  // within `tol` degrees. O(n²) over ~500 groups is trivial and runs once
+  // per page load.
+  const located = groupList.filter((g) => g.ra_hours != null && g.dec_degrees != null);
+  const suggestions = [];
+  for (let i = 0; i < located.length; i++) {
+    for (let j = i + 1; j < located.length; j++) {
+      const a = located[i];
+      const b = located[j];
+      const sep = angularSepDeg(a.ra_hours, a.dec_degrees, b.ra_hours, b.dec_degrees);
+      if (sep <= tol) {
+        suggestions.push({
+          separation_arcmin: Math.round(sep * 600) / 10,
+          a: { key: a.key, name: a.name, designations: a.designations, ids: a.members.map((m) => m.id) },
+          b: { key: b.key, name: b.name, designations: b.designations, ids: b.members.map((m) => m.id) },
+        });
+      }
+    }
+  }
+  suggestions.sort((x, y) => x.separation_arcmin - y.separation_arcmin);
+
+  groupList.sort((a, b) => {
+    if (a.multi !== b.multi) return a.multi ? -1 : 1;
+    return String(a.name || a.key).localeCompare(String(b.name || b.key));
+  });
+
+  res.json({
+    tol,
+    counts: {
+      targets: groupList.length,
+      multi: groupList.filter((g) => g.multi).length,
+      entries: rows.length,
+      suggestions: suggestions.length,
+    },
+    groups: groupList,
+    suggestions: suggestions.slice(0, 200),
+  });
+});
+
+// Link two-or-more catalog entries as the same physical target by adding each
+// one's primary designation to the others' alias lists. The alias graph
+// computes transitive closure on read, so connecting A→B where B already
+// aliases C pulls C into the group too. Applies to future uploads; existing
+// completions aren't rewritten.
+app.post('/api/admin/crossref/link', basicAuth, (req, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map(Number).filter(Number.isFinite)
+    : [];
+  const unique = [...new Set(ids)];
+  if (unique.length < 2) {
+    return res.status(400).json({ error: 'Provide at least two object ids to link' });
+  }
+  const placeholders = unique.map(() => '?').join(',');
+  const objs = db
+    .prepare(
+      `SELECT id, catalog, catalog_number, aliases FROM list_objects WHERE id IN (${placeholders})`,
+    )
+    .all(...unique);
+  if (objs.length !== unique.length) {
+    return res.status(404).json({ error: 'One or more objects not found' });
+  }
+
+  const tokenOf = (o) => normaliseToken(`${o.catalog}${o.catalog_number}`);
+  const allTokens = objs.map(tokenOf);
+  const update = db.prepare('UPDATE list_objects SET aliases = ? WHERE id = ?');
+  const updated = [];
+  const tx = db.transaction(() => {
+    for (const o of objs) {
+      const self = tokenOf(o);
+      const merged = new Set(parseAliases(o.aliases).map(normaliseToken).filter(Boolean));
+      for (const t of allTokens) if (t && t !== self) merged.add(t);
+      const arr = [...merged];
+      update.run(arr.length ? JSON.stringify(arr) : null, o.id);
+      updated.push({ id: o.id, aliases: arr });
+    }
+  });
+  tx();
+
+  res.json({ linked: unique, updated });
+});
+
 app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
 

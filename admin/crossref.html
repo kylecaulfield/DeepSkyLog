@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSkyLog &mdash; Catalog cross-reference</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/admin/admin.css" />
+    <style>
+      .xref-toolbar {
+        display: flex; gap: 0.75rem; align-items: flex-end;
+        flex-wrap: wrap; margin-bottom: 1rem;
+      }
+      .xref-toolbar label { display: flex; flex-direction: column; gap: 0.25rem; }
+      .xref-toolbar .dim { font-size: 0.8rem; }
+      .xref-toolbar input[type="text"], .xref-toolbar input[type="number"] {
+        background: #000; color: var(--fg); border: 1px solid var(--accent);
+        border-radius: 6px; padding: 0.45rem 0.6rem; font: inherit;
+      }
+      .xref-toolbar .check { flex-direction: row; align-items: center; gap: 0.4rem; }
+
+      .xref-group {
+        border: 1px solid var(--accent);
+        border-left: 8px solid var(--accent-2);
+        border-radius: 0 12px 0 12px;
+        background: #0c0c0c;
+        padding: 0.8rem 1rem;
+        margin-bottom: 0.7rem;
+      }
+      .xref-group h3 { margin: 0 0 0.35rem; color: var(--peach); font-size: 1.05rem; }
+      .xref-group .coord { color: var(--fg-dim); font-size: 0.8rem; font-weight: 400; margin-left: 0.5rem; }
+      .desig-row { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.35rem 0; }
+      .desig {
+        font-family: var(--condensed); letter-spacing: 0.04em;
+        background: #1a1208; border: 1px solid var(--accent);
+        border-radius: var(--pill); padding: 0.12rem 0.6rem; font-size: 0.82rem;
+        color: var(--lcars-cream);
+      }
+      .list-badges { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.3rem; }
+      .list-badge {
+        font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
+        background: var(--lcars-blue); color: #000; border-radius: var(--pill);
+        padding: 0.1rem 0.55rem; font-weight: 700; font-family: var(--condensed);
+      }
+      .xref-members { margin-top: 0.5rem; display: grid; gap: 0.2rem; }
+      .xref-member { font-size: 0.85rem; color: var(--fg-dim); }
+      .xref-member a { color: var(--accent); text-decoration: none; }
+      .xref-member a:hover { color: var(--peach); }
+
+      .sugg {
+        border: 1px solid var(--warn);
+        border-left: 8px solid var(--warn);
+        border-radius: 0 12px 0 12px;
+        background: #150f05; padding: 0.7rem 1rem; margin-bottom: 0.6rem;
+        display: flex; justify-content: space-between; align-items: center;
+        gap: 1rem; flex-wrap: wrap;
+      }
+      .sugg .pair { font-size: 0.9rem; }
+      .sugg .sep { color: var(--warn); font-weight: 700; }
+      .sugg-status { font-size: 0.82rem; color: var(--fg-dim); }
+      .empty-note { color: var(--fg-dim); padding: 0.5rem 0; }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DeepSkyLog · Admin</span>
+      </div>
+      <nav class="site-nav">
+        <a href="/">Public site</a>
+        <a href="/admin/">Dashboard</a>
+        <a href="/admin/observations.html">Observations</a>
+        <a href="/admin/crossref.html" class="active">Cross-reference</a>
+        <a href="/admin/equipment.html">Equipment</a>
+        <a href="/admin/upload.html">Upload</a>
+      </nav>
+    </header>
+    <main>
+      <div class="dash-header">
+        <div>
+          <h1 class="page-title">Catalog cross-reference</h1>
+          <p class="page-subtitle">
+            Every catalog entry grouped by the physical sky target it names.
+            One target, many designations &mdash; review the matches and link
+            any that the seed aliases missed.
+          </p>
+        </div>
+      </div>
+
+      <section class="section">
+        <div id="xref-counts" class="stats-grid">
+          <div class="stat"><span class="stat-label">Targets</span><span class="stat-value" id="cnt-targets">—</span></div>
+          <div class="stat"><span class="stat-label">Multi-name</span><span class="stat-value" id="cnt-multi">—</span></div>
+          <div class="stat"><span class="stat-label">Catalog entries</span><span class="stat-value" id="cnt-entries">—</span></div>
+          <div class="stat"><span class="stat-label">Unlinked matches</span><span class="stat-value" id="cnt-sugg">—</span></div>
+        </div>
+      </section>
+
+      <section class="section" id="suggestions-section" hidden>
+        <h2>Possible unlinked matches</h2>
+        <p class="dim" style="margin-top:-0.4rem;">
+          These targets sit within the search radius but aren't alias-linked.
+          Linking adds each one's designation to the other so future uploads
+          tick both lists.
+        </p>
+        <div id="suggestions"></div>
+      </section>
+
+      <section class="section">
+        <h2>Targets</h2>
+        <div class="xref-toolbar">
+          <label>
+            <span class="dim">Filter by name or designation</span>
+            <input type="text" id="filter" placeholder="e.g. Orion, M42, NGC 1976" autocomplete="off" />
+          </label>
+          <label>
+            <span class="dim">Match radius (arc-min)</span>
+            <input type="number" id="tol" min="0" max="120" step="0.5" value="6" style="width:7rem;" />
+          </label>
+          <label class="check">
+            <input type="checkbox" id="multi-only" checked />
+            <span class="dim">Only multi-name targets</span>
+          </label>
+        </div>
+        <div id="groups"><p class="empty-note">Loading&hellip;</p></div>
+      </section>
+    </main>
+    <script type="module" src="/admin/crossref.js"></script>
+    <script type="module" src="/admin/version.js"></script>
+    <script type="module" src="/js/site-name.js"></script>
+  </body>
+</html>
