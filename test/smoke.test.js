@@ -967,6 +967,42 @@ test('smoke', async (t) => {
     assert.equal(single.scopes.length, 1);
   });
 
+  await t.test('Seestar session starts 30 min after sunset', async () => {
+    // Request a daytime start; the planner should push the session start to
+    // exactly 30 minutes after that evening's sunset.
+    const day = new Date('2026-01-15T12:00:00Z').toISOString();
+    const data = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(day)}&min_alt=20&max_alt=85`,
+    );
+    assert.ok(data.sunset, 'sunset computed');
+    assert.ok(data.sunrise, 'sunrise computed');
+    const sunset = new Date(data.sunset).getTime();
+    const winStart = new Date(data.window.start).getTime();
+    assert.equal(winStart - sunset, 30 * 60_000, 'window starts 30 min after sunset');
+    // The dusk start is later than the (daytime) requested start.
+    assert.ok(winStart > new Date(data.requested_start).getTime());
+  });
+
+  await t.test('Milky Way wide-field targets are S30 Pro only', async () => {
+    const start = new Date('2026-07-15T20:00:00Z').toISOString();
+    const q = (scope) =>
+      `/api/seestar-planner?lat=40&lon=-100&start=${encodeURIComponent(start)}`
+      + `&min_alt=15&max_alt=89&include_observed=1&lists=milky-way-wide&fleet=${scope}:1`;
+
+    const pro = await fetchJsonAuthed(q('s30pro'));
+    const proSlots = pro.scopes[0].slots;
+    assert.ok(proSlots.length > 0, 'S30 Pro schedules wide-field targets');
+    for (const s of proSlots) {
+      assert.equal(s.target.catalog, 'MWWF', 'S30 Pro slot is a wide-field target');
+    }
+
+    for (const scope of ['s30', 's50', 'any']) {
+      const other = await fetchJsonAuthed(q(scope));
+      assert.equal(other.scopes[0].slots.length, 0,
+        `${scope} must not schedule wide-field MWWF targets`);
+    }
+  });
+
   await t.test('NGC fallback resolves common designations', async () => {
     const res = await fetch(`${baseUrl}/api/admin/objects/lookup?q=NGC7000`, {
       headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },

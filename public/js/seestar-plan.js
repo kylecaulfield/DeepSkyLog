@@ -158,12 +158,19 @@ async function load() {
   const moonPct = (data.moon.illumination * 100).toFixed(0);
   moonLine.textContent = `Moon at start: ${data.moon.name} (${moonPct}% illuminated)`;
 
+  const hm = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const start = new Date(data.window.start);
   const end = new Date(data.window.end);
   const sunrise = data.sunrise ? new Date(data.sunrise) : null;
-  windowLine.textContent = sunrise
-    ? `Session: ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (sunrise ${sunrise.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`
-    : `Session: ${start.toLocaleString()} → ${end.toLocaleString()} (sun never sets in this window)`;
+  const sunset = data.sunset ? new Date(data.sunset) : null;
+  if (sunrise) {
+    const sunsetBit = sunset ? `sunset ${hm(sunset)} · ` : '';
+    windowLine.textContent =
+      `Session: ${hm(start)} – ${hm(end)} · ${sunsetBit}starts 30 min after sunset · sunrise ${hm(sunrise)}`;
+  } else {
+    windowLine.textContent =
+      `Session: ${start.toLocaleString()} → ${end.toLocaleString()} (sun never sets in this window)`;
+  }
 
   const scopes = data.scopes || (data.scope ? [{ ...data.scope, label: data.scope.name, slots: data.slots }] : []);
   const totalTargets = scopes.reduce((acc, s) => acc + s.slots.length, 0);

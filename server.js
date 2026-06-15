@@ -744,9 +744,41 @@ app.get('/api/seestar-planner', (req, res) => {
     }
     prev = cur;
   }
+  // Find the sunset that opens this night — the most recent time the sun
+  // dropped below the horizon before that sunrise. Walk backward from
+  // sunrise hour-by-hour: going back in time the sun is below the horizon
+  // (night) until, at sunset, it was above. Refine to the nearest minute.
+  let sunset = null;
+  if (sunrise) {
+    let later = sunAltAt(new Date(sunrise.getTime() - 60_000)); // just pre-sunrise: night
+    for (let h = 1; h <= 36; h++) {
+      const t = new Date(sunrise.getTime() - h * 3_600_000);
+      const cur = sunAltAt(t);
+      if (cur >= 0 && later < 0) {
+        let lo = t;                                  // daytime (alt ≥ 0)
+        let hi = new Date(t.getTime() + 3_600_000);  // night (alt < 0)
+        for (let i = 0; i < 60; i++) {
+          const mid = new Date((lo.getTime() + hi.getTime()) / 2);
+          if (sunAltAt(mid) >= 0) lo = mid; else hi = mid;
+        }
+        sunset = hi;
+        break;
+      }
+      later = cur;
+    }
+  }
+
+  // Sessions begin 30 minutes after sunset so the sky has darkened, but
+  // never before the caller's requested start (so planning at 1 a.m. starts
+  // from 1 a.m., not back at dusk).
+  const duskStart = sunset ? new Date(sunset.getTime() + 30 * 60_000) : null;
+  const sessionStart = duskStart && duskStart.getTime() > start.getTime()
+    ? duskStart
+    : start;
+
   const sessionEnd = sunrise
     ? new Date(sunrise.getTime() - 3_600_000)
-    : new Date(start.getTime() + 12 * 3_600_000);
+    : new Date(sessionStart.getTime() + 12 * 3_600_000);
 
   // Per-object-type recommended imaging durations (minutes). The defaults
   // are based on Seestar community conventions for f/4-5 smart-scope
@@ -823,9 +855,16 @@ app.get('/api/seestar-planner', (req, res) => {
   // already in `assignedIds` (shared across scopes so a fleet never
   // double-books a target), respects the scope's magnitude cap, and marks
   // each pick as assigned. Returns the scope's filled slots in time order.
+  // Milky Way wide-field mosaics (the MWWF / milky-way-wide list) need the
+  // S30 Pro's sensor + EAF — no other Seestar frames them well, so only the
+  // S30 Pro is allowed to pick them up.
+  const isWideField = (row) =>
+    row.catalog === 'MWWF' || row.list_slug === 'milky-way-wide';
+
   function planForScope(scopeDef, assignedIds) {
+    const wideFieldOK = scopeDef === SEESTAR_SCOPES.s30pro;
     const plan = [];
-    let cursor = start.getTime();
+    let cursor = sessionStart.getTime();
     let stalled = 0;
     while (cursor < sessionEnd.getTime()) {
       const slotStart = new Date(cursor);
@@ -833,6 +872,8 @@ app.get('/api/seestar-planner', (req, res) => {
       for (const row of rows) {
         if (!includeObserved && row.observed) continue;
         if (assignedIds.has(row.id)) continue;
+        // Wide-field Milky Way mosaics are S30 Pro only.
+        if (!wideFieldOK && isWideField(row)) continue;
         // Telescope cap: drop targets too faint for the chosen scope.
         // NULL magnitudes (planets, ephemeris, free-form) always pass.
         if (scopeDef.max_magnitude != null
@@ -939,11 +980,13 @@ app.get('/api/seestar-planner', (req, res) => {
 
   res.json({
     location: { lat, lon },
-    window: { start: start.toISOString(), end: sessionEnd.toISOString() },
+    window: { start: sessionStart.toISOString(), end: sessionEnd.toISOString() },
+    requested_start: start.toISOString(),
+    sunset: sunset ? sunset.toISOString() : null,
     sunrise: sunrise ? sunrise.toISOString() : null,
     min_altitude: minAlt,
     max_altitude: maxAlt,
-    moon: moonPhase(start),
+    moon: moonPhase(sessionStart),
     durations: { ...DEFAULT_DURATIONS, ...userDurations, _default: defaultDur },
     // Back-compat: single-scope callers still read `scope` + `slots`.
     scope: { key: scopes[0].key, ...SEESTAR_SCOPES[scopes[0].key] },
