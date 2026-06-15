@@ -255,6 +255,19 @@ fieldset.sidecar legend {
 }
 .edit-btn:hover { background: var(--peach); }
 
+/* Plate-solve status pill on the Solve column. The success state links to
+   the atlas so a click takes you to the rendered tile; pending/solving are
+   inert badges; idle / failure render as the standard .edit-btn above. */
+.solve-pill {
+  display: inline-block; font-size: 0.74rem; padding: 0.22rem 0.65rem;
+  border-radius: var(--pill); text-transform: uppercase; letter-spacing: 0.12em;
+  font-weight: 700; font-family: var(--condensed); text-decoration: none;
+}
+.solve-pill.solved { background: var(--success); color: #000; }
+.solve-pill.solved:hover { background: var(--peach); }
+.solve-pill.pending { background: var(--warn); color: #000; }
+.solve-btn:disabled { opacity: 0.6; cursor: wait; }
+
 /* ---------- Modal ---------- */
 
 .modal-overlay {

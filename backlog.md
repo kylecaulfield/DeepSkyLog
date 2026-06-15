@@ -88,6 +88,12 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   tunable arc-minute radius as "possible matches" with a one-click link
   action that adds the missing aliases. Backed by `GET /api/admin/crossref`
   and `POST /api/admin/crossref/link`.
+- ✅ **Bulk plate solve on admin observations** — a "Bulk plate solve (N)"
+  button submits up to 50 unsolved-with-image observations to astrometry.net
+  in one click, plus a per-row Solve column with Solved/pending/Solve pill.
+  Backed by `POST /api/admin/observations/bulk-platesolve` (single
+  astrometry session, sequential uploads to stay polite to Nova's free
+  queue; supports an optional `ids[]` payload).
 - ✅ **Multi-scope Seestar planner** — declare how many of each model you
   own (e.g. 1× S30, 2× S30 Pro) and get a separate, non-overlapping
   schedule per scope for the night. Backend allocates most-restrictive cap
