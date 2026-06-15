@@ -10,7 +10,7 @@ mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   load();
 }).then((fn) => {
   getCatalogSelection = fn;
-  if (rows.children.length) load();
+  if (schedules.children.length) load();
 });
 const getTypeSelection = mountTypeFilter(document.getElementById('type-filter'), () => load());
 
@@ -19,12 +19,11 @@ mountDurationPicker(document.getElementById('duration-filter'), () => {
   load();
 }).then((fn) => {
   getDurationParam = fn;
-  if (rows.children.length) load();
+  if (schedules.children.length) load();
 });
 
 const dateInput = document.getElementById('date-input');
 const timeInput = document.getElementById('time-input');
-const telescopeInput = document.getElementById('telescope-input');
 const latInput = document.getElementById('lat-input');
 const lonInput = document.getElementById('lon-input');
 const minAltInput = document.getElementById('min-alt-input');
@@ -33,10 +32,32 @@ const includeObserved = document.getElementById('include-observed');
 const locateBtn = document.getElementById('locate-btn');
 const runBtn = document.getElementById('run-btn');
 const status = document.getElementById('status');
-const scopeLine = document.getElementById('scope-line');
 const moonLine = document.getElementById('moon-line');
 const windowLine = document.getElementById('window-line');
-const rows = document.getElementById('rows');
+const schedules = document.getElementById('schedules');
+
+// Per-model fleet counts. Keys match the SEESTAR_SCOPES keys on the server.
+const FLEET_MODELS = [
+  ['s50', 'count-s50'],
+  ['s30', 'count-s30'],
+  ['s30pro', 'count-s30pro'],
+  ['any', 'count-any'],
+];
+const countInputs = Object.fromEntries(
+  FLEET_MODELS.map(([key, id]) => [key, document.getElementById(id)]),
+);
+
+function readFleet() {
+  const out = {};
+  for (const [key] of FLEET_MODELS) {
+    const n = Math.max(0, Math.min(8, parseInt(countInputs[key].value, 10) || 0));
+    if (n > 0) out[key] = n;
+  }
+  return out;
+}
+function fleetToParam(fleet) {
+  return Object.entries(fleet).map(([k, n]) => `${k}:${n}`).join(',');
+}
 
 // Default date / time to "now" in the user's local timezone — same
 // pattern the regular planner uses so 11pm-local doesn't roll into
@@ -46,16 +67,25 @@ const pad = (n) => String(n).padStart(2, '0');
 const nowLocal = new Date();
 dateInput.value = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth() + 1)}-${pad(nowLocal.getDate())}`;
 timeInput.value = `${pad(nowLocal.getHours())}:${pad(nowLocal.getMinutes())}`;
+// Restore the saved fleet, falling back to a single "Any" scope so the page
+// behaves like the old single-scope planner on a first visit.
 try {
-  const storedScope = localStorage.getItem('deepskylog.seestar_scope') || 'any';
-  if ([...telescopeInput.options].some((o) => o.value === storedScope)) {
-    telescopeInput.value = storedScope;
+  const saved = JSON.parse(localStorage.getItem('deepskylog.seestar_fleet') || 'null');
+  if (saved && typeof saved === 'object') {
+    for (const [key] of FLEET_MODELS) {
+      if (Number.isFinite(Number(saved[key]))) countInputs[key].value = String(saved[key]);
+    }
+  } else {
+    countInputs.any.value = '1';
   }
-} catch {}
-telescopeInput.addEventListener('change', () => {
-  try { localStorage.setItem('deepskylog.seestar_scope', telescopeInput.value); } catch {}
-  load();
-});
+} catch { countInputs.any.value = '1'; }
+
+for (const [, id] of FLEET_MODELS) {
+  document.getElementById(id).addEventListener('change', () => {
+    try { localStorage.setItem('deepskylog.seestar_fleet', JSON.stringify(readFleet())); } catch {}
+    load();
+  });
+}
 dateInput.addEventListener('change', () => load());
 timeInput.addEventListener('change', () => load());
 
@@ -91,7 +121,7 @@ async function load() {
   localStorage.setItem(STORE_KEY, JSON.stringify({ lat, lon }));
 
   status.textContent = 'Planning…';
-  rows.innerHTML = '';
+  schedules.innerHTML = '';
   // Combine date + time as local — the resulting Date is the correct
   // UTC instant. Falls back to "now" if either input is empty (e.g.
   // user cleared the date and tapped Plan).
@@ -100,11 +130,14 @@ async function load() {
     const candidate = new Date(`${dateInput.value}T${timeInput.value}`);
     if (!Number.isNaN(candidate.getTime())) startISO = candidate.toISOString();
   }
+  // No scopes entered → plan a single "Any" scope so the page isn't blank.
+  const fleet = readFleet();
+  const fleetParam = Object.keys(fleet).length ? fleetToParam(fleet) : 'any:1';
   const params = new URLSearchParams({
     lat: String(lat), lon: String(lon),
     min_alt: String(minAlt), max_alt: String(maxAlt),
     start: startISO,
-    telescope: telescopeInput.value || 'any',
+    fleet: fleetParam,
   });
   if (includeObserved.checked) params.set('include_observed', '1');
   const catParam = selectionToParam(getCatalogSelection());
@@ -123,17 +156,6 @@ async function load() {
   }
 
   const moonPct = (data.moon.illumination * 100).toFixed(0);
-  // Scope summary: name + brief sweet-spot blurb + magnitude cap so
-  // the user knows which targets are being filtered out.
-  if (data.scope) {
-    const capBit = data.scope.max_magnitude != null
-      ? ` · cap ≤ mag ${data.scope.max_magnitude.toFixed(1)}`
-      : ' · no magnitude filter';
-    const notesBit = data.scope.notes ? ` · ${data.scope.notes}` : '';
-    scopeLine.textContent = `Scope: ${data.scope.name}${capBit}${notesBit}`;
-  } else {
-    scopeLine.textContent = '';
-  }
   moonLine.textContent = `Moon at start: ${data.moon.name} (${moonPct}% illuminated)`;
 
   const start = new Date(data.window.start);
@@ -143,42 +165,62 @@ async function load() {
     ? `Session: ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (sunrise ${sunrise.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`
     : `Session: ${start.toLocaleString()} → ${end.toLocaleString()} (sun never sets in this window)`;
 
-  const filled = data.slots.filter((s) => s.target).length;
-  status.textContent = `${filled} of ${data.slots.length} slot${data.slots.length === 1 ? '' : 's'} filled`;
+  const scopes = data.scopes || (data.scope ? [{ ...data.scope, label: data.scope.name, slots: data.slots }] : []);
+  const totalTargets = scopes.reduce((acc, s) => acc + s.slots.length, 0);
+  status.textContent = scopes.length > 1
+    ? `${scopes.length} scopes · ${totalTargets} targets scheduled · no overlap`
+    : `${totalTargets} target${totalTargets === 1 ? '' : 's'} scheduled`;
 
-  if (!data.slots.length) {
-    rows.appendChild(el('tr', {}, el('td', { colspan: '11' },
-      el('div', { class: 'empty-state', text: 'No imaging window — sunrise is within the next hour.' }))));
-    return;
+  for (const scope of scopes) schedules.appendChild(buildScheduleSection(scope));
+}
+
+function buildRow(slot) {
+  const slotLabel = `${fmtTime(slot.slot_start)} – ${fmtTime(slot.slot_end)}`;
+  const dur = slot.duration_minutes != null ? `${slot.duration_minutes} min` : '—';
+  const t = slot.target;
+  return el('tr', { class: t.observed ? 'observed' : '' },
+    el('td', { 'data-sort': slot.slot_start ? String(Date.parse(slot.slot_start)) : '', text: slotLabel }),
+    el('td', { 'data-sort': slot.duration_minutes != null ? String(slot.duration_minutes) : '', text: dur }),
+    el('td', { 'data-sort': catalogSortKey(t.catalog, t.catalog_number) },
+      el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
+    el('td', { text: t.name || '—' }),
+    el('td', { text: typeLabel(t.object_type) }),
+    el('td', { text: t.constellation || '—' }),
+    el('td', { text: t.magnitude != null ? Number(t.magnitude).toFixed(1) : '—' }),
+    el('td', { text: fmtDeg(t.altitude_at_start) }),
+    el('td', { text: fmtDeg(t.altitude_at_end) }),
+    el('td', { text: fmtDeg(t.azimuth_at_start) }),
+    el('td', { class: 'dim list-cell', text: t.list_name }),
+  );
+}
+
+const COLUMNS = ['Slot', 'Duration', 'Object', 'Name', 'Type', 'Constellation',
+  'Mag', 'Alt start', 'Alt end', 'Az start', 'List'];
+
+function buildScheduleSection(scope) {
+  const capBit = scope.max_magnitude != null
+    ? `cap ≤ mag ${scope.max_magnitude.toFixed(1)}`
+    : 'no magnitude filter';
+  const n = scope.slots.length;
+  const head = el('div', { class: 'schedule-head' },
+    el('h2', { text: scope.label || scope.name }),
+    el('span', { class: 'dim', text: `${capBit} · ${n} target${n === 1 ? '' : 's'}` }),
+  );
+  if (scope.notes) head.appendChild(el('div', { class: 'dim schedule-notes', text: scope.notes }));
+
+  const tbody = el('tbody');
+  if (!n) {
+    tbody.appendChild(el('tr', {}, el('td', { colspan: String(COLUMNS.length) },
+      el('div', { class: 'empty-state', text: 'No targets fit this scope in the session window.' }))));
+  } else {
+    for (const slot of scope.slots) tbody.appendChild(buildRow(slot));
   }
 
-  for (const slot of data.slots) {
-    const slotLabel = `${fmtTime(slot.slot_start)} – ${fmtTime(slot.slot_end)}`;
-    const dur = slot.duration_minutes != null ? `${slot.duration_minutes} min` : '—';
-    if (!slot.target) {
-      rows.appendChild(el('tr', { class: 'dim' },
-        el('td', { text: slotLabel }),
-        el('td', { text: dur }),
-        el('td', { colspan: '9', class: 'empty-state', text: 'No target in altitude range that hasn\'t been used yet.' }),
-      ));
-      continue;
-    }
-    const t = slot.target;
-    rows.appendChild(el('tr', { class: t.observed ? 'observed' : '' },
-      el('td', { 'data-sort': slot.slot_start ? String(Date.parse(slot.slot_start)) : '', text: slotLabel }),
-      el('td', { 'data-sort': slot.duration_minutes != null ? String(slot.duration_minutes) : '', text: dur }),
-      el('td', { 'data-sort': catalogSortKey(t.catalog, t.catalog_number) },
-        el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
-      el('td', { text: t.name || '—' }),
-      el('td', { text: typeLabel(t.object_type) }),
-      el('td', { text: t.constellation || '—' }),
-      el('td', { text: t.magnitude != null ? Number(t.magnitude).toFixed(1) : '—' }),
-      el('td', { text: fmtDeg(t.altitude_at_start) }),
-      el('td', { text: fmtDeg(t.altitude_at_end) }),
-      el('td', { text: fmtDeg(t.azimuth_at_start) }),
-      el('td', { class: 'dim list-cell', text: t.list_name }),
-    ));
-  }
+  const table = el('table', { 'data-sortable': '' },
+    el('thead', {}, el('tr', {}, ...COLUMNS.map((c) => el('th', { text: c })))),
+    tbody,
+  );
+  return el('section', { class: 'schedule' }, head, el('div', { class: 'table-wrapper' }, table));
 }
 
 locateBtn.addEventListener('click', () => {

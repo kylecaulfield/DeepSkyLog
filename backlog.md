@@ -88,6 +88,12 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   tunable arc-minute radius as "possible matches" with a one-click link
   action that adds the missing aliases. Backed by `GET /api/admin/crossref`
   and `POST /api/admin/crossref/link`.
+- ✅ **Multi-scope Seestar planner** — declare how many of each model you
+  own (e.g. 1× S30, 2× S30 Pro) and get a separate, non-overlapping
+  schedule per scope for the night. Backend allocates most-restrictive cap
+  first (shared assigned-target set) so a deep S50 keeps the faint targets
+  only it can reach; `fleet=s30:1,s30pro:2` query param, with the single
+  `telescope` path kept for back-compat.
 - ✅ **Sortable table headers everywhere** — shared `makeTableSortable()`
   helper in `common.js` + auto-init `js/sortable.js` make every data table
   click-to-sort (list, tonight, seestar, admin observations / equipment /

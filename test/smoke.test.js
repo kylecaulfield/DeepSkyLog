@@ -930,6 +930,43 @@ test('smoke', async (t) => {
       'longer durations yield ≤ default slot count');
   });
 
+  await t.test('Seestar multi-scope fleet: one table per scope, no target overlap', async () => {
+    const start = new Date('2026-01-15T22:00:00Z').toISOString();
+    const data = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=40&max_alt=85&fleet=s30:1,s30pro:2,s50:1`,
+    );
+    assert.ok(Array.isArray(data.scopes), 'scopes array present');
+    // 1 + 2 + 1 = 4 scope instances; duplicated models get #-suffixed labels.
+    assert.equal(data.scopes.length, 4);
+    const labels = data.scopes.map((s) => s.label);
+    assert.ok(labels.includes('Seestar S30 Pro #1'));
+    assert.ok(labels.includes('Seestar S30 Pro #2'));
+
+    // No target id appears in more than one scope's schedule.
+    const seen = new Set();
+    for (const scope of data.scopes) {
+      for (const slot of scope.slots) {
+        assert.ok(!seen.has(slot.target.id),
+          `target ${slot.target.id} double-booked across scopes`);
+        seen.add(slot.target.id);
+        // Each scope still respects its own magnitude cap.
+        if (scope.max_magnitude != null && slot.target.magnitude != null) {
+          assert.ok(slot.target.magnitude <= scope.max_magnitude,
+            `${scope.label} took mag ${slot.target.magnitude} over cap ${scope.max_magnitude}`);
+        }
+      }
+    }
+    assert.ok(seen.size > 0, 'at least some targets scheduled');
+
+    // Back-compat: a fleet-free call still returns scope + slots.
+    const single = await fetchJsonAuthed(
+      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&telescope=s50`,
+    );
+    assert.equal(single.scope.key, 's50');
+    assert.ok(Array.isArray(single.slots));
+    assert.equal(single.scopes.length, 1);
+  });
+
   await t.test('NGC fallback resolves common designations', async () => {
     const res = await fetch(`${baseUrl}/api/admin/objects/lookup?q=NGC7000`, {
       headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },
