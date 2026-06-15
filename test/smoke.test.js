@@ -1003,6 +1003,34 @@ test('smoke', async (t) => {
     }
   });
 
+  await t.test('bulk plate-solve endpoint: auth + payload contract', async () => {
+    const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+
+    // Unauthed call → 401.
+    const noAuth = await fetch(`${baseUrl}/api/admin/observations/bulk-platesolve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    assert.equal(noAuth.status, 401);
+
+    // Authed but no ASTROMETRY_API_KEY set in the CI env → 503 with a clear
+    // error. This pins the endpoint's plumbing without hitting the network.
+    const res = await fetch(`${baseUrl}/api/admin/observations/bulk-platesolve`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.error, /ASTROMETRY_API_KEY/);
+
+    // Explicit ids array path still produces the same auth/short-circuit
+    // shape — confirms the request body is parsed and not 400'd.
+    const withIds = await fetch(`${baseUrl}/api/admin/observations/bulk-platesolve`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [1, 2, 3] }),
+    });
+    assert.equal(withIds.status, 503);
+  });
+
   await t.test('NGC fallback resolves common designations', async () => {
     const res = await fetch(`${baseUrl}/api/admin/objects/lookup?q=NGC7000`, {
       headers: { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') },

@@ -30,8 +30,13 @@
         </div>
         <div class="dash-actions">
           <a class="button-link" href="/admin/upload.html">+ New observation</a>
+          <button type="button" class="button-link ghost-link" id="bulk-solve-btn"
+                  title="Submit every unsolved observation with an image to astrometry.net">
+            Bulk plate solve
+          </button>
           <a class="button-link ghost-link" href="/api/observations.csv">Download CSV</a>
         </div>
+        <div id="bulk-solve-status" class="dim" style="flex-basis: 100%; margin-top: 0.35rem;"></div>
       </div>
 
       <div class="toolbar">
@@ -57,6 +62,7 @@
               <th>Captured</th>
               <th>Capture</th>
               <th>Rating</th>
+              <th>Solve</th>
               <th data-nosort>Actions</th>
             </tr>
           </thead>

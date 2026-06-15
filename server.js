@@ -1836,6 +1836,89 @@ function setSolverStatus(observationId, fields) {
     .run({ ...fields, id: observationId });
 }
 
+// Bulk-submit a batch of observations to astrometry.net. The caller can pass
+// an explicit `ids` array (e.g. checkboxes on the admin observations page),
+// or omit it to queue every observation that has an image and isn't already
+// solved / pending. Observations are submitted sequentially using a single
+// astrometry session — Nova's free queue is happier with serial uploads than
+// a burst, and a 503 from no API key short-circuits the whole batch.
+app.post('/api/admin/observations/bulk-platesolve', basicAuth, async (req, res) => {
+  const requestedIds = Array.isArray(req.body?.ids)
+    ? req.body.ids.map(Number).filter(Number.isFinite)
+    : null;
+
+  // Eligible = has an image, isn't already solved, isn't currently queued.
+  // For an explicit ids list we still surface skips so the UI can report
+  // them; for the "all unsolved" path we just pull them from SQL.
+  const eligibleClause = `image_path IS NOT NULL
+     AND (solver_status IS NULL OR solver_status IN ('idle', 'failure'))`;
+  let candidates;
+  if (requestedIds && requestedIds.length) {
+    const placeholders = requestedIds.map(() => '?').join(',');
+    candidates = db
+      .prepare(
+        `SELECT id, image_path, solver_status FROM observations
+           WHERE id IN (${placeholders})`,
+      )
+      .all(...requestedIds);
+  } else {
+    candidates = db
+      .prepare(`SELECT id, image_path, solver_status FROM observations
+                  WHERE ${eligibleClause}
+                  ORDER BY id DESC LIMIT 50`)
+      .all();
+  }
+
+  let session;
+  try { session = await astrometry.login(); }
+  catch (err) {
+    if (err.code === 'no_key') {
+      return res.status(503).json({ error: 'ASTROMETRY_API_KEY is not set on the server' });
+    }
+    return res.status(502).json({ error: `astrometry login failed: ${err.message}` });
+  }
+
+  const results = [];
+  for (const obs of candidates) {
+    if (!obs.image_path) {
+      results.push({ id: obs.id, status: 'skipped', reason: 'no image' });
+      continue;
+    }
+    if (obs.solver_status === 'success') {
+      results.push({ id: obs.id, status: 'skipped', reason: 'already solved' });
+      continue;
+    }
+    if (obs.solver_status === 'pending' || obs.solver_status === 'solving') {
+      results.push({ id: obs.id, status: 'skipped', reason: `already ${obs.solver_status}` });
+      continue;
+    }
+    const full = path.resolve(UPLOAD_DIR, obs.image_path);
+    if (!full.startsWith(UPLOAD_DIR + path.sep) || !fs.existsSync(full)) {
+      results.push({ id: obs.id, status: 'error', reason: 'image file not found' });
+      continue;
+    }
+    try {
+      const subid = await astrometry.submitFile(session, full);
+      setSolverStatus(obs.id, {
+        solver_status: 'pending',
+        solver_job_id: String(subid),
+      });
+      results.push({ id: obs.id, status: 'queued', subid: String(subid) });
+    } catch (err) {
+      results.push({ id: obs.id, status: 'error', reason: err.message });
+    }
+  }
+
+  const queued = results.filter((r) => r.status === 'queued').length;
+  const skipped = results.filter((r) => r.status === 'skipped').length;
+  const errors = results.filter((r) => r.status === 'error').length;
+  res.status(202).json({
+    queued, skipped, errors,
+    considered: results.length,
+    results,
+  });
+});
+
 app.post('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
