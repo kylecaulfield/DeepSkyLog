@@ -1,4 +1,4 @@
-import { fetchJson, el, typeLabel, highlightNav } from './common.js';
+import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 
@@ -85,13 +85,14 @@ async function load() {
 
   for (const t of data.targets) {
     rows.appendChild(el('tr', { class: t.observed ? 'observed' : '' },
-      el('td', {}, el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
+      el('td', { 'data-sort': catalogSortKey(t.catalog, t.catalog_number) },
+        el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
       el('td', { text: t.name || '—' }),
       el('td', { text: typeLabel(t.object_type) }),
       el('td', { text: t.constellation || '—' }),
       el('td', { text: t.magnitude != null ? t.magnitude.toFixed(1) : '—' }),
       el('td', { text: fmtDeg(t.altitude) }),
-      el('td', { text: `${fmtDeg(t.azimuth)} ${compass(t.azimuth)}` }),
+      el('td', { 'data-sort': t.azimuth != null ? String(t.azimuth) : '', text: `${fmtDeg(t.azimuth)} ${compass(t.azimuth)}` }),
       el('td', { class: 'dim', text: t.list_name }),
     ));
   }

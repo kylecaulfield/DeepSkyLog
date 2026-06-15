@@ -60,7 +60,7 @@
       <section class="section">
         <h2>Recent uploads</h2>
         <div class="table-wrapper">
-          <table>
+          <table data-sortable>
             <thead>
               <tr>
                 <th></th>
@@ -118,14 +118,15 @@
           <span id="backup-status" class="dim"></span>
         </div>
         <div class="table-wrapper">
-          <table>
-            <thead><tr><th>Archive</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead>
+          <table data-sortable>
+            <thead><tr><th>Archive</th><th>Size</th><th>Modified</th><th data-nosort>Actions</th></tr></thead>
             <tbody id="backup-rows"></tbody>
           </table>
         </div>
       </section>
     </main>
     <script type="module" src="/admin/dashboard.js"></script>
+    <script type="module" src="/js/sortable.js"></script>
     <script type="module" src="/admin/version.js"></script>
     <script type="module" src="/js/site-name.js"></script>
   </body>

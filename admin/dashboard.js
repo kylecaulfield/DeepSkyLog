@@ -1,3 +1,5 @@
+import { catalogSortKey } from '/js/common.js';
+
 const STAT_ORDER = [
   ['observations', 'Observations'],
   ['photos', 'Photos'],
@@ -91,13 +93,15 @@ function renderRecent(rows) {
       ? el('a', { href: `/admin/object.html?id=${r.object_list_id}`, text: objectId })
       : document.createTextNode(objectId);
 
+    const observed = r.observed_at || r.created_at || '';
+    const observedMs = observed ? Date.parse(observed) : NaN;
     tbody.appendChild(el('tr', {},
       el('td', {}, thumb),
-      el('td', {}, idCell),
+      el('td', { 'data-sort': catalogSortKey(r.catalog, r.catalog_number) }, idCell),
       el('td', { text: r.title || r.object_name || '—' }),
       el('td', { text: r.telescope || '—' }),
-      el('td', { text: r.observed_at || r.created_at || '—' }),
-      el('td', { class: 'rating-cell', text: stars }),
+      el('td', { 'data-sort': Number.isFinite(observedMs) ? String(observedMs) : '', text: observed || '—' }),
+      el('td', { class: 'rating-cell', 'data-sort': r.rating != null ? String(r.rating) : '', text: stars }),
     ));
   }
 }
@@ -111,7 +115,7 @@ function renderTelescopes(telescopes) {
   }
   // Render as a small table — chips lost too much info now that the
   // rollup carries nights / frames / integration-hours / avg rating.
-  const tbl = el('table', { style: 'width:auto; font-size:0.85rem;' });
+  const tbl = el('table', { 'data-sortable': '', style: 'width:auto; font-size:0.85rem;' });
   const head = el('thead', {}, el('tr', {},
     el('th', { text: 'Telescope' }),
     el('th', { text: 'Obs' }),
@@ -127,7 +131,7 @@ function renderTelescopes(telescopes) {
       el('td', { text: String(t.count) }),
       el('td', { text: t.nights != null ? String(t.nights) : '—' }),
       el('td', { text: t.frames != null ? String(t.frames) : '—' }),
-      el('td', { text: t.integration_hours != null ? `${t.integration_hours.toFixed(1)} h` : '—' }),
+      el('td', { 'data-sort': t.integration_hours != null ? String(t.integration_hours) : '', text: t.integration_hours != null ? `${t.integration_hours.toFixed(1)} h` : '—' }),
       el('td', { text: t.avg_rating != null ? Number(t.avg_rating).toFixed(2) : '—' }),
     ));
   }
@@ -236,8 +240,8 @@ async function loadBackups() {
     });
     tbody.appendChild(el('tr', {},
       el('td', { text: a.name }),
-      el('td', { class: 'dim', text: `${(a.size / 1024 / 1024).toFixed(1)} MB` }),
-      el('td', { class: 'dim', text: new Date(a.modified).toLocaleString() }),
+      el('td', { class: 'dim', 'data-sort': String(a.size), text: `${(a.size / 1024 / 1024).toFixed(1)} MB` }),
+      el('td', { class: 'dim', 'data-sort': String(Date.parse(a.modified) || 0), text: new Date(a.modified).toLocaleString() }),
       el('td', {}, restoreBtn),
     ));
   }

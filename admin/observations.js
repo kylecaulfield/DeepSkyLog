@@ -1,4 +1,4 @@
-import { fetchJson, el } from '/js/common.js';
+import { fetchJson, el, catalogSortKey } from '/js/common.js';
 
 const queryInput = document.getElementById('filter-query');
 const telescopeSelect = document.getElementById('filter-telescope');
@@ -108,14 +108,20 @@ function renderRows() {
 
     const actions = el('div', { class: 'tile-actions' }, featureBtn, deleteBtn);
 
+    const captured = o.observed_at || o.created_at || '';
+    const capturedMs = captured ? Date.parse(captured) : NaN;
+    const captureSecs = (o.stack_count != null && o.exposure_seconds != null)
+      ? o.stack_count * o.exposure_seconds
+      : (o.exposure_seconds != null ? o.exposure_seconds : null);
+
     tbody.appendChild(el('tr', {},
       el('td', {}, thumb),
-      el('td', {}, objCell),
+      el('td', { 'data-sort': catalogSortKey(o.object_catalog || o.catalog, o.object_catalog_number || o.catalog_number) }, objCell),
       el('td', { text: o.title || '—' }),
       el('td', { text: o.telescope || '—' }),
-      el('td', { text: o.observed_at || o.created_at || '—' }),
-      el('td', { class: 'dim', text: captureSummary(o) }),
-      el('td', { class: 'rating-cell', text: stars(o.rating) }),
+      el('td', { 'data-sort': Number.isFinite(capturedMs) ? String(capturedMs) : '', text: captured || '—' }),
+      el('td', { class: 'dim', 'data-sort': captureSecs != null ? String(captureSecs) : '', text: captureSummary(o) }),
+      el('td', { class: 'rating-cell', 'data-sort': o.rating != null ? String(o.rating) : '', text: stars(o.rating) }),
       el('td', {}, actions),
     ));
   }

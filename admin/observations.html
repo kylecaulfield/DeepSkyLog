@@ -47,7 +47,7 @@
       </div>
 
       <div class="table-wrapper">
-        <table>
+        <table data-sortable>
           <thead>
             <tr>
               <th></th>
@@ -57,7 +57,7 @@
               <th>Captured</th>
               <th>Capture</th>
               <th>Rating</th>
-              <th>Actions</th>
+              <th data-nosort>Actions</th>
             </tr>
           </thead>
           <tbody id="rows"></tbody>
@@ -65,6 +65,7 @@
       </div>
     </main>
     <script type="module" src="/admin/observations.js"></script>
+    <script type="module" src="/js/sortable.js"></script>
     <script type="module" src="/admin/version.js"></script>
     <script type="module" src="/js/site-name.js"></script>
   </body>
