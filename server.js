@@ -684,6 +684,23 @@ function parseSeestarScope(raw) {
   return SEESTAR_SCOPES[k] ? k : 'any';
 }
 
+// Parse a fleet spec like "s30:1,s30pro:2,s50:1" into per-model counts. Keys
+// are normalised the same way as parseSeestarScope; unknown keys and bad
+// counts are ignored. Total instances are capped at MAX_FLEET so a single
+// request can't ask the planner to schedule dozens of nights.
+const MAX_FLEET = 8;
+function parseFleet(raw) {
+  const counts = {};
+  for (const piece of String(raw || '').split(',')) {
+    const [kRaw, vRaw] = piece.split(':');
+    const key = parseSeestarScope(kRaw);
+    if (!kRaw || !SEESTAR_SCOPES[String(kRaw).toLowerCase().replace(/\s+/g, '')]) continue;
+    const n = Math.max(0, Math.min(MAX_FLEET, parseInt(vRaw, 10) || 0));
+    if (n > 0) counts[key] = (counts[key] || 0) + n;
+  }
+  return counts;
+}
+
 app.get('/api/seestar-planner', (req, res) => {
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
@@ -802,67 +819,123 @@ app.get('/api/seestar-planner', (req, res) => {
   // target's duration. If nothing fits at the current moment, advance by
   // 15 min and retry — covers the common "wait 15 minutes for the next
   // good target to clear 50°" case without spinning forever.
-  const assignedIds = new Set();
-  const plan = [];
-  let cursor = start.getTime();
-  let stalled = 0;
-  while (cursor < sessionEnd.getTime()) {
-    const slotStart = new Date(cursor);
-    let best = null;
-    for (const row of rows) {
-      if (!includeObserved && row.observed) continue;
-      if (assignedIds.has(row.id)) continue;
-      // Telescope cap: drop targets too faint for the chosen scope.
-      // NULL magnitudes (planets, ephemeris, free-form) always pass.
-      if (scope.max_magnitude != null
-          && row.magnitude != null
-          && Number(row.magnitude) > scope.max_magnitude) continue;
-      const dur = durationFor(row.object_type);
-      const slotEndMs = cursor + dur * 60_000;
-      if (slotEndMs > sessionEnd.getTime()) continue;
-      const slotEnd = new Date(slotEndMs);
-      const eqStart = coordsAt(row, slotStart);
-      const eqEnd = coordsAt(row, slotEnd);
-      if (!eqStart || !eqEnd) continue;
-      const posStart = altAz({ ...eqStart, lat, lon, date: slotStart });
-      const posEnd = altAz({ ...eqEnd, lat, lon, date: slotEnd });
-      if (!posStart || !posEnd) continue;
-      if (posStart.altitude < minAlt) continue;
-      if (posEnd.altitude > maxAlt) continue;
-      const score = -posStart.altitude * 1000 - (row.magnitude ?? 99);
-      if (!best || score > best.score) {
-        best = { row, posStart, posEnd, score, dur, slotEnd };
+  // Greedy variable-duration slot walk for ONE scope. Skips any target id
+  // already in `assignedIds` (shared across scopes so a fleet never
+  // double-books a target), respects the scope's magnitude cap, and marks
+  // each pick as assigned. Returns the scope's filled slots in time order.
+  function planForScope(scopeDef, assignedIds) {
+    const plan = [];
+    let cursor = start.getTime();
+    let stalled = 0;
+    while (cursor < sessionEnd.getTime()) {
+      const slotStart = new Date(cursor);
+      let best = null;
+      for (const row of rows) {
+        if (!includeObserved && row.observed) continue;
+        if (assignedIds.has(row.id)) continue;
+        // Telescope cap: drop targets too faint for the chosen scope.
+        // NULL magnitudes (planets, ephemeris, free-form) always pass.
+        if (scopeDef.max_magnitude != null
+            && row.magnitude != null
+            && Number(row.magnitude) > scopeDef.max_magnitude) continue;
+        const dur = durationFor(row.object_type);
+        const slotEndMs = cursor + dur * 60_000;
+        if (slotEndMs > sessionEnd.getTime()) continue;
+        const slotEnd = new Date(slotEndMs);
+        const eqStart = coordsAt(row, slotStart);
+        const eqEnd = coordsAt(row, slotEnd);
+        if (!eqStart || !eqEnd) continue;
+        const posStart = altAz({ ...eqStart, lat, lon, date: slotStart });
+        const posEnd = altAz({ ...eqEnd, lat, lon, date: slotEnd });
+        if (!posStart || !posEnd) continue;
+        if (posStart.altitude < minAlt) continue;
+        if (posEnd.altitude > maxAlt) continue;
+        const score = -posStart.altitude * 1000 - (row.magnitude ?? 99);
+        if (!best || score > best.score) {
+          best = { row, posStart, posEnd, score, dur, slotEnd };
+        }
+      }
+      if (!best) {
+        stalled += 1;
+        // Bail after an hour of stalled retries — no point looping forever.
+        if (stalled > 4) break;
+        cursor += 15 * 60_000;
+        continue;
+      }
+      stalled = 0;
+      assignedIds.add(best.row.id);
+      plan.push({
+        slot_start: slotStart.toISOString(),
+        slot_end: best.slotEnd.toISOString(),
+        duration_minutes: best.dur,
+        target: {
+          id: best.row.id,
+          catalog: best.row.catalog, catalog_number: best.row.catalog_number,
+          name: best.row.name, object_type: best.row.object_type,
+          constellation: best.row.constellation,
+          magnitude: best.row.magnitude,
+          list_slug: best.row.list_slug, list_name: best.row.list_name,
+          observed: !!best.row.observed,
+          altitude_at_start: best.posStart.altitude,
+          altitude_at_end: best.posEnd.altitude,
+          azimuth_at_start: best.posStart.azimuth,
+          azimuth_at_end: best.posEnd.azimuth,
+        },
+      });
+      cursor = best.slotEnd.getTime();
+    }
+    return plan;
+  }
+
+  // Build the list of scope instances. A `fleet` param ("s30:1,s30pro:2")
+  // means multi-scope: each physical scope gets its own non-overlapping
+  // schedule. Without it we fall back to the single `telescope` selection
+  // so older callers (and the existing tests) keep their shape.
+  const fleetCounts = parseFleet(req.query.fleet);
+  const modelOrder = Object.keys(SEESTAR_SCOPES); // any, s50, s30, s30pro
+  let instances = [];
+  if (Object.keys(fleetCounts).length) {
+    for (const key of modelOrder) {
+      const n = fleetCounts[key] || 0;
+      for (let i = 0; i < n; i++) {
+        instances.push({ key, model_index: i + 1, model_count: n });
       }
     }
-    if (!best) {
-      stalled += 1;
-      // Bail after an hour of stalled retries — no point looping forever.
-      if (stalled > 4) break;
-      cursor += 15 * 60_000;
-      continue;
-    }
-    stalled = 0;
-    assignedIds.add(best.row.id);
-    plan.push({
-      slot_start: slotStart.toISOString(),
-      slot_end: best.slotEnd.toISOString(),
-      duration_minutes: best.dur,
-      target: {
-        id: best.row.id,
-        catalog: best.row.catalog, catalog_number: best.row.catalog_number,
-        name: best.row.name, object_type: best.row.object_type,
-        constellation: best.row.constellation,
-        magnitude: best.row.magnitude,
-        list_slug: best.row.list_slug, list_name: best.row.list_name,
-        observed: !!best.row.observed,
-        altitude_at_start: best.posStart.altitude,
-        altitude_at_end: best.posEnd.altitude,
-        azimuth_at_start: best.posStart.azimuth,
-        azimuth_at_end: best.posEnd.azimuth,
-      },
-    });
-    cursor = best.slotEnd.getTime();
+  } else {
+    instances = [{ key: scopeKey, model_index: 1, model_count: 1 }];
   }
+
+  // Allocate most-restrictive scope first (lowest magnitude cap), so a deep
+  // scope (e.g. S50 ≤ 11) keeps the faint targets only it can reach instead
+  // of a shallower scope grabbing a target it can't even use. A null cap
+  // ("any") is the least restrictive, so it runs last. Stable for ties.
+  const capOf = (key) => SEESTAR_SCOPES[key].max_magnitude ?? Infinity;
+  const allocationOrder = instances
+    .map((inst, i) => ({ inst, i }))
+    .sort((a, b) => capOf(a.inst.key) - capOf(b.inst.key) || a.i - b.i)
+    .map((x) => x.inst);
+
+  const assignedIds = new Set();
+  for (const inst of allocationOrder) {
+    inst.slots = planForScope(SEESTAR_SCOPES[inst.key], assignedIds);
+  }
+
+  // Present scopes grouped by model (declaration order) then instance, which
+  // is friendlier than the internal allocation order.
+  const scopes = instances.map((inst) => {
+    const def = SEESTAR_SCOPES[inst.key];
+    const label = inst.model_count > 1 ? `${def.name} #${inst.model_index}` : def.name;
+    return {
+      key: inst.key,
+      name: def.name,
+      label,
+      max_magnitude: def.max_magnitude,
+      notes: def.notes || null,
+      instance_index: inst.model_index,
+      instance_count: inst.model_count,
+      slots: inst.slots || [],
+    };
+  });
 
   res.json({
     location: { lat, lon },
@@ -872,8 +945,10 @@ app.get('/api/seestar-planner', (req, res) => {
     max_altitude: maxAlt,
     moon: moonPhase(start),
     durations: { ...DEFAULT_DURATIONS, ...userDurations, _default: defaultDur },
-    scope: { key: scopeKey, ...scope },
-    slots: plan,
+    // Back-compat: single-scope callers still read `scope` + `slots`.
+    scope: { key: scopes[0].key, ...SEESTAR_SCOPES[scopes[0].key] },
+    slots: scopes[0].slots,
+    scopes,
   });
 });
 

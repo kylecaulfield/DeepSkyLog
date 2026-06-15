@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>DeepSkyLog &mdash; Seestar Planner</title>
     <link rel="stylesheet" href="/styles.css" />
+    <style>
+      .fleet-control {
+        display: inline-flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+        border: 1px solid var(--accent); border-radius: var(--pill);
+        padding: 0.25rem 0.7rem;
+      }
+      .fleet-label {
+        font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em;
+        color: var(--peach); font-weight: 700;
+      }
+      .fleet-item { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; }
+      .fleet-item input { width: 3.4rem; }
+      .schedule { margin-bottom: 1.5rem; }
+      .schedule-head {
+        display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap;
+        margin-bottom: 0.4rem;
+      }
+      .schedule-head h2 { margin: 0; }
+      .schedule-notes { flex-basis: 100%; font-size: 0.82rem; }
+    </style>
   </head>
   <body>
     <header class="site-header">
@@ -24,7 +44,7 @@
     </header>
     <main>
       <h1 class="page-title">Seestar session planner</h1>
-      <p class="page-subtitle" id="subtitle">Targets allocated by per-type imaging duration, running from now until an hour before sunrise. Each pick is above your minimum altitude at the slot start and stays under the zenith-avoidance ceiling by the slot end.</p>
+      <p class="page-subtitle" id="subtitle">Say how many of each Seestar you own and get a separate, non-overlapping schedule per scope for the night. Targets are allocated by per-type imaging duration, running from now until an hour before sunrise — each pick is above your minimum altitude at the slot start and stays under the zenith-avoidance ceiling by the slot end. Fainter targets go to the deepest scope that can still reach them.</p>
 
       <div class="toolbar">
         <label>
@@ -35,15 +55,13 @@
           Time
           <input id="time-input" type="time" />
         </label>
-        <label>
-          Telescope
-          <select id="telescope-input">
-            <option value="any">Any</option>
-            <option value="s50">Seestar S50</option>
-            <option value="s30">Seestar S30</option>
-            <option value="s30pro">Seestar S30 Pro</option>
-          </select>
-        </label>
+        <span class="fleet-control">
+          <span class="fleet-label">Your scopes</span>
+          <label class="fleet-item">S50 <input id="count-s50" type="number" min="0" max="8" step="1" value="0" /></label>
+          <label class="fleet-item">S30 <input id="count-s30" type="number" min="0" max="8" step="1" value="0" /></label>
+          <label class="fleet-item">S30&nbsp;Pro <input id="count-s30pro" type="number" min="0" max="8" step="1" value="0" /></label>
+          <label class="fleet-item">Any <input id="count-any" type="number" min="0" max="8" step="1" value="0" /></label>
+        </span>
         <label>
           Latitude
           <input id="lat-input" type="number" step="any" placeholder="51.4769" />
@@ -71,30 +89,10 @@
         <span id="status" class="dim" style="margin-left:auto;"></span>
       </div>
 
-      <div id="scope-line" class="dim" style="margin-bottom: 0.25rem;"></div>
       <div id="moon-line" class="dim" style="margin-bottom: 0.25rem;"></div>
       <div id="window-line" class="dim" style="margin-bottom: 0.75rem;"></div>
 
-      <div class="table-wrapper">
-        <table data-sortable>
-          <thead>
-            <tr>
-              <th>Slot</th>
-              <th>Duration</th>
-              <th>Object</th>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Constellation</th>
-              <th>Mag</th>
-              <th>Alt start</th>
-              <th>Alt end</th>
-              <th>Az start</th>
-              <th>List</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
+      <div id="schedules"></div>
     </main>
     <script type="module" src="/js/seestar-plan.js"></script>
     <script type="module" src="/js/sortable.js"></script>
