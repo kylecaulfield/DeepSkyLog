@@ -1,4 +1,4 @@
-import { fetchJson, el, typeLabel, highlightNav } from './common.js';
+import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 import { mountDurationPicker } from './seestar-durations.js';
@@ -165,9 +165,10 @@ async function load() {
     }
     const t = slot.target;
     rows.appendChild(el('tr', { class: t.observed ? 'observed' : '' },
-      el('td', { text: slotLabel }),
-      el('td', { text: dur }),
-      el('td', {}, el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
+      el('td', { 'data-sort': slot.slot_start ? String(Date.parse(slot.slot_start)) : '', text: slotLabel }),
+      el('td', { 'data-sort': slot.duration_minutes != null ? String(slot.duration_minutes) : '', text: dur }),
+      el('td', { 'data-sort': catalogSortKey(t.catalog, t.catalog_number) },
+        el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
       el('td', { text: t.name || '—' }),
       el('td', { text: typeLabel(t.object_type) }),
       el('td', { text: t.constellation || '—' }),

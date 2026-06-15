@@ -282,11 +282,18 @@ thead th {
   letter-spacing: 0.14em;
 }
 
-/* Sortable header: clickable, with a small arrow when active. */
-thead th[data-sort] { cursor: pointer; user-select: none; }
-thead th[data-sort]:hover { background: var(--peach); }
-thead th[data-sort].sort-asc::after  { content: ' ▲'; font-size: 0.65em; }
-thead th[data-sort].sort-desc::after { content: ' ▼'; font-size: 0.65em; }
+/* Sortable header: clickable, with a small arrow when active. The
+   data-sort selector serves the planner's bespoke sorter; the .sortable
+   class is added by the shared makeTableSortable() helper on every other
+   table. */
+thead th[data-sort],
+thead th.sortable { cursor: pointer; user-select: none; }
+thead th[data-sort]:hover,
+thead th.sortable:hover { background: var(--peach); }
+thead th[data-sort].sort-asc::after,
+thead th.sortable.sort-asc::after  { content: ' ▲'; font-size: 0.65em; }
+thead th[data-sort].sort-desc::after,
+thead th.sortable.sort-desc::after { content: ' ▼'; font-size: 0.65em; }
 
 tbody tr:hover { background: #1a0f08; }
 tbody tr.observed { background: rgba(153, 204, 153, 0.12); }

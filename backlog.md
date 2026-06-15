@@ -88,6 +88,13 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   tunable arc-minute radius as "possible matches" with a one-click link
   action that adds the missing aliases. Backed by `GET /api/admin/crossref`
   and `POST /api/admin/crossref/link`.
+- ✅ **Sortable table headers everywhere** — shared `makeTableSortable()`
+  helper in `common.js` + auto-init `js/sortable.js` make every data table
+  click-to-sort (list, tonight, seestar, admin observations / equipment /
+  dashboard recent-uploads / telescope-usage / backups). Numeric, date,
+  rating, size and catalog-id columns sort correctly via per-cell
+  `data-sort` keys; blanks sink to the bottom; planner keeps its existing
+  bespoke sorter.
 
 ## Future ideas
 

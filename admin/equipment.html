@@ -53,14 +53,14 @@
 
       <section class="section">
         <div class="table-wrapper">
-          <table>
+          <table data-sortable>
             <thead>
               <tr>
                 <th>Kind</th>
                 <th>Name</th>
                 <th>Notes</th>
                 <th>Status</th>
-                <th>Actions</th>
+                <th data-nosort>Actions</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
@@ -69,6 +69,7 @@
       </section>
     </main>
     <script type="module" src="/admin/equipment.js"></script>
+    <script type="module" src="/js/sortable.js"></script>
     <script type="module" src="/admin/version.js"></script>
     <script type="module" src="/js/site-name.js"></script>
   </body>

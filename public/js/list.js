@@ -1,4 +1,4 @@
-import { fetchJson, el, formatRA, formatDec, typeLabel, highlightNav, qs } from './common.js';
+import { fetchJson, el, formatRA, formatDec, typeLabel, highlightNav, qs, catalogSortKey } from './common.js';
 
 highlightNav('home');
 
@@ -77,12 +77,13 @@ function render() {
       'tr',
       { class: o.completed ? 'observed' : '' },
       el('td', {}, thumb),
-      el('td', {}, el('a', { href: `/object.html?id=${o.id}`, text: `${o.catalog}${o.catalog_number}` })),
+      el('td', { 'data-sort': catalogSortKey(o.catalog, o.catalog_number) },
+        el('a', { href: `/object.html?id=${o.id}`, text: `${o.catalog}${o.catalog_number}` })),
       el('td', { text: o.name || '—' }),
       el('td', { text: typeLabel(o.object_type) }),
       el('td', { text: o.constellation || '—' }),
-      el('td', { class: live ? 'dim' : '', text: live || formatRA(o.ra_hours) }),
-      el('td', { class: live ? 'dim' : '', text: live || formatDec(o.dec_degrees) }),
+      el('td', { class: live ? 'dim' : '', 'data-sort': live ? '' : String(o.ra_hours ?? ''), text: live || formatRA(o.ra_hours) }),
+      el('td', { class: live ? 'dim' : '', 'data-sort': live ? '' : String(o.dec_degrees ?? ''), text: live || formatDec(o.dec_degrees) }),
       el('td', { text: o.magnitude != null ? Number(o.magnitude).toFixed(1) : '—' }),
       attemptsCell,
     ));
