@@ -5,11 +5,16 @@ import { mountTypeFilter, typesToParam } from './type-filter.js';
 highlightNav('tonight');
 
 let getCatalogSelection = () => [];
+let loadRan = false; // a load was kicked off before the filter mounted
 mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   load();
 }).then((fn) => {
   getCatalogSelection = fn;
-  if (rows.children.length) load();
+  // Re-run any auto-load that went out without the saved filter. Checking
+  // the DOM (rows.children.length) raced: load() clears the tbody before
+  // its fetch resolves, so this then() usually saw an empty table and the
+  // unfiltered result silently won.
+  if (loadRan) load();
 });
 const getTypeSelection = mountTypeFilter(document.getElementById('type-filter'), () => load());
 
@@ -24,8 +29,10 @@ const moonLine = document.getElementById('moon-line');
 const rows = document.getElementById('rows');
 
 const STORE_KEY = 'deepskylog.location';
-const stored = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-if (stored) {
+let stored = null;
+try { stored = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); }
+catch { /* corrupt — ignore */ }
+if (stored && Number.isFinite(Number(stored.lat)) && Number.isFinite(Number(stored.lon))) {
   latInput.value = stored.lat;
   lonInput.value = stored.lon;
 }
@@ -50,6 +57,7 @@ async function load() {
     return;
   }
   localStorage.setItem(STORE_KEY, JSON.stringify({ lat, lon }));
+  loadRan = true;
 
   status.textContent = 'Computing…';
   rows.innerHTML = '';

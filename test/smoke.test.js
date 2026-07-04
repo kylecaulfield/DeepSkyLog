@@ -1100,6 +1100,87 @@ test('smoke', async (t) => {
 
   // Run last — consumes the per-IP failure budget, so any admin call after
   // this one gets a 429 until the 15-minute window rolls over.
+  await t.test('cross-origin admin writes are rejected, same-origin pass', async () => {
+    const cross = await doFetch('/api/admin/settings', {
+      method: 'PUT', auth: true,
+      headers: { Origin: 'https://evil.example' },
+      body: { site_name: 'Hacked' },
+    });
+    assert.equal(cross.status, 403, 'cross-origin PUT rejected');
+    const host = new URL(baseUrl).host;
+    const same = await doFetch('/api/admin/settings', {
+      method: 'PUT', auth: true,
+      headers: { Origin: `http://${host}` },
+      body: { site_name: 'DeepSkyLog' },
+    });
+    assert.equal(same.status, 200, 'same-origin PUT accepted');
+    // No Origin header (curl, scripts) — allowed.
+    const bare = await doFetch('/api/admin/settings', {
+      method: 'PUT', auth: true, body: { site_name: 'DeepSkyLog' },
+    });
+    assert.equal(bare.status, 200, 'origin-less PUT accepted');
+  });
+
+  await t.test('cleared default location comes back null, not 0', async () => {
+    await fetchJsonAuthed('/api/admin/settings', {
+      method: 'PUT', body: { default_latitude: 51.5, default_longitude: -0.1 },
+    });
+    await fetchJsonAuthed('/api/admin/settings', {
+      method: 'PUT', body: { default_latitude: '', default_longitude: '' },
+    });
+    const settings = await doFetch('/api/settings', { parse: 'json' });
+    assert.equal(settings.default_latitude, null, 'cleared latitude is null');
+    assert.equal(settings.default_longitude, null, 'cleared longitude is null');
+  });
+
+  await t.test('list object_count is not inflated by multiple completions', async () => {
+    // The upload tests above logged more than one observation against the
+    // same targets; COUNT without DISTINCT double-counted list_objects rows.
+    const lists = await fetchJsonAuthed('/api/lists');
+    const messier = lists.find((l) => l.slug === 'messier');
+    assert.equal(messier.object_count, 110, `Messier must stay 110, got ${messier.object_count}`);
+  });
+
+  await t.test('free-form object_name is persisted and surfaced', async () => {
+    const jpeg = await buildSyntheticJpeg();
+    const fd = new FormData();
+    fd.append('image', new Blob([jpeg], { type: 'image/jpeg' }), 'comet.jpg');
+    const staged = await fetchJsonAuthed('/api/admin/stage', { method: 'POST', body: fd });
+    const saved = await fetchJsonAuthed('/api/admin/observations', {
+      method: 'POST',
+      body: {
+        stage_id: staged.stage_id,
+        telescope: 'Seestar S50',
+        object_name: 'Comet Lemmon',
+        object_type: 'COMET',
+      },
+    });
+    const rows = await doFetch('/api/observations', { parse: 'json' });
+    const row = rows.find((r) => r.id === saved.id);
+    assert.equal(row.object_name, 'Comet Lemmon', 'free-form target name survives');
+    await fetchAuthed(`/api/admin/observations/${saved.id}`, { method: 'DELETE' });
+  });
+
+  await t.test('dark-moon events land on actual new moons', async () => {
+    const res = await fetch(`${baseUrl}/api/calendar/dark-moon.ics`);
+    const ics = await res.text();
+    const { moonPhase } = require(path.join(ROOT, 'lib', 'astro'));
+    const starts = [...ics.matchAll(/DTSTART;VALUE=DATE:(\d{8})/g)].map((m) => m[1]);
+    assert.ok(starts.length >= 10, 'a year of events');
+    for (const s of starts.slice(0, 3)) {
+      // Friday start + 1 day = the Saturday nearest the new moon; the new
+      // moon itself is within ±3 days of that Saturday, so illumination
+      // anywhere in the window must be low.
+      const sat = new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8) + 1));
+      let minIllum = 1;
+      for (let d = -3; d <= 3; d++) {
+        const p = moonPhase(new Date(sat.getTime() + d * 86_400_000));
+        minIllum = Math.min(minIllum, p.illumination);
+      }
+      assert.ok(minIllum < 0.05, `weekend near ${s} should bracket a new moon (min illum ${minIllum.toFixed(2)})`);
+    }
+  });
+
   await t.test('rate limit triggers 429 after 20 failures', async () => {
     let saw429 = false;
     for (let i = 0; i < 25; i++) {
