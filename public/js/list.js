@@ -13,7 +13,9 @@ async function load() {
   try {
     const data = await fetchJson(`/api/lists/${encodeURIComponent(slug)}`);
     state.objects = data.objects;
-    document.title = `DeepSkyLog — ${data.name}`;
+    // Keep whatever brand prefix site-name.js resolved instead of
+    // hardcoding "DeepSkyLog" back over a configured site name.
+    document.title = `${document.title.split(' — ')[0]} — ${data.name}`;
     document.getElementById('list-name').textContent = data.name;
     document.getElementById('list-description').textContent = data.description || '';
 

@@ -41,7 +41,9 @@ async function render() {
     root.innerHTML = '<p class="muted">Object not found.</p>';
     return;
   }
-  document.title = `DeepSkyLog — ${data.catalog}${data.catalog_number}`;
+  // Keep whatever brand prefix site-name.js resolved instead of
+  // hardcoding "DeepSkyLog" back over a configured site name.
+  document.title = `${document.title.split(' — ')[0]} — ${data.catalog}${data.catalog_number}`;
 
   root.innerHTML = '';
   root.appendChild(el('p', { class: 'dim' },

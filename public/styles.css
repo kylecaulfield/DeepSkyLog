@@ -149,6 +149,9 @@ h4 { font-size: 0.95rem; color: var(--peach); margin: 0; }
 
 .muted { color: var(--muted); }
 .dim { color: var(--fg-dim); }
+/* Below-horizon planner rows: dim the links too, or the accent-coloured
+   anchors make the row look no different from an active one. */
+tr.dim a { color: var(--fg-dim); }
 
 /* ---------- Cards (catalog tiles) ---------- */
 

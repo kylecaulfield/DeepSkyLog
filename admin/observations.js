@@ -141,13 +141,18 @@ function renderRows() {
         })
       : document.createTextNode(objectLabel(o));
 
-    const featureBtn = el('button', { type: 'button', class: 'feature-btn', text: '★' , title: 'Make featured' });
-    featureBtn.addEventListener('click', () => featureRow(o.id, featureBtn));
+    // Featuring works per catalog id — the server 400s on rows without
+    // one, so don't offer the button for free-form observations.
+    const canFeature = o.catalog && o.catalog_number;
+    const featureBtn = canFeature
+      ? el('button', { type: 'button', class: 'feature-btn', text: '★', title: 'Make featured' })
+      : null;
+    if (featureBtn) featureBtn.addEventListener('click', () => featureRow(o.id, featureBtn));
 
     const deleteBtn = el('button', { type: 'button', class: 'delete-btn', text: 'Delete' });
     deleteBtn.addEventListener('click', () => deleteRow(o.id, deleteBtn));
 
-    const actions = el('div', { class: 'tile-actions' }, featureBtn, deleteBtn);
+    const actions = el('div', { class: 'tile-actions' }, ...(featureBtn ? [featureBtn] : []), deleteBtn);
 
     const captured = o.observed_at || o.created_at || '';
     const capturedMs = captured ? Date.parse(captured) : NaN;

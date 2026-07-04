@@ -85,6 +85,8 @@ function updateMoonPreview() {
 
 const objectCache = new Map();
 let currentStage = null;
+let pendingSidecar = null;           // sidecar dropped with an image, applied once staged
+let urlPreselect = null;             // ?object_id= preselect, re-applied after resets
 let objectSearchSeq = 0;
 const stageQueue = [];               // staged items waiting for review/save
 const queuePanel = document.getElementById('queue-panel');
@@ -177,7 +179,10 @@ dropzone.addEventListener('keydown', (e) => {
 ['dragleave', 'drop'].forEach((ev) =>
   dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); e.stopPropagation();
-    if (ev === 'dragleave' && e.target !== dropzone) return;
+    // dragleave usually bubbles from .dropzone-inner when the cursor exits
+    // the zone — only ignore it when the pointer moved to another element
+    // still inside the dropzone, or the highlight sticks forever.
+    if (ev === 'dragleave' && e.relatedTarget && dropzone.contains(e.relatedTarget)) return;
     dropzone.classList.remove('drag');
   }),
 );
@@ -256,9 +261,15 @@ async function handleFiles(files) {
     setStatus('Drop an image, a FITS file, a Seestar .json, or any combination.', 'error');
     return;
   }
-  // Sidecar JSON applies to whatever's currently active — apply it first so
-  // the form has its values before the first stage finishes.
-  if (json) applySidecar(json);
+  // A sidecar dropped alongside an image belongs to that image: hold it
+  // and let onStaged() apply it after the stage activates. Applying it
+  // immediately raced the upload — setActiveStage → resetPerImageFields
+  // wiped every sidecar-filled value seconds later. A sidecar dropped on
+  // its own still applies to whatever's currently active.
+  if (json) {
+    if (captures.length) pendingSidecar = json;
+    else applySidecar(json);
+  }
   // Stage one at a time. Slower than the old parallel fan-out, but it's the
   // only pattern that works reliably with iOS multi-pick. setStatus errors
   // are surfaced individually instead of silently swallowed.
@@ -370,6 +381,9 @@ function resetPerImageFields() {
   stackCountInput.value = '';
   filterInput.value = '';
   seestarJsonField.value = '';
+  // Also clear the sidecar file input — a stale filename in the picker
+  // means re-selecting the same file fires no change event.
+  sidecarInput.value = '';
   moonDisplay.value = '';
   objectInput.value = '';
   objectIdField.value = '';
@@ -379,6 +393,7 @@ function resetPerImageFields() {
   raHoursInput.value = '';
   decDegreesInput.value = '';
   objectHint.textContent = '';
+  if (coordsWarning) coordsWarning.textContent = '';
 }
 
 async function onStaged(res) {
@@ -400,7 +415,10 @@ async function onStaged(res) {
     latitudeInput.value = res.exif.latitude.toFixed(6);
     longitudeInput.value = res.exif.longitude.toFixed(6);
     if (gpsHint) {
-      const source = res.guesses?.from_ocr ? 'watermark OCR' : 'image EXIF';
+      // coords_from_text means the coords were mined out of the watermark /
+      // EXIF text fields; from_ocr alone only says OCR ran, not that it
+      // produced the coordinates (real GPS tags may have).
+      const source = res.guesses?.coords_from_text ? 'watermark text' : 'image EXIF GPS';
       gpsHint.textContent = `Auto-filled from ${source} (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)}).`;
     }
   } else if (defaultLatitude != null && defaultLongitude != null) {
@@ -428,8 +446,12 @@ async function onStaged(res) {
   if (res.telescope_match) {
     telescopeSelect.value = res.telescope_match;
     telescopeHint.textContent = `Auto-detected from ${metaSource}: ${res.exif.device || 'device'}`;
+  } else if (telescopeSelect.value) {
+    // Telescope is a shared-across-batch field — keep the user's manual
+    // pick when the next image carries no device info, instead of
+    // blanking it on every queue advance.
+    telescopeHint.textContent = `No device info in ${metaSource} — keeping “${telescopeSelect.value}”.`;
   } else {
-    telescopeSelect.value = '';
     telescopeHint.textContent = res.exif?.device
       ? `No automatic match for device “${res.exif.device}”. Please pick one.`
       : `No device info in ${metaSource}. Please pick a telescope.`;
@@ -448,6 +470,19 @@ async function onStaged(res) {
     await searchObjects(targetGuess);
     resolveObjectFromInput();
     if (!objectIdField.value) await tryNgcFallback();
+  } else if (!objectInput.value && urlPreselect) {
+    // "+ Log another attempt" navigated here with ?object_id= — restore
+    // that choice whenever the image itself carries no target guess
+    // (resetPerImageFields cleared the initial preselect on first drop).
+    applyPreselect(urlPreselect);
+  }
+
+  // Apply a sidecar that arrived in the same drop as this image, now that
+  // the per-image reset is behind us.
+  if (pendingSidecar) {
+    const sidecar = pendingSidecar;
+    pendingSidecar = null;
+    await applySidecar(sidecar);
   }
 
   // Sub-exposure (per frame): prefer the EXIF / filename value the server
@@ -495,9 +530,13 @@ async function onStaged(res) {
     exifSummary.append(dt, dd);
   }
 
+  updateCoordsWarning();
   formSection.hidden = false;
   formSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  setStatus('');
+  // Keep a just-saved confirmation visible while the next queued item
+  // loads — clearing unconditionally erased "Saved observation #N" the
+  // instant advanceQueue() activated the next chip.
+  if (!statusEl.classList.contains('success')) setStatus('');
 }
 
 async function searchObjects(q) {
@@ -589,6 +628,23 @@ async function tryNgcFallback() {
   if (hit.dec_degrees != null && !decDegreesInput.value) decDegreesInput.value = hit.dec_degrees.toFixed(4);
   objectHint.textContent = `${hit.source}: ${hit.name}${hit.constellation ? ' · ' + hit.constellation : ''}${hit.magnitude != null ? ' · mag ' + hit.magnitude : ''}`;
 }
+
+// Free-form observations (comets especially) only appear in the planners
+// when they carry RA/Dec — warn while the form is being filled instead of
+// letting the target silently vanish from /planner and /seestar.
+const coordsWarning = document.getElementById('coords-warning');
+function updateCoordsWarning() {
+  if (!coordsWarning) return;
+  const freeForm = !objectIdField.value && objectTypeInput.value;
+  const missingCoords = raHoursInput.value === '' || decDegreesInput.value === '';
+  coordsWarning.textContent = freeForm && missingCoords
+    ? 'No RA/Dec — this observation won\'t appear in the planners. Enter coordinates above to include it.'
+    : '';
+}
+[objectTypeInput, raHoursInput, decDegreesInput, objectInput].forEach((i) => {
+  i.addEventListener('input', updateCoordsWarning);
+  i.addEventListener('change', updateCoordsWarning);
+});
 
 let typingTimer = null;
 objectInput.addEventListener('input', () => {
@@ -704,9 +760,17 @@ async function maybeAutoFetchWeather() {
   lastAutoWeatherKey = key;
   await runWeatherFetch();
 }
+// Debounced: typing coordinates digit-by-digit produces a distinct
+// (date, lat, lon) tuple per keystroke, and Open-Meteo's free tier 429s
+// when hit that fast. Wait for the user to pause before fetching.
+let weatherDebounceTimer = null;
+function scheduleAutoWeather() {
+  clearTimeout(weatherDebounceTimer);
+  weatherDebounceTimer = setTimeout(maybeAutoFetchWeather, 750);
+}
 [dateInput, latitudeInput, longitudeInput].forEach((i) => {
-  i.addEventListener('input', maybeAutoFetchWeather);
-  i.addEventListener('change', maybeAutoFetchWeather);
+  i.addEventListener('input', scheduleAutoWeather);
+  i.addEventListener('change', scheduleAutoWeather);
 });
 [latitudeInput, longitudeInput].forEach((i) => {
   i.addEventListener('change', maybeAutoFillFromLocationHistory);
@@ -815,7 +879,13 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!currentStage) return;
 
-  resolveObjectFromInput();
+  // Re-resolve only when the object input actually matches a seeded row.
+  // Running the full resolve unconditionally cleared catalog/number for
+  // any non-seeded value — wiping the NGC-fallback autofill and manually
+  // typed designations (comets) right before the payload was built.
+  if (objectCache.get(objectInput.value.trim().toLowerCase())) {
+    resolveObjectFromInput();
+  }
 
   const payload = {
     stage_id: stageIdField.value,
@@ -873,6 +943,26 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
+function applyPreselect(obj) {
+  const label = `${obj.catalog}${obj.catalog_number}${obj.name ? ' — ' + obj.name : ''}`;
+  objectInput.value = label;
+  objectIdField.value = obj.id;
+  catalogInput.value = obj.catalog;
+  catalogNumberInput.value = obj.catalog_number;
+  objectHint.textContent = `${obj.list_name} · ${obj.object_type || ''} ${obj.constellation ? '· ' + obj.constellation : ''}`;
+  // Cache it so later autocomplete edits round-trip cleanly.
+  objectCache.set(label.toLowerCase(), {
+    id: obj.id,
+    catalog: obj.catalog,
+    catalog_number: obj.catalog_number,
+    name: obj.name,
+    object_type: obj.object_type,
+    constellation: obj.constellation,
+    list_name: obj.list_name,
+    list_slug: obj.list_slug,
+  });
+}
+
 async function preselectFromUrl() {
   const params = new URLSearchParams(location.search);
   const oid = params.get('object_id');
@@ -881,23 +971,8 @@ async function preselectFromUrl() {
     const res = await fetch(`/api/objects/${encodeURIComponent(oid)}`);
     if (!res.ok) return;
     const obj = await res.json();
-    const label = `${obj.catalog}${obj.catalog_number}${obj.name ? ' — ' + obj.name : ''}`;
-    objectInput.value = label;
-    objectIdField.value = obj.id;
-    catalogInput.value = obj.catalog;
-    catalogNumberInput.value = obj.catalog_number;
-    objectHint.textContent = `${obj.list_name} · ${obj.object_type || ''} ${obj.constellation ? '· ' + obj.constellation : ''}`;
-    // Cache it so later autocomplete edits round-trip cleanly.
-    objectCache.set(label.toLowerCase(), {
-      id: obj.id,
-      catalog: obj.catalog,
-      catalog_number: obj.catalog_number,
-      name: obj.name,
-      object_type: obj.object_type,
-      constellation: obj.constellation,
-      list_name: obj.list_name,
-      list_slug: obj.list_slug,
-    });
+    urlPreselect = obj;
+    applyPreselect(obj);
   } catch {}
 }
 

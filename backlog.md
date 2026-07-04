@@ -263,13 +263,10 @@ expansions. Listed roughly by user-visible impact, not effort.
     digits) but a crafted POST `{rating:"abc"}` either errors out or
     stores NULL silently. Fix: `Number.isFinite(n) ? clampedValue
     : null`.
-49. **Seestar planner stalls bail after 1 h with no target.** The
-    walk-forward loop advances by 15 min when nothing fits and gives
-    up after 4 stalls in a row — fine for a sparse catalog filter on a
-    short night, but on a narrow `types=` selection it can end the
-    plan early instead of skipping over a dry hour and resuming when
-    something rises again. Better: keep stepping forward until
-    `sessionEnd`, only break on natural end.
+49. ✅ **Seestar planner stalls bail after 1 h with no target.** The
+    stall counter is gone; the walk now steps 15 min at a time all the
+    way to `sessionEnd`, so a dry hour mid-night no longer truncates
+    the rest of the plan.
 50. ✅ **OpenNGC alias collisions.** `lib/ngc.js` indexes both primary
     name and every Common-name alias in a single `Map`, so when two
     catalog entries share a common name (e.g. "Veil Nebula" maps to
@@ -280,12 +277,11 @@ expansions. Listed roughly by user-visible impact, not effort.
 
 ### Latent / security-adjacent
 
-51. **No CSRF protection on `/api/admin/*` write endpoints.** Basic-auth
-    is automatically attached by the browser, so any tab logged into
-    the admin can be tricked into POSTing a delete from a hostile
-    origin via `fetch(..., {credentials: 'include'})`. Fix: require
-    a same-origin header, a CSRF token, or switch admin to a session
-    cookie with `SameSite=Strict`.
+51. ✅ **No CSRF protection on `/api/admin/*` write endpoints.**
+    `basicAuth` now rejects non-GET requests whose `Origin` header host
+    doesn't match the request `Host` (403). Origin-less clients (curl,
+    scripts) still pass; browsers always send Origin on cross-site
+    fetch/XHR/form POSTs, which is the attack this blocks.
 52. ✅ **No rate-limit on successful admin writes.** The per-IP sliding
     window in `basicAuth` only counts failures; once authed, a bot
     with the password can spam observations. Add a token bucket on
@@ -301,45 +297,148 @@ expansions. Listed roughly by user-visible impact, not effort.
     correctly configured, the admin password leaks in clear text.
     Add a check at boot that warns when `TRUST_PROXY=1` is set
     without `https://` being visible in `X-Forwarded-Proto`.
-55. **Open-Meteo proxy hammers upstream on every keystroke.** The
-    upload form auto-fetches weather whenever `(date, lat, lon)`
-    changes. While the client de-dupes consecutive identical
-    tuples, fast typing of the GPS field triggers many distinct
-    tuples in flight. Open-Meteo's free tier will 429 if you push
-    too fast. Debounce the auto-fetch by ~750 ms.
-56. **Tessdata cache is permanent on failure.** `lib/seestar_ocr.js`
-    sets `permanentlyDisabled = true` if init fails once, and
-    never retries even if the env recovers (e.g. CDN comes back up
-    or a sysadmin drops `eng.traineddata` into `vendor/tessdata/`).
-    Reset the flag on SIGHUP, or retry every N minutes.
+55. ✅ **Open-Meteo proxy hammers upstream on every keystroke.** The
+    auto-fetch is now debounced by 750 ms on top of the existing
+    tuple de-dupe.
+56. ✅ **Tessdata cache is permanent on failure.** Init failure now
+    disables OCR for a 10-minute cooldown (`OCR_RETRY_AFTER_MS` to
+    tune) instead of forever, and the bundled-tessdata check runs
+    per-init so dropping `eng.traineddata.gz` into `vendor/tessdata/`
+    is picked up without a restart. `DISABLE_OCR=1` stays permanent.
 
 ### Cosmetic / UX nits
 
-57. **`<tr class="dim">` only dims the text color.** Below-horizon
-    Seestar / planner rows inherit the dim foreground colour, but
-    anchor cells stay the regular accent orange so the visual
-    difference is subtle. Either dim the row background instead
-    or add an `tr.dim a { color: var(--muted); }` override.
-58. **Site-name script flashes the placeholder.** `js/site-name.js`
-    fetches `/api/settings` after the page parses, so the user sees
-    "DeepSkyLog" briefly before the configured name swaps in. Inject
-    the name server-side as a `<meta>` tag, or use a CSS variable
-    set inline in the page head.
-59. **The `_default: 60` in seestar planner response is unused.** Send
-    it or drop it — currently it sits in the JSON for nobody.
-60. **Free-form comet observation has no enforcement of RA/Dec.**
-    Choosing `object_type=COMET` on the upload form makes the comet
-    visible in the gallery, but if the user doesn't also enter
-    RA/Dec the planner can't compute alt-az and the comet vanishes
-    from `/api/planner` and `/api/seestar-planner`. Either flag the
-    missing coords on save, or surface a "won't appear in planners"
-    warning next to the comet option.
+57. ✅ **`<tr class="dim">` only dims the text color.** Added a
+    `tr.dim a { color: var(--fg-dim); }` override so below-horizon
+    rows read as dimmed links too.
+58. ✅ **Site-name script flashes the placeholder.** The configured
+    name is cached in localStorage and applied synchronously on load;
+    the `/api/settings` fetch confirms/corrects it and refreshes the
+    cache, so the flash only happens on the very first visit.
+59. ✅ **The `_default: 60` in seestar planner response is unused.**
+    Kept deliberately: it documents the fallback duration in the API's
+    self-description and the smoke test asserts it. Closing as
+    "decided", not code-changed.
+60. ✅ **Free-form comet observation has no enforcement of RA/Dec.**
+    The upload form now shows a live "won't appear in the planners"
+    warning under the RA/Dec inputs whenever a free-form object type
+    is chosen without coordinates.
 61. **No way to delete a custom list.** The future-ideas backlog
     item #19 (CSV list import) implies users can add lists — once
     that ships, they'll need to be able to remove them too. Add the
     delete path while doing #19.
-62. **`linkish` class still uppercases its label text everywhere it's
-    used.** Fixed for the "Use this device's location" link in PR #57,
-    but the original "browse your files" link on the upload dropzone
-    still uses it. Audit `.linkish` usages and either drop the class
-    entirely or document that it expects short labels.
+62. ✅ **`linkish` class still uppercases its label text everywhere it's
+    used.** Dropped `text-transform: uppercase` / `letter-spacing`
+    from `.linkish`; its one remaining use ("browse your files") now
+    reads as a normal mid-sentence link.
+
+## Fixed in the 2026-07 audit
+
+A full-codebase sweep (server, lib, db, public JS, admin JS). Everything
+below shipped together; listed here so the change log has one home.
+
+- **Dark-moon iCalendar feed was wrong ~93% of the time.** The new-moon
+  search stepped `now + i × synodic`, so every candidate window shared
+  *today's* phase and the ±48 h refine almost never contained a real new
+  moon. Now anchored on the next actual new moon. Also the "closest
+  Saturday" pick always went forward (both branches reduced to `6-day`),
+  putting a Sunday new moon's "dark weekend" six days late — now picks
+  the genuinely nearest Saturday. Covered by a new smoke test.
+- **Catalog progress counts inflated by multi-attempt objects.**
+  `COUNT(lo.id)` after the `LEFT JOIN list_completions` in `/api/lists`
+  and `/api/admin/stats` double-counted objects with >1 completion, so
+  Messier read "N of 111+". Both now `COUNT(DISTINCT lo.id)`; smoke test
+  pins Messier at 110.
+- **FITS `DATE-OBS` parsed as server-local time.** Zone-less FITS dates
+  are UTC by spec; `Date.parse` treated them as local, shifting
+  `observed_at` by the server's UTC offset. Now suffixed with `Z`.
+- **FITS `APERTURE` (objective diameter, mm) rendered as a focal
+  ratio.** A Seestar S50 FITS showed "Aperture f/50.0". `fitsExif` now
+  converts FOCALLEN/APERTURE to a true f-number before storing.
+- **FITS escaped quotes (`''`) truncated string cards** — `OBJECT =
+  'O''Neill Cluster'` parsed as `O`.
+- **Free-form `object_name` was silently discarded.** The upload form
+  and the iOS shortcut both send it, but no column existed — a comet
+  logged as "Comet Lemmon" had no record of the name. New migration 15
+  adds `observations.object_name`; it's inserted, PATCH-editable, and
+  surfaced through every public/admin query via
+  `COALESCE(lo.name, o.object_name)`.
+- **Clearing the default location planted uploads at Null Island.**
+  `/api/settings` coerced the stored `''` with `Number('')` → `0`, so
+  every EXIF-less upload auto-filled (0, 0). Cleared values now come
+  back `null` (smoke-tested).
+- **Upload form wiped NGC-fallback / manually-typed catalog ids at
+  save.** The submit handler re-ran the resolver unconditionally, which
+  clears catalog/number for any non-seeded value — so IC/comet
+  designations saved as NULL and never ticked lists. Resolve now only
+  re-runs when the input matches a seeded row.
+- **Sidecar JSON dropped with an image was discarded** — applied
+  immediately, then wiped seconds later when the stage activated. Now
+  held and applied after the per-image reset.
+- **Telescope selection cleared on every batch-queue advance** despite
+  being documented as shared; manual picks now survive images with no
+  device metadata.
+- **"+ Log another attempt" preselection wiped by the first drop** —
+  the `?object_id=` preselect is now re-applied whenever the staged
+  image carries no target guess of its own.
+- **Edit modal rejected fractional exposures** (`step` mismatch on
+  0.5 s EXIF values) — number fields now use `step="any"`.
+- **★ Feature button 400'd on free-form rows** — hidden where there's
+  no catalog id to feature against.
+- **"Saved observation #N" confirmation erased instantly in batch
+  mode**; the sticky dropzone drag-highlight; the stale sidecar file
+  input; the browse picker refusing `.fits`/`.json` — all fixed.
+- **Observation delete removed image files before the DB transaction**;
+  a failed delete stranded a row with no files. Files now go only after
+  commit. `observed_at` is validated on create (was PATCH-only).
+- **Arrow-key nav on the observation page went the wrong way at either
+  end** (`:first-of-type` matched by element type, not position).
+- **Saved catalog filter silently dropped on planner/tonight/seestar
+  auto-load** — the filter-mounted re-run checked a DOM state that the
+  in-flight load had already cleared. Now tracked with a flag.
+- **Planner "Object" column sorted lexically** (M1, M10, M100, M2…);
+  `0` minutes-above rendered as "—"; `tonight.js` crashed outright on
+  corrupt localStorage; observations at latitude/longitude 0 lost
+  their map; data pages clobbered a configured site name back to
+  "DeepSkyLog" in the tab title.
+- **Atlas "scroll to zoom" was a no-op** (camera distance clamped) —
+  replaced with FOV zoom.
+- **Crossref match radius `0` silently became 6′** (`|| 0.1` on a
+  falsy 0).
+- **GPS hint credited "watermark OCR" for coordinates that came from
+  EXIF GPS** — the stage response now flags the actual source
+  (`coords_from_text`).
+- **OCR hardening:** recognize-timeouts now terminate the stuck shared
+  worker instead of queueing every later upload behind it; the
+  uncaught-exception shim removes only its own listener rather than
+  all of them; astrometry.net responses that are 200-but-HTML surface
+  a readable error instead of a bare SyntaxError.
+
+## Open bugs / hardening (still open after the 2026-07 audit)
+
+63. **"Attempt 1 of 0" on free-form rows with a catalog but no
+    number.** `catalog || catalog_number` is NULL in SQL when either
+    side is NULL, so the sibling query matches nothing while the token
+    is non-empty. Guard the token on *both* parts being present.
+64. **Bulk plate solve accepts an unbounded explicit `ids[]` list.**
+    The no-ids path caps at 50; a crafted payload can queue thousands
+    of sequential Nova uploads. Clamp `ids.length` to the same 50.
+65. **CSV export is vulnerable to spreadsheet formula injection.**
+    A description starting with `=`/`+`/`-`/`@` executes when the CSV
+    is opened in Excel. Prefix such cells with `'` (or a tab) in
+    `/api/observations.csv`.
+66. **`authFailures` / `writeHits` maps grow per-IP without pruning.**
+    Entries for dead IPs are only rewritten when that IP returns.
+    Sweep empty/expired entries on the hourly stage-dir timer.
+67. **Weather/location-stats dedupe keys are global, not per-chip.**
+    Two queued images with identical (date, lat, lon) leave the second
+    chip's weather summary blank because the fetch is deduped away.
+    Reset `lastAutoWeatherKey`/`lastLocationStatsKey` in
+    `resetPerImageFields`.
+68. **Seestar planner: `any` scope never gets Milky Way wide-field
+    targets.** MWWF is gated to `s30pro` scopes only; a single-scope
+    "Any" plan silently excludes them even though "any" may well be an
+    S30 Pro. Consider letting `any` include them with a note.
+69. **Atlas zoom is wheel-only.** The FOV zoom added in the 2026-07
+    audit doesn't handle touch pinch; mobile users still can't zoom.
+    Wire `touchmove` pinch distance to the same FOV clamp.

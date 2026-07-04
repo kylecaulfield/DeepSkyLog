@@ -209,6 +209,17 @@ const MIGRATIONS = [
       DELETE FROM list_objects WHERE catalog = 'MWWF';
     `,
   },
+  {
+    id: 15,
+    name: 'add_observation_object_name',
+    // The upload form and iOS shortcut both send object_name for free-form
+    // targets (comets, anything without a catalog id), but the column never
+    // existed — the name was only used to build the upload path slug and
+    // then discarded. Persist it so the target survives.
+    up: `
+      ALTER TABLE observations ADD COLUMN object_name TEXT;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

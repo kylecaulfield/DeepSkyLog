@@ -116,13 +116,23 @@ const controls = new OrbitControls(camera, renderer.domElement);
 // from the origin.
 controls.target.set(0, 0, 1);
 controls.enablePan = false;
-controls.enableZoom = true;
-controls.zoomSpeed = 0.8;
+// OrbitControls "zoom" dollies the camera along the view axis, but the
+// camera is pinned at the origin (min/maxDistance below), so wheel/pinch
+// was a silent no-op. Zoom by narrowing the camera FOV instead — the
+// natural mechanic for a viewer standing inside a celestial sphere.
+controls.enableZoom = false;
 controls.rotateSpeed = -0.35; // negative so drag-right looks right
 controls.minDistance = 0.1;
 controls.maxDistance = 0.1;  // forces camera to stay near origin
 controls.minPolarAngle = 0;
 controls.maxPolarAngle = Math.PI;
+
+const FOV_MIN = 15, FOV_MAX = 95;
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  camera.fov = Math.min(FOV_MAX, Math.max(FOV_MIN, camera.fov + e.deltaY * 0.05));
+  camera.updateProjectionMatrix();
+}, { passive: false });
 
 // Soft inner background sphere so we can see "behind" missing tiles.
 const bg = new THREE.Mesh(

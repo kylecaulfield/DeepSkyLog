@@ -1,19 +1,21 @@
-import { fetchJson, el, typeLabel, highlightNav } from './common.js';
+import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 
 highlightNav('planner');
 
 let getCatalogSelection = () => [];
+let loadRan = false; // a load was kicked off before the filter mounted
 mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   // Re-plan automatically when the catalog set changes — the user
   // would otherwise have to tap Plan again.
   load();
 }).then((fn) => {
   getCatalogSelection = fn;
-  // If the page auto-ran load() before the filter was ready, re-run
-  // now that we know which catalogs the user wants.
-  if (rows.children.length) load();
+  // If the page auto-ran load() before the filter was ready, re-run now
+  // that we know which catalogs the user wants. (Checking the DOM here
+  // raced: load() clears the tbody before its fetch resolves.)
+  if (loadRan) load();
 });
 const getTypeSelection = mountTypeFilter(document.getElementById('type-filter'), () => load());
 
@@ -55,7 +57,7 @@ function fmtTime(iso) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 function fmtMinutes(m) {
-  if (!m) return '—';
+  if (m == null) return '—';
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   const mm = m % 60;
@@ -65,7 +67,7 @@ function fmtMinutes(m) {
 // Per-column extractors. Strings sort case-insensitively; nullish values
 // always sink to the bottom regardless of direction.
 const COLUMN_GETTERS = {
-  object:        (t) => `${t.catalog || ''}${t.catalog_number || ''}`.toLowerCase(),
+  object:        (t) => catalogSortKey(t.catalog, t.catalog_number).toLowerCase(),
   name:          (t) => (t.name || '').toLowerCase(),
   type:          (t) => (t.object_type || '').toLowerCase(),
   constellation: (t) => (t.constellation || '').toLowerCase(),
@@ -117,6 +119,7 @@ async function load() {
     return;
   }
   localStorage.setItem(STORE_KEY, JSON.stringify({ lat, lon }));
+  loadRan = true;
 
   status.textContent = 'Computing…';
   rows.innerHTML = '';

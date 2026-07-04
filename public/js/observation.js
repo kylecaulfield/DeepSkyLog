@@ -77,7 +77,7 @@ function moonSvg(phase) {
 
 function locationCard(o) {
   const wrap = el('div', { class: 'meta-list', style: 'margin-top:0.5rem;' });
-  if (!o.latitude || !o.longitude) {
+  if (o.latitude == null || o.longitude == null) {
     wrap.appendChild(el('p', { class: 'dim', text: o.location || 'No GPS recorded.' }));
     return wrap;
   }
@@ -137,7 +137,9 @@ async function render() {
   }
   const o = data.observation;
   const targetLabel = (o.catalog && o.catalog_number) ? `${o.catalog}${o.catalog_number}` : (o.title || `#${o.id}`);
-  document.title = `DeepSkyLog — ${targetLabel}`;
+  // Preserve whatever brand prefix site-name.js resolved — hardcoding
+  // "DeepSkyLog" here would clobber a configured site name.
+  document.title = `${document.title.split(' — ')[0]} — ${targetLabel}`;
 
   root.innerHTML = '';
 
@@ -161,10 +163,10 @@ async function render() {
   // Prev/next nav
   const navRow = el('div', { class: 'obs-nav' });
   const prev = data.prev_id
-    ? el('a', { class: 'button-link ghost-link', href: `/observation.html?id=${data.prev_id}`, text: '← Previous' })
+    ? el('a', { class: 'button-link ghost-link nav-prev', href: `/observation.html?id=${data.prev_id}`, text: '← Previous' })
     : el('span', { class: 'button-link ghost-link', style: 'opacity:0.5; pointer-events:none;', text: '← Previous' });
   const next = data.next_id
-    ? el('a', { class: 'button-link ghost-link', href: `/observation.html?id=${data.next_id}`, text: 'Next →' })
+    ? el('a', { class: 'button-link ghost-link nav-next', href: `/observation.html?id=${data.next_id}`, text: 'Next →' })
     : el('span', { class: 'button-link ghost-link', style: 'opacity:0.5; pointer-events:none;', text: 'Next →' });
   navRow.appendChild(prev);
   navRow.appendChild(el('span', { class: 'pos dim',
@@ -248,9 +250,10 @@ async function render() {
 document.addEventListener('keydown', (e) => {
   if (e.target && /^(input|textarea|select)$/i.test(e.target.tagName)) return;
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-  const link = document.querySelector(
-    e.key === 'ArrowLeft' ? '.obs-nav a[href*="/observation.html"]:first-of-type' : '.obs-nav a[href*="/observation.html"]:last-of-type',
-  );
+  // Explicit classes: :first-of-type / :last-of-type match by *element
+  // type*, so when the Previous slot is a disabled <span> the Next anchor
+  // was both first and last <a>, and ArrowLeft navigated forward.
+  const link = document.querySelector(e.key === 'ArrowLeft' ? '.obs-nav a.nav-prev' : '.obs-nav a.nav-next');
   if (link) link.click();
 });
 

@@ -210,9 +210,30 @@ function timingSafeCompare(a, b) {
   return crypto.timingSafeEqual(ab, bb);
 }
 
+// Cross-origin write protection. Browsers attach cached Basic-Auth
+// credentials to cross-site requests, so a hostile page could POST a
+// delete on the admin's behalf. Browsers always send an Origin header on
+// cross-origin fetch/XHR/form POSTs; when it's present and its host
+// doesn't match the Host the request arrived on, reject. Requests with no
+// Origin header (curl, same-origin GET navigations, old clients) pass —
+// this only needs to stop credentialed cross-site browser writes.
+function sameOriginWrite(req) {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return true;
+  const origin = req.headers.origin;
+  if (!origin) return true;               // curl / non-browser clients
+  if (origin === 'null') return false;    // sandboxed iframe / file://
+  let originHost;
+  try { originHost = new URL(origin).host; } catch { return false; }
+  return originHost === req.headers.host;
+}
+
 function basicAuth(req, res, next) {
   if (!ADMIN_PASSWORD) {
     return res.status(503).json({ error: 'ADMIN_PASSWORD not configured on server' });
+  }
+
+  if (!sameOriginWrite(req)) {
+    return res.status(403).json({ error: 'Cross-origin write rejected' });
   }
 
   const ip = clientIp(req);
@@ -347,7 +368,7 @@ app.get('/api/lists', (_req, res) => {
   const lists = db
     .prepare(
       `SELECT l.id, l.slug, l.name, l.description, l.builtin,
-              COUNT(lo.id) AS object_count,
+              COUNT(DISTINCT lo.id) AS object_count,
               COUNT(DISTINCT lc.list_object_id) AS completed_count
          FROM lists l
          LEFT JOIN list_objects lo ON lo.list_id = l.id
@@ -414,7 +435,7 @@ app.get('/api/observations', (req, res) => {
   const rows = db
     .prepare(
       `SELECT o.*, lo.catalog AS object_catalog, lo.catalog_number AS object_catalog_number,
-              lo.name AS object_name,
+              COALESCE(lo.name, o.object_name) AS object_name,
               COALESCE(lo.object_type, o.object_type) AS object_type,
               lo.constellation AS constellation
          FROM observations o
@@ -865,7 +886,6 @@ app.get('/api/seestar-planner', (req, res) => {
     const wideFieldOK = scopeDef === SEESTAR_SCOPES.s30pro;
     const plan = [];
     let cursor = sessionStart.getTime();
-    let stalled = 0;
     while (cursor < sessionEnd.getTime()) {
       const slotStart = new Date(cursor);
       let best = null;
@@ -897,13 +917,13 @@ app.get('/api/seestar-planner', (req, res) => {
         }
       }
       if (!best) {
-        stalled += 1;
-        // Bail after an hour of stalled retries — no point looping forever.
-        if (stalled > 4) break;
+        // Nothing fits right now — step forward and retry. A dry spell can
+        // last hours on a narrow types= filter (everything set, next batch
+        // not yet risen); the loop is bounded by sessionEnd, so keep walking
+        // instead of giving up on the rest of the night.
         cursor += 15 * 60_000;
         continue;
       }
-      stalled = 0;
       assignedIds.add(best.row.id);
       plan.push({
         slot_start: slotStart.toISOString(),
@@ -1080,7 +1100,7 @@ app.get('/api/observations/map', (_req, res) => {
       `SELECT o.id, o.title, o.observed_at, o.latitude, o.longitude, o.location,
               o.telescope, o.thumbnail_path, o.object_id,
               lo.catalog AS object_catalog, lo.catalog_number AS object_catalog_number,
-              lo.name AS object_name
+              COALESCE(lo.name, o.object_name) AS object_name
          FROM observations o
          LEFT JOIN list_objects lo ON lo.id = o.object_id
          WHERE o.latitude IS NOT NULL AND o.longitude IS NOT NULL`,
@@ -1101,7 +1121,7 @@ app.get('/api/observations/atlas', (_req, res) => {
               o.solved_radius_deg, o.solved_orientation_deg, o.solved_pixscale,
               o.telescope, o.object_id,
               lo.catalog AS object_catalog, lo.catalog_number AS object_catalog_number,
-              lo.name AS object_name, lo.object_type
+              COALESCE(lo.name, o.object_name) AS object_name, lo.object_type
          FROM observations o
          LEFT JOIN list_objects lo ON lo.id = o.object_id
          WHERE o.solved_ra_hours IS NOT NULL
@@ -1138,7 +1158,8 @@ app.get('/api/observations.csv', (_req, res) => {
   const rows = db
     .prepare(
       `SELECT o.id, o.observed_at, o.created_at, o.title, o.catalog, o.catalog_number,
-              lo.name AS object_name, lo.object_type, lo.constellation,
+              COALESCE(lo.name, o.object_name) AS object_name,
+              COALESCE(lo.object_type, o.object_type) AS object_type, lo.constellation,
               o.telescope, o.camera, o.location, o.latitude, o.longitude,
               o.exposure_seconds, o.iso, o.gain, o.stack_count, o.filter_name,
               o.focal_length_mm, o.aperture,
@@ -1244,9 +1265,17 @@ app.get('/api/calendar/dark-moon.ics', (_req, res) => {
   // Find each new moon in the next year by stepping ~one synodic month and
   // refining via local search. moonPhase().phase is 0 at new moon, so we
   // minimise that against zero, accounting for the 0/1 wraparound.
+  //
+  // The stepping must start from the NEXT NEW MOON, not from `now` — centres
+  // spaced i×synodic from `now` all share now's phase, and the ±48 h refine
+  // window only contains a real new moon when `now` happens to be near one.
+  const phaseNow = moonPhase(now).phase;
+  const msToNewMoon = ((1 - phaseNow) % 1) * SYNODIC_MS;
+  const firstNewMoon = now.getTime() + msToNewMoon;
+
   const events = [];
   for (let i = 0; i < 13; i++) {
-    let centre = new Date(now.getTime() + i * SYNODIC_MS);
+    let centre = new Date(firstNewMoon + i * SYNODIC_MS);
     // Refine ±2 days at hour granularity.
     let best = centre;
     let bestPhase = 1;
@@ -1259,8 +1288,10 @@ app.get('/api/calendar/dark-moon.ics', (_req, res) => {
     if (best.getTime() < now.getTime() - 86_400_000) continue;
 
     // Pick the Saturday closest to the new moon as the centre of the weekend.
+    // Sun/Mon/Tue are nearer the previous Saturday (1–3 days back); Wed–Fri
+    // are nearer the next one (1–3 days forward); Saturday stays put.
     const day = best.getUTCDay();           // 0=Sun..6=Sat
-    const offsetToSat = day <= 3 ? (6 - day) : -(day - 6);
+    const offsetToSat = day <= 2 ? -(day + 1) : 6 - day;
     const sat = new Date(Date.UTC(best.getUTCFullYear(), best.getUTCMonth(), best.getUTCDate() + offsetToSat));
     const fri = new Date(sat.getTime() - 86_400_000);
     const monAfter = new Date(sat.getTime() + 2 * 86_400_000);   // exclusive end
@@ -1554,9 +1585,13 @@ app.get('/api/settings', (_req, res) => {
   const rows = db.prepare(`SELECT key, value FROM site_settings`).all();
   const out = { site_name: 'DeepSkyLog' };
   for (const r of rows) out[r.key] = r.value;
-  // Coerce known numeric keys for the client's convenience.
-  if (out.default_latitude != null) out.default_latitude = Number(out.default_latitude);
-  if (out.default_longitude != null) out.default_longitude = Number(out.default_longitude);
+  // Coerce known numeric keys for the client's convenience. A cleared value
+  // is stored as '' — that must come back as null, not Number('') === 0,
+  // or clearing the default location plants every upload at Null Island.
+  for (const key of ['default_latitude', 'default_longitude']) {
+    if (out[key] == null || out[key] === '') out[key] = null;
+    else out[key] = Number(out[key]);
+  }
   res.json(out);
 });
 
@@ -2015,7 +2050,7 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
   const lists = db
     .prepare(
       `SELECT l.slug, l.name,
-              COUNT(lo.id) AS object_count,
+              COUNT(DISTINCT lo.id) AS object_count,
               COUNT(DISTINCT lc.list_object_id) AS completed_count
          FROM lists l
          LEFT JOIN list_objects lo ON lo.list_id = l.id
@@ -2030,7 +2065,7 @@ app.get('/api/admin/stats', basicAuth, (_req, res) => {
       `SELECT o.id AS observation_id, o.object_id AS object_list_id,
               o.title, o.observed_at, o.created_at, o.telescope,
               o.rating, o.thumbnail_path, o.image_path, o.catalog, o.catalog_number,
-              lo.name AS object_name
+              COALESCE(lo.name, o.object_name) AS object_name
          FROM observations o
          LEFT JOIN list_objects lo ON lo.id = o.object_id
          ORDER BY o.created_at DESC
@@ -2219,7 +2254,10 @@ function angularSepDeg(ra1h, dec1, ra2h, dec2) {
 // each other, so the admin can review and link likely-same targets that the
 // seed aliases missed.
 app.get('/api/admin/crossref', basicAuth, (req, res) => {
-  const tol = Math.min(Math.max(Number(req.query.tol) || 0.1, 0), 2); // degrees
+  // 0 is a legitimate value ("no proximity suggestions") — only fall back
+  // to the 0.1° default when the param is missing/unparseable.
+  const tolRaw = Number(req.query.tol);
+  const tol = Math.min(Math.max(Number.isFinite(tolRaw) ? tolRaw : 0.1, 0), 2); // degrees
   const rows = db
     .prepare(
       `SELECT lo.id, lo.catalog, lo.catalog_number, lo.name, lo.object_type,
@@ -2468,7 +2506,11 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
   // currently has nothing (sub-second EXIF exposure shouldn't be clobbered
   // by a watermark "52min", which is total integration; we put that in a
   // separate field for the UI to interpret).
-  if (latitude == null && guesses.coords?.latitude != null) latitude = guesses.coords.latitude;
+  let coordsFromText = false;   // true when lat/lon came from OCR/EXIF text mining, not GPS tags
+  if (latitude == null && guesses.coords?.latitude != null) {
+    latitude = guesses.coords.latitude;
+    coordsFromText = true;
+  }
   if (longitude == null && guesses.coords?.longitude != null) longitude = guesses.coords.longitude;
   if (!capturedIso && guesses.captured_at) capturedIso = guesses.captured_at;
   if (!objectName && guesses.target?.raw) objectName = guesses.target.raw;
@@ -2498,6 +2540,7 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
       total_exposure_seconds: guesses.exposure_seconds_total,
       photographer: guesses.photographer,
       from_ocr: !!ocrText,
+      coords_from_text: coordsFromText,
       from_filename: !!fileGuess,
       ocr_error: ocrError,
     },
@@ -2541,6 +2584,11 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const location = body.location ? String(body.location).trim() : null;
   const notes = body.notes ? String(body.notes).trim() : null;
   const observedAt = body.observed_at ? String(body.observed_at).trim() : null;
+  // Same guard as the PATCH endpoint: a garbage date would silently break
+  // COALESCE(observed_at, …) ordering everywhere.
+  if (observedAt && Number.isNaN(Date.parse(observedAt))) {
+    return res.status(400).json({ error: 'observed_at is not a parseable date' });
+  }
   const title = body.title ? String(body.title).trim() : null;
   const clamp = (v, lo, hi) => {
     if (v == null || v === '') return null;
@@ -2700,13 +2748,13 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
         aperture, image_path, thumbnail_path, exif_json, rating,
         latitude, longitude, seeing, transparency, moon_phase,
         moon_phase_name, bortle, stack_count, gain, filter_name, device_json,
-        object_type, ra_hours, dec_degrees, sqm)
+        object_type, ra_hours, dec_degrees, sqm, object_name)
      VALUES (@object_id, @catalog, @catalog_number, @title, @description, @observed_at,
              @location, @telescope, @camera, @exposure_seconds, @iso, @focal_length_mm,
              @aperture, @image_path, @thumbnail_path, @exif_json, @rating,
              @latitude, @longitude, @seeing, @transparency, @moon_phase,
              @moon_phase_name, @bortle, @stack_count, @gain, @filter_name, @device_json,
-             @object_type, @ra_hours, @dec_degrees, @sqm)`,
+             @object_type, @ra_hours, @dec_degrees, @sqm, @object_name)`,
   );
 
   const completeList = db.prepare(
@@ -2749,6 +2797,9 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       ra_hours: observationRaHours,
       dec_degrees: observationDecDegrees,
       sqm,
+      // Free-form target name (comets, anything without a catalog id) —
+      // persisted so the target isn't lost when there's no list row.
+      object_name: matchedObject ? null : objectName,
     });
 
     const observationId = Number(result.lastInsertRowid);
@@ -2829,6 +2880,7 @@ app.patch('/api/admin/observations/:id', basicAuth, (req, res) => {
 
   const updates = {};
   if ('title' in body)            updates.title = str(body.title, 200);
+  if ('object_name' in body)      updates.object_name = str(body.object_name, 200);
   if ('description' in body)      updates.description = body.description == null ? null : String(body.description);
   if ('observed_at' in body)      updates.observed_at = str(body.observed_at, 40);
   if ('location' in body)         updates.location = str(body.location, 200);
@@ -2905,7 +2957,31 @@ app.delete('/api/admin/observations/:id', basicAuth, (req, res) => {
   const row = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: 'Observation not found' });
 
-  // Best-effort file cleanup, scoped to UPLOAD_DIR.
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM list_completions WHERE observation_id = ?').run(id);
+    db.prepare('DELETE FROM observations WHERE id = ?').run(id);
+
+    // If the deleted row was featured, promote the most recent remaining
+    // attempt with an image so the object still has a cover.
+    if (row.featured && row.catalog && row.catalog_number) {
+      const next = db
+        .prepare(
+          `SELECT id FROM observations
+             WHERE catalog = ? AND catalog_number = ? AND image_path IS NOT NULL
+             ORDER BY COALESCE(observed_at, created_at) DESC
+             LIMIT 1`,
+        )
+        .get(row.catalog, row.catalog_number);
+      if (next) {
+        db.prepare('UPDATE observations SET featured = 1 WHERE id = ?').run(next.id);
+      }
+    }
+  });
+  tx();
+
+  // Best-effort file cleanup, scoped to UPLOAD_DIR — only after the DB
+  // delete committed, so a failed transaction never strands a row whose
+  // image files are already gone.
   const tryUnlink = (rel) => {
     if (!rel) return;
     const full = path.resolve(UPLOAD_DIR, rel);
@@ -2931,28 +3007,6 @@ app.delete('/api/admin/observations/:id', basicAuth, (req, res) => {
       dir = path.dirname(dir);
     }
   }
-
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM list_completions WHERE observation_id = ?').run(id);
-    db.prepare('DELETE FROM observations WHERE id = ?').run(id);
-
-    // If the deleted row was featured, promote the most recent remaining
-    // attempt with an image so the object still has a cover.
-    if (row.featured && row.catalog && row.catalog_number) {
-      const next = db
-        .prepare(
-          `SELECT id FROM observations
-             WHERE catalog = ? AND catalog_number = ? AND image_path IS NOT NULL
-             ORDER BY COALESCE(observed_at, created_at) DESC
-             LIMIT 1`,
-        )
-        .get(row.catalog, row.catalog_number);
-      if (next) {
-        db.prepare('UPDATE observations SET featured = 1 WHERE id = ?').run(next.id);
-      }
-    }
-  });
-  tx();
 
   res.status(204).end();
 });

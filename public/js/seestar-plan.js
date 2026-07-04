@@ -6,11 +6,15 @@ import { mountDurationPicker } from './seestar-durations.js';
 highlightNav('seestar');
 
 let getCatalogSelection = () => [];
+let loadRan = false; // a load was kicked off before the filters mounted
 mountCatalogFilter(document.getElementById('catalog-filter'), () => {
   load();
 }).then((fn) => {
   getCatalogSelection = fn;
-  if (schedules.children.length) load();
+  // Re-run any auto-load that went out without the saved filter. Checking
+  // the DOM here raced: load() clears the container before its fetch
+  // resolves, so this then() usually saw it empty and skipped the re-run.
+  if (loadRan) load();
 });
 const getTypeSelection = mountTypeFilter(document.getElementById('type-filter'), () => load());
 
@@ -19,7 +23,7 @@ mountDurationPicker(document.getElementById('duration-filter'), () => {
   load();
 }).then((fn) => {
   getDurationParam = fn;
-  if (schedules.children.length) load();
+  if (loadRan) load();
 });
 
 const dateInput = document.getElementById('date-input');
@@ -127,6 +131,7 @@ async function load() {
     return;
   }
   localStorage.setItem(STORE_KEY, JSON.stringify({ lat, lon }));
+  loadRan = true;
 
   status.textContent = 'Planning…';
   schedules.innerHTML = '';

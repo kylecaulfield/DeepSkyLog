@@ -318,10 +318,16 @@ function toLocalDt(s) {
 function openEditModal(o) {
   const overlay = el('div', { class: 'modal-overlay' });
   const card = el('div', { class: 'modal' });
+  // step: 'any' on number inputs — the default step=1 makes fractional
+  // stored values (EXIF sub-second exposures like 0.5) a stepMismatch
+  // that blocks the whole form from submitting.
   const fld = (label, name, type, value) =>
     el('label', { class: 'field' },
       el('span', { text: label }),
-      el('input', { type, name, value: value == null ? '' : String(value) }),
+      el('input', {
+        type, name, value: value == null ? '' : String(value),
+        ...(type === 'number' ? { step: 'any' } : {}),
+      }),
     );
   const fldArea = (label, name, value) => {
     const ta = el('textarea', { name, rows: '3' });
