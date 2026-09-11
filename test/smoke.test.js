@@ -597,6 +597,21 @@ test('smoke', async (t) => {
     await fetchAuthed(`/api/admin/stage/${stagedS50.stage_id}`, { method: 'DELETE' });
   });
 
+  await t.test('Seestar S50 Pro watermark band parses like the other models', async () => {
+    // The band text as OCR reads it on a real S50 Pro export (M31, 2026-09):
+    // model label + target on the top row, photographer / coords / date +
+    // total integration on the bottom row.
+    const { parseAll } = require(path.join(ROOT, 'lib', 'seestar_meta'));
+    const band = 'Seestar S50 Pro  M 31\nKyle Caulfield / 87° W, 42° N / 2026.09.11 05:11  208min';
+    const got = parseAll(band);
+    assert.deepEqual(got.target, { catalog: 'M', number: '31', raw: 'M31' });
+    assert.equal(got.exposure_seconds_total, 208 * 60);
+    assert.deepEqual(got.coords, { latitude: 42, longitude: -87 });
+    assert.equal(got.captured_at, '2026-09-11T05:11');
+    // The "Seestar S50 Pro" label must not be mistaken for the photographer.
+    assert.equal(got.photographer, 'Kyle Caulfield');
+  });
+
   await t.test('Seestar filename parser fills gaps in stage response', async () => {
     const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
     const jpeg = await buildSyntheticJpeg();

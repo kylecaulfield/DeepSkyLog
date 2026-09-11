@@ -41,9 +41,11 @@ function matchTelescope(device) {
   const hay = String(device).toLowerCase();
   // Pro variants must be tested before their base models: the plain S50 /
   // S30 patterns are prefixes of "Seestar S50 Pro" / "Seestar S30 Pro".
-  // NOTE: the exact EXIF Make/Model/Software (and FITS INSTRUME) string the
-  // S50 Pro writes is UNCONFIRMED — "Seestar S50 Pro" is assumed by analogy
-  // with the S30 Pro. Adjust the pattern once a real S50 Pro file is staged.
+  // NOTE: a real S50 Pro export's watermark band reads "Seestar S50 Pro"
+  // (M31, 2026-09) — the same label the app prints for the S50, whose EXIF
+  // and FITS INSTRUME strings match its band. The S50 Pro's own EXIF
+  // Make/Model/Software and INSTRUME strings are still UNCONFIRMED and are
+  // assumed to match; adjust the pattern once a real S50 Pro file is staged.
   if (/seestar\s*s\s*50\s*pro/i.test(hay)) return 'Seestar S50 Pro';
   if (/seestar\s*s\s*30\s*pro/i.test(hay)) return 'Seestar S30 Pro';
   if (/seestar\s*s\s*50/i.test(hay)) return 'Seestar S50';
