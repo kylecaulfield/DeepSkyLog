@@ -39,7 +39,7 @@ The `db` instance is a module-level singleton — call `getDb()` from anywhere; 
 
 Uploads are staged, reviewed, then finalized — this lets the admin see parsed EXIF before committing:
 
-1. `POST /api/admin/stage` (multer) drops the raw file in `STAGE_DIR` (default `<db dir>/stage`, not web-exposed), parses EXIF with `exifr`, and runs `matchTelescope()` to guess Seestar S50/S30/S30 Pro from EXIF `Make`/`Model`/`Software` strings. Returns a `stage_id` and parsed metadata.
+1. `POST /api/admin/stage` (multer) drops the raw file in `STAGE_DIR` (default `<db dir>/stage`, not web-exposed), parses EXIF with `exifr`, and runs `matchTelescope()` to guess Seestar S50 Pro/S50/S30 Pro/S30 from EXIF `Make`/`Model`/`Software` strings. Returns a `stage_id` and parsed metadata.
 2. `POST /api/admin/observations` (JSON referencing `stage_id`) renames the staged file to `UPLOAD_DIR/YYYY/MM/<object-slug>/<ts>-<rand>.<ext>`, generates a 640px JPEG thumbnail via `sharp`, re-parses EXIF, and in a single DB transaction inserts the `observations` row **and** one `list_completions` row for every `list_object` sharing that `catalog`+`catalog_number` (so a single M42 upload ticks both Messier and any future list M42 appears in).
 3. `sweepStageDir()` runs at boot and hourly, deleting staged files older than `STAGE_TTL_MS` (24h).
 
@@ -72,5 +72,5 @@ No framework, no build step. Each page (`public/*.html`, `admin/*.html`) loads o
 - **CommonJS**, not ESM, on the server (`"type": "commonjs"` in `package.json`). The public/admin browser JS is ESM via `<script type="module">`. Do not mix.
 - **Use `better-sqlite3` named parameters** (`@name`) consistently; the existing SQL relies on `ESCAPE '\\'` with `escapeLike()` for user-supplied LIKE patterns — follow the same pattern for new search endpoints.
 - **Path safety**: any endpoint that touches `STAGE_DIR` or `UPLOAD_DIR` must `path.basename()` user input and verify the resolved path still starts with `<dir> + path.sep` before reading/writing. See `/api/admin/stage/:id/preview` and the stage DELETE handler for the pattern.
-- **Telescope list** is hardcoded in `TELESCOPE_OPTIONS` in `server.js` and exposed via `/api/admin/config`. `matchTelescope()` only auto-detects Seestars; everything else is picked manually in the UI.
+- **Telescope list** is hardcoded in `TELESCOPE_OPTIONS` in `server.js` and exposed via `/api/admin/config`. `matchTelescope()` only auto-detects Seestars (test the Pro patterns before their base models — "Seestar S50 Pro" contains "Seestar S50"); everything else is picked manually in the UI. The planner's `SEESTAR_SCOPES` map is append-only (never rename or reorder keys) and its `wide_field: true` flag is what admits a scope to the Milky Way wide-field list.
 - **Catalog seed data** (`db/seed/messier.js`, `caldwell.js`) uses `{ catalog, catalogNumber, name, type, ra, dec, mag, constellation }`. Adding a new built-in list means a new seed file + a `seedList()` call in `seedCatalogs()`; existing entries must keep their `catalog`+`catalogNumber` stable because `list_completions` joins on them.

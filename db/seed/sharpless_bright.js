@@ -1,7 +1,7 @@
 // Bright HII regions from Stewart Sharpless's 1959 catalog. Sh2 has 313
 // entries but most are too faint and diffuse for a small smart scope; this
 // is a curated subset of the brightest, most-photographed Sh2 emission
-// nebulae that an S50/S30 can render.
+// nebulae that an S50 Pro/S50/S30 can render.
 
 const SHARPLESS_BRIGHT = [
   { catalog: 'Sh2', catalogNumber: '155', name: 'Cave Nebula',          type: 'DN', ra: 22.9550, dec: 62.6167,  mag: 7.7,  constellation: 'Cepheus',     aliases: ['C9'] },

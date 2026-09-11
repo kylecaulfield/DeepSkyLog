@@ -1,6 +1,6 @@
 // Bright globular clusters — modelled on the Astronomical League's
 // Globular Cluster observing programme. All entries are well within reach of
-// a Seestar S50 and most amateur scopes. Aliases bridge to the Messier and
+// a Seestar S50 / S50 Pro and most amateur scopes. Aliases bridge to the Messier and
 // Caldwell rows for the same physical cluster.
 
 const AL_GLOBULARS = [

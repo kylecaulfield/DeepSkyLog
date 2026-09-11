@@ -101,7 +101,8 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   only it can reach; `fleet=s30:1,s30pro:2` query param, with the single
   `telescope` path kept for back-compat. Sessions auto-start 30 minutes
   after sunset for the location (never before the requested start), and
-  Milky Way wide-field (MWWF) mosaics are scheduled only on the S30 Pro.
+  Milky Way wide-field (MWWF) mosaics are scheduled only on the Pro models
+  (originally S30 Pro only; the S50 Pro entry below extends the gate).
 - ✅ **Sortable table headers everywhere** — shared `makeTableSortable()`
   helper in `common.js` + auto-init `js/sortable.js` make every data table
   click-to-sort (list, tonight, seestar, admin observations / equipment /
@@ -109,6 +110,13 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   rating, size and catalog-id columns sort correctly via per-cell
   `data-sort` keys; blanks sink to the bottom; planner keeps its existing
   bespoke sorter.
+- ✅ **Seestar S50 Pro** — fourth Seestar model everywhere the app knows
+  about the S50 / S30 / S30 Pro: `TELESCOPE_OPTIONS`, `matchTelescope()`
+  (the Pro pattern is tested before the plain S50 so an S50 Pro is no
+  longer classified as an S50), an `s50pro` planner scope (cap 11.5, a
+  heuristic), a fleet input on `/seestar.html`, and the Milky Way
+  wide-field gate generalised to a `wide_field` flag so both Pro models
+  get MWWF mosaics.
 
 ## Future ideas
 
@@ -436,9 +444,10 @@ below shipped together; listed here so the change log has one home.
     Reset `lastAutoWeatherKey`/`lastLocationStatsKey` in
     `resetPerImageFields`.
 68. **Seestar planner: `any` scope never gets Milky Way wide-field
-    targets.** MWWF is gated to `s30pro` scopes only; a single-scope
-    "Any" plan silently excludes them even though "any" may well be an
-    S30 Pro. Consider letting `any` include them with a note.
+    targets.** MWWF is gated to the `wide_field` scopes (`s30pro`,
+    `s50pro`) only; a single-scope "Any" plan silently excludes them even
+    though "any" may well be an S30 Pro or S50 Pro. Consider letting `any`
+    include them with a note.
 69. **Atlas zoom is wheel-only.** The FOV zoom added in the 2026-07
     audit doesn't handle touch pinch; mobile users still can't zoom.
     Wire `touchmove` pinch distance to the same FOV clamp.

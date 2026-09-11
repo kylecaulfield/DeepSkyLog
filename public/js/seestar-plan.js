@@ -42,6 +42,7 @@ const schedules = document.getElementById('schedules');
 
 // Per-model fleet counts. Keys match the SEESTAR_SCOPES keys on the server.
 const FLEET_MODELS = [
+  ['s50pro', 'count-s50pro'],
   ['s50', 'count-s50'],
   ['s30', 'count-s30'],
   ['s30pro', 'count-s30pro'],

@@ -1,8 +1,8 @@
 // Tolerant parser for the JSON sidecar files that Seestar S30 / S30 Pro / S50
-// drop next to each capture. Field names vary by app version; this walks the
-// whole object and pulls the first key (case-insensitive) that matches a
-// known alias. It returns canonical fields ready to drop into the upload
-// form, plus a human-readable summary.
+// / S50 Pro drop next to each capture. Field names vary by app version; this
+// walks the whole object and pulls the first key (case-insensitive) that
+// matches a known alias. It returns canonical fields ready to drop into the
+// upload form, plus a human-readable summary.
 
 const ALIASES = {
   exposure_seconds: [

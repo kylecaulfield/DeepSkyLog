@@ -64,16 +64,45 @@ async function waitForReady(timeoutMs = 60_000) {
   throw new Error('server did not become ready in time');
 }
 
-async function buildSyntheticJpeg() {
+async function buildSyntheticJpeg(model = 'Seestar S30 Pro') {
   // Keep test deps minimal — sharp is already a project dep so we lean on it.
   const sharp = require('sharp');
   const buf = await sharp({
     create: { width: 64, height: 64, channels: 3, background: { r: 0, g: 0, b: 0 } },
   })
     .jpeg()
-    .withMetadata({ exif: { IFD0: { Make: 'ZWO', Model: 'Seestar S30 Pro' } } })
+    .withMetadata({ exif: { IFD0: { Make: 'ZWO', Model: model } } })
     .toBuffer();
   return buf;
+}
+
+// Minimal but valid FITS file: one 2880-byte header block followed by a
+// tiny 8×8 16-bit image padded to a full data block. `cards` are extra
+// header keywords; string values are quoted FITS-style.
+function buildSyntheticFits(cards = {}) {
+  const lines = [
+    'SIMPLE  =                    T',
+    'BITPIX  =                   16',
+    'NAXIS   =                    2',
+    'NAXIS1  =                    8',
+    'NAXIS2  =                    8',
+  ];
+  for (const [key, value] of Object.entries(cards)) {
+    const v = typeof value === 'string' ? `'${value.replace(/'/g, "''")}'` : String(value);
+    lines.push(`${key.padEnd(8)}= ${v}`);
+  }
+  lines.push('END');
+  const header = Buffer.alloc(2880, ' ');
+  lines.forEach((line, i) => header.write(line.padEnd(80).slice(0, 80), i * 80, 'ascii'));
+  const data = Buffer.alloc(2880, 0);
+  for (let i = 0; i < 64; i++) data.writeInt16BE((i * 37) % 1000, i * 2);
+  return Buffer.concat([header, data]);
+}
+
+async function stageBlob(blob, filename) {
+  const fd = new FormData();
+  fd.set('image', blob, filename);
+  return fetchJsonAuthed('/api/admin/stage', { method: 'POST', body: fd });
 }
 
 test('smoke', async (t) => {
@@ -151,6 +180,9 @@ test('smoke', async (t) => {
     assert.equal(noAuth.status, 401);
     const cfg = await fetchJsonAuthed('/api/admin/config');
     assert.ok(Array.isArray(cfg.telescopes));
+    // Built-in models lead the merged list, S50 Pro first, in declaration order.
+    assert.deepEqual(cfg.telescopes.slice(0, 5),
+      ['Seestar S50 Pro', 'Seestar S50', 'Seestar S30 Pro', 'Seestar S30', '12" Dobsonian']);
   });
 
   await t.test('equipment CRUD round-trip', async () => {
@@ -517,6 +549,52 @@ test('smoke', async (t) => {
       body: JSON.stringify({ object_type: 'BOGUS' }),
     }).then((r) => r.json());
     assert.equal(patched.object_type, null);
+  });
+
+  await t.test('stage: Seestar model detection tells the S50 Pro from the S50', async () => {
+    const cases = [
+      ['Seestar S50 Pro', 'Seestar S50 Pro'],
+      ['Seestar S50', 'Seestar S50'],          // regression guard for pattern order
+      ['Seestar S30 Pro', 'Seestar S30 Pro'],
+      ['Seestar S30', 'Seestar S30'],
+      ['SEESTAR S50PRO', 'Seestar S50 Pro'],   // spacing / case tolerance
+      ['Seestar S 50 pro', 'Seestar S50 Pro'],
+    ];
+    for (const [model, expected] of cases) {
+      const jpeg = await buildSyntheticJpeg(model);
+      const staged = await stageBlob(new Blob([jpeg], { type: 'image/jpeg' }), 'detect.jpg');
+      assert.equal(staged.telescope_match, expected, `EXIF Model "${model}"`);
+      assert.deepEqual(staged.telescope_options.slice(0, 5),
+        ['Seestar S50 Pro', 'Seestar S50', 'Seestar S30 Pro', 'Seestar S30', '12" Dobsonian']);
+      await fetchAuthed(`/api/admin/stage/${staged.stage_id}`, { method: 'DELETE' });
+    }
+  });
+
+  await t.test('stage: S50 Pro FITS header → telescope match + f/5.2', async () => {
+    // INSTRUME string is the assumed one — see the note on matchTelescope().
+    const fits = buildSyntheticFits({
+      INSTRUME: 'Seestar S50 Pro', CREATOR: 'ZWO Seestar S50 Pro',
+      FOCALLEN: 260, APERTURE: 50, EXPTIME: 10, OBJECT: 'M 13',
+      'DATE-OBS': '2026-08-20T02:00:00.000000',
+    });
+    const staged = await stageBlob(
+      new Blob([fits], { type: 'application/octet-stream' }), 'synthetic-s50pro.fit');
+    assert.equal(staged.kind, 'fits');
+    assert.equal(staged.telescope_match, 'Seestar S50 Pro');
+    assert.equal(staged.exif.device, 'Seestar S50 Pro');
+    assert.equal(staged.exif.focal_length_mm, 260);
+    // APERTURE is the objective diameter in mm; the UI renders a focal ratio.
+    assert.equal(staged.exif.aperture, 5.2);
+    assert.equal(staged.exif.captured_at, '2026-08-20T02:00:00.000Z');
+    await fetchAuthed(`/api/admin/stage/${staged.stage_id}`, { method: 'DELETE' });
+
+    // Regression guard: the original S50 still resolves to f/5 + 'Seestar S50'.
+    const s50 = buildSyntheticFits({ INSTRUME: 'Seestar S50', FOCALLEN: 250, APERTURE: 50 });
+    const stagedS50 = await stageBlob(
+      new Blob([s50], { type: 'application/octet-stream' }), 'synthetic-s50.fit');
+    assert.equal(stagedS50.telescope_match, 'Seestar S50');
+    assert.equal(stagedS50.exif.aperture, 5);
+    await fetchAuthed(`/api/admin/stage/${stagedS50.stage_id}`, { method: 'DELETE' });
   });
 
   await t.test('Seestar filename parser fills gaps in stage response', async () => {
@@ -967,6 +1045,59 @@ test('smoke', async (t) => {
     assert.equal(single.scopes.length, 1);
   });
 
+  await t.test('Seestar S50 Pro scope: cap 11.5, S50 Pro + S50 fleet, allocation order', async () => {
+    const start = new Date('2026-01-15T22:00:00Z').toISOString();
+    const base = `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80`;
+
+    // The older single-`telescope` path accepts the new key.
+    const single = await fetchJsonAuthed(`${base}&telescope=s50pro`);
+    assert.equal(single.scope?.key, 's50pro');
+    assert.equal(single.scope?.name, 'Seestar S50 Pro');
+    assert.equal(single.scope?.max_magnitude, 11.5);
+    assert.equal(single.scopes.length, 1);
+    assert.ok(single.slots.length > 0, 'S50 Pro schedules targets');
+    for (const s of single.slots) {
+      if (s.target?.magnitude != null) {
+        assert.ok(s.target.magnitude <= 11.5,
+          `S50 Pro admitted mag ${s.target.magnitude} on ${s.target.catalog}${s.target.catalog_number}`);
+      }
+    }
+    // Key normalisation tolerates spacing / case like the other models.
+    const spaced = await fetchJsonAuthed(`${base}&telescope=${encodeURIComponent('S50 Pro')}`);
+    assert.equal(spaced.scope?.key, 's50pro');
+
+    // A mixed S50 Pro + S50 fleet: one table per scope, both labelled, no
+    // target in both schedules, each scope within its own cap.
+    const fleet = await fetchJsonAuthed(`${base}&fleet=s50pro:1,s50:1`);
+    assert.equal(fleet.scopes.length, 2);
+    const labels = fleet.scopes.map((s) => s.label);
+    assert.ok(labels.includes('Seestar S50 Pro'), `labels: ${labels}`);
+    assert.ok(labels.includes('Seestar S50'), `labels: ${labels}`);
+    const seen = new Set();
+    for (const scope of fleet.scopes) {
+      for (const slot of scope.slots) {
+        assert.ok(!seen.has(slot.target.id), `target ${slot.target.id} in both schedules`);
+        seen.add(slot.target.id);
+        if (slot.target.magnitude != null) {
+          assert.ok(slot.target.magnitude <= scope.max_magnitude,
+            `${scope.label} took mag ${slot.target.magnitude} over cap ${scope.max_magnitude}`);
+        }
+      }
+    }
+    assert.ok(seen.size > 0, 'fleet scheduled targets');
+
+    // Allocation order: the tighter S50 (cap 11.0) is planned before the
+    // S50 Pro (cap 11.5), so the S50's schedule in the fleet is identical
+    // to a solo S50 run — nothing was taken from it first.
+    const soloS50 = await fetchJsonAuthed(`${base}&telescope=s50`);
+    const fleetS50 = fleet.scopes.find((s) => s.key === 's50');
+    assert.deepEqual(
+      fleetS50.slots.map((s) => s.target.id),
+      soloS50.slots.map((s) => s.target.id),
+      'S50 is allocated before the S50 Pro',
+    );
+  });
+
   await t.test('Seestar session starts 30 min after sunset', async () => {
     // Request a daytime start; the planner should push the session start to
     // exactly 30 minutes after that evening's sunset.
@@ -983,24 +1114,41 @@ test('smoke', async (t) => {
     assert.ok(winStart > new Date(data.requested_start).getTime());
   });
 
-  await t.test('Milky Way wide-field targets are S30 Pro only', async () => {
+  await t.test('Milky Way wide-field targets go to the Pro models only', async () => {
     const start = new Date('2026-07-15T20:00:00Z').toISOString();
-    const q = (scope) =>
+    const q = (fleet) =>
       `/api/seestar-planner?lat=40&lon=-100&start=${encodeURIComponent(start)}`
-      + `&min_alt=15&max_alt=89&include_observed=1&lists=milky-way-wide&fleet=${scope}:1`;
+      + `&min_alt=15&max_alt=89&include_observed=1&lists=milky-way-wide&fleet=${fleet}`;
 
-    const pro = await fetchJsonAuthed(q('s30pro'));
-    const proSlots = pro.scopes[0].slots;
-    assert.ok(proSlots.length > 0, 'S30 Pro schedules wide-field targets');
-    for (const s of proSlots) {
-      assert.equal(s.target.catalog, 'MWWF', 'S30 Pro slot is a wide-field target');
+    // Both wide_field scopes (S30 Pro, S50 Pro) schedule MWWF mosaics.
+    for (const scope of ['s30pro', 's50pro']) {
+      const pro = await fetchJsonAuthed(q(`${scope}:1`));
+      const proSlots = pro.scopes[0].slots;
+      assert.ok(proSlots.length > 0, `${scope} schedules wide-field targets`);
+      for (const s of proSlots) {
+        assert.equal(s.target.catalog, 'MWWF', `${scope} slot is a wide-field target`);
+      }
     }
 
+    // The base models and "any" never get them.
     for (const scope of ['s30', 's50', 'any']) {
-      const other = await fetchJsonAuthed(q(scope));
+      const other = await fetchJsonAuthed(q(`${scope}:1`));
       assert.equal(other.scopes[0].slots.length, 0,
         `${scope} must not schedule wide-field MWWF targets`);
     }
+
+    // Both Pro models in one fleet share the mosaics without double-booking.
+    const both = await fetchJsonAuthed(q('s30pro:1,s50pro:1'));
+    assert.equal(both.scopes.length, 2);
+    const seen = new Set();
+    for (const scope of both.scopes) {
+      for (const s of scope.slots) {
+        assert.equal(s.target.catalog, 'MWWF');
+        assert.ok(!seen.has(s.target.id), `MWWF target ${s.target.id} double-booked`);
+        seen.add(s.target.id);
+      }
+    }
+    assert.ok(seen.size > 0, 'the two-Pro fleet schedules wide-field targets');
   });
 
   await t.test('bulk plate-solve endpoint: auth + payload contract', async () => {

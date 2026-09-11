@@ -1,5 +1,5 @@
-// Wide-field Milky Way starscapes the Seestar S30 Pro can frame as
-// mosaics. Each entry pairs a familiar wide-field name with the
+// Wide-field Milky Way starscapes the Seestar S30 Pro and S50 Pro can
+// frame as mosaics. Each entry pairs a familiar wide-field name with the
 // canonical Seestar-app target you actually slew to — the framing is
 // implicit, but the catalog reference is something the Seestar's tour
 // or 'Sky Atlas' will recognise. Cross-list aliases link these back
