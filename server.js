@@ -34,11 +34,19 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-const TELESCOPE_OPTIONS = ['Seestar S50', 'Seestar S30 Pro', 'Seestar S30', '12" Dobsonian'];
+const TELESCOPE_OPTIONS = ['Seestar S50 Pro', 'Seestar S50', 'Seestar S30 Pro', 'Seestar S30', '12" Dobsonian'];
 
 function matchTelescope(device) {
   if (!device) return null;
   const hay = String(device).toLowerCase();
+  // Pro variants must be tested before their base models: the plain S50 /
+  // S30 patterns are prefixes of "Seestar S50 Pro" / "Seestar S30 Pro".
+  // NOTE: a real S50 Pro export's watermark band reads "Seestar S50 Pro"
+  // (M31, 2026-09) — the same label the app prints for the S50, whose EXIF
+  // and FITS INSTRUME strings match its band. The S50 Pro's own EXIF
+  // Make/Model/Software and INSTRUME strings are still UNCONFIRMED and are
+  // assumed to match; adjust the pattern once a real S50 Pro file is staged.
+  if (/seestar\s*s\s*50\s*pro/i.test(hay)) return 'Seestar S50 Pro';
   if (/seestar\s*s\s*30\s*pro/i.test(hay)) return 'Seestar S30 Pro';
   if (/seestar\s*s\s*50/i.test(hay)) return 'Seestar S50';
   if (/seestar\s*s\s*30/i.test(hay)) return 'Seestar S30';
@@ -686,19 +694,34 @@ app.get('/api/planner', (req, res) => {
 // FOV / aperture context, for the curious:
 //   S50      — 50 mm f/5, 250 mm fl, ~1.3° × 0.7° FOV. Best on
 //              medium-bright DSOs, planets, anything that needs scale.
+//   S50 Pro  — 50 mm f/5.2, 260 mm fl, 4K (3840 × 2160) sensor,
+//              ~2.45° × 1.38° FOV (ZWO quotes 2.8°, which is the diagonal).
+//              Nearly 4× the S50's sky area at twice the linear resolution,
+//              and it carries the same wide-angle camera + arch stitching
+//              as the S30 Pro, so it also gets the Milky Way wide-field list.
 //   S30      — 30 mm f/5, 150 mm fl, ~2.1° × 1.2° FOV. Best on wide-
 //              field nebulae and bright star clusters; loses small
 //              compact targets in the bigger pixels.
 //   S30 Pro  — same optics as S30 with a better sensor + EAF; pulls
 //              ~0.5 mag deeper.
+//
+// `wide_field: true` marks the models whose wide-angle camera + one-tap
+// arch stitching make the Milky Way wide-field (MWWF) mosaics worthwhile.
+// Keys are appended in the order the models were added — never rename or
+// reorder them; the planner presents fleet tables in declaration order.
 const SEESTAR_SCOPES = {
   any:    { name: 'Any',            max_magnitude: null },
   s50:    { name: 'Seestar S50',    max_magnitude: 11.0,
             notes: '50 mm f/5, ~1.3°×0.7° FOV. Sweet spot: medium-bright DSOs, planets.' },
   s30:    { name: 'Seestar S30',    max_magnitude: 10.0,
             notes: '30 mm f/5, ~2.1°×1.2° FOV. Sweet spot: wide-field nebulae, bright clusters.' },
-  s30pro: { name: 'Seestar S30 Pro', max_magnitude: 10.5,
-            notes: 'S30 FOV with a better sensor + EAF — about half a magnitude deeper, and the only Seestar that handles mosaic wide-field Milky Way shots well.' },
+  s30pro: { name: 'Seestar S30 Pro', max_magnitude: 10.5, wide_field: true,
+            notes: 'S30 FOV with a better sensor + EAF — about half a magnitude deeper, and (with the S50 Pro) one of the two Seestars that handle mosaic wide-field Milky Way shots well.' },
+  // max_magnitude 11.5 is a heuristic, not a measurement: it follows the
+  // existing pattern where the Pro sensor is worth about half a magnitude
+  // over the base model (S30 10.0 → S30 Pro 10.5, so S50 11.0 → S50 Pro 11.5).
+  s50pro: { name: 'Seestar S50 Pro', max_magnitude: 11.5, wide_field: true,
+            notes: '50 mm f/5.2, 260 mm fl, 4K sensor, ~2.45 x 1.38 deg FOV. Deepest Seestar: small galaxies, globulars, compact nebulae, and it has enough field to skip mosaics on most Messier objects.' },
 };
 function parseSeestarScope(raw) {
   const k = String(raw || '').toLowerCase().replace(/\s+/g, '');
@@ -876,14 +899,15 @@ app.get('/api/seestar-planner', (req, res) => {
   // already in `assignedIds` (shared across scopes so a fleet never
   // double-books a target), respects the scope's magnitude cap, and marks
   // each pick as assigned. Returns the scope's filled slots in time order.
-  // Milky Way wide-field mosaics (the MWWF / milky-way-wide list) need the
-  // S30 Pro's sensor + EAF — no other Seestar frames them well, so only the
-  // S30 Pro is allowed to pick them up.
+  // Milky Way wide-field mosaics (the MWWF / milky-way-wide list) need a
+  // Pro model's sensor plus the wide-angle camera + arch stitching — only
+  // scopes flagged `wide_field` in SEESTAR_SCOPES (S30 Pro, S50 Pro) are
+  // allowed to pick them up; the base S30 / S50 and "any" never do.
   const isWideField = (row) =>
     row.catalog === 'MWWF' || row.list_slug === 'milky-way-wide';
 
   function planForScope(scopeDef, assignedIds) {
-    const wideFieldOK = scopeDef === SEESTAR_SCOPES.s30pro;
+    const wideFieldOK = scopeDef.wide_field === true;
     const plan = [];
     let cursor = sessionStart.getTime();
     while (cursor < sessionEnd.getTime()) {
@@ -892,7 +916,7 @@ app.get('/api/seestar-planner', (req, res) => {
       for (const row of rows) {
         if (!includeObserved && row.observed) continue;
         if (assignedIds.has(row.id)) continue;
-        // Wide-field Milky Way mosaics are S30 Pro only.
+        // Wide-field Milky Way mosaics go to wide_field scopes only.
         if (!wideFieldOK && isWideField(row)) continue;
         // Telescope cap: drop targets too faint for the chosen scope.
         // NULL magnitudes (planets, ephemeris, free-form) always pass.
@@ -953,7 +977,7 @@ app.get('/api/seestar-planner', (req, res) => {
   // schedule. Without it we fall back to the single `telescope` selection
   // so older callers (and the existing tests) keep their shape.
   const fleetCounts = parseFleet(req.query.fleet);
-  const modelOrder = Object.keys(SEESTAR_SCOPES); // any, s50, s30, s30pro
+  const modelOrder = Object.keys(SEESTAR_SCOPES); // any, s50, s30, s30pro, s50pro
   let instances = [];
   if (Object.keys(fleetCounts).length) {
     for (const key of modelOrder) {
@@ -968,8 +992,10 @@ app.get('/api/seestar-planner', (req, res) => {
 
   // Allocate most-restrictive scope first (lowest magnitude cap), so a deep
   // scope (e.g. S50 ≤ 11) keeps the faint targets only it can reach instead
-  // of a shallower scope grabbing a target it can't even use. A null cap
-  // ("any") is the least restrictive, so it runs last. Stable for ties.
+  // of a shallower scope grabbing a target it can't even use. With every
+  // model in play that is S30 (10.0) → S30 Pro (10.5) → S50 (11.0) →
+  // S50 Pro (11.5); a null cap ("any") is the least restrictive, so it
+  // runs last. Stable for ties.
   const capOf = (key) => SEESTAR_SCOPES[key].max_magnitude ?? Infinity;
   const allocationOrder = instances
     .map((inst, i) => ({ inst, i }))

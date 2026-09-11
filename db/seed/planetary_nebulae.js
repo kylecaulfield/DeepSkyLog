@@ -1,6 +1,6 @@
 // Bright planetary nebulae picked for smart-scope reach (~mag 12 and brighter,
-// most large enough to render with structure on a Seestar S50/S30). Aliases
-// bridge to Messier and Caldwell entries for the same nebula.
+// most large enough to render with structure on a Seestar S50 Pro/S50/S30).
+// Aliases bridge to Messier and Caldwell entries for the same nebula.
 
 const SEESTAR_PLANETARY_NEBULAE = [
   { catalog: 'PN', catalogNumber: '1',  name: 'Dumbbell Nebula',          type: 'PN', ra: 19.9934, dec: 22.7214,  mag: 7.5,  constellation: 'Vulpecula',   aliases: ['M27', 'NGC 6853'] },

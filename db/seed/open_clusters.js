@@ -1,6 +1,6 @@
-// Bright open clusters that comfortably fit a Seestar S50/S30 field of view.
-// Curated rather than the full AL Open Cluster programme (which includes
-// some clusters too large or too sparse for a 1°-class FOV).
+// Bright open clusters that comfortably fit a Seestar S50 Pro/S50/S30 field
+// of view. Curated rather than the full AL Open Cluster programme (which
+// includes some clusters too large or too sparse for a 1°-class FOV).
 
 const SEESTAR_OPEN_CLUSTERS = [
   { catalog: 'OC', catalogNumber: '1',  name: 'Pleiades',                type: 'OC', ra: 3.7911,  dec: 24.1050,  mag: 1.6, constellation: 'Taurus',          aliases: ['M45'] },

@@ -156,10 +156,10 @@ function seedCatalogs(db) {
     { slug: 'finest-ngc',       name: 'Finest NGC',               description: 'A curated selection of bright non-Messier NGC objects, suited for small-aperture and smart-scope observers.', entries: FINEST_NGC },
     { slug: 'local-group',      name: 'Local Group Galaxies',     description: 'Members and bright satellites of our Local Group of galaxies.',                  entries: LOCAL_GROUP },
     { slug: 'al-globulars',     name: 'Astronomical League — Globular Clusters', description: 'The 50 brightest globular clusters from the AL observing program.', entries: AL_GLOBULARS },
-    { slug: 'open-clusters-s50', name: 'Open Clusters for Smart Scopes', description: 'Bright open clusters that fit comfortably in a Seestar S50 / S30 field of view.', entries: SEESTAR_OPEN_CLUSTERS },
-    { slug: 'planetary-nebulae-s50', name: 'Planetary Nebulae for Smart Scopes', description: 'Brighter planetary nebulae detectable with a Seestar S50 / S30.', entries: SEESTAR_PLANETARY_NEBULAE },
-    { slug: 'sharpless-bright', name: 'Sharpless 2 (Bright Subset)', description: "S50-friendly large emission nebulae from Stewart Sharpless's 1959 catalog.",   entries: SHARPLESS_BRIGHT },
-    { slug: 'milky-way-wide',   name: 'Milky Way Wide-Field',     description: 'Big mosaic-style starscapes the Seestar S30 / S30 Pro can frame: galactic core, Cygnus rift, Heart+Soul, Barnard\'s Loop and friends.', entries: MILKY_WAY_WIDE },
+    { slug: 'open-clusters-s50', name: 'Open Clusters for Smart Scopes', description: 'Bright open clusters that fit comfortably in a Seestar S50 Pro / S50 / S30 field of view.', entries: SEESTAR_OPEN_CLUSTERS },
+    { slug: 'planetary-nebulae-s50', name: 'Planetary Nebulae for Smart Scopes', description: 'Brighter planetary nebulae detectable with a Seestar S50 Pro / S50 / S30.', entries: SEESTAR_PLANETARY_NEBULAE },
+    { slug: 'sharpless-bright', name: 'Sharpless 2 (Bright Subset)', description: "S50 / S50 Pro-friendly large emission nebulae from Stewart Sharpless's 1959 catalog.",   entries: SHARPLESS_BRIGHT },
+    { slug: 'milky-way-wide',   name: 'Milky Way Wide-Field',     description: 'Big mosaic-style starscapes the Seestar S30 / S30 Pro / S50 Pro can frame: galactic core, Cygnus rift, Heart+Soul, Barnard\'s Loop and friends.', entries: MILKY_WAY_WIDE },
     { slug: 'solar-system',     name: 'Solar System',             description: 'The Sun, the Moon and the eight major planets — positions are computed live from a low-precision Schlyter ephemeris.', entries: SOLAR_SYSTEM },
   ];
 

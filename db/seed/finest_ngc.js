@@ -1,5 +1,5 @@
 // Finest NGC — a curated selection of bright non-Messier NGC and IC objects
-// suited to small refractors and smart scopes (Seestar S50/S30 class).
+// suited to small refractors and smart scopes (Seestar S50 Pro/S50/S30 class).
 // Each entry's `aliases` cross-references the same physical object as it
 // appears in other built-in lists (Caldwell number primarily) so that an
 // upload of e.g. C14 ticks the Double Cluster on this list too.
