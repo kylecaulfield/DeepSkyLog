@@ -31,6 +31,9 @@ const EXPECTED = {
   's30pro-c18.jpg':     { telescope: 'Seestar S30 Pro', target: 'C18',     captured_at: '2026-10-03T20:59', exposure_seconds_total: 23 * 60 },
   's50pro-ngc7000.jpg': { telescope: 'Seestar S50 Pro', target: 'NGC7000', captured_at: '2026-10-04T02:08', exposure_seconds_total: 91 * 60 },
   's50pro-ngc6960.jpg': { telescope: 'Seestar S50 Pro', target: 'NGC6960', captured_at: '2026-10-03T22:43', exposure_seconds_total: 84 * 60 },
+  // A dense star field: every row of the bottom strip has enough bright star
+  // pixels to clear the fixed text-row bar, which used to hide the band.
+  's30pro-ngc1023-dense.jpg': { telescope: 'Seestar S30 Pro', target: 'NGC1023', captured_at: '2026-10-04T00:49', exposure_seconds_total: 117 * 60 },
 };
 // Every fixture band reads "Kyle Caulfield / 90° W, 39° N / …".
 const COMMON = { latitude: 39, longitude: -90, photographer: 'Kyle Caulfield' };
@@ -144,9 +147,7 @@ test('reads real EXIF-less Seestar exports', { skip: OCR_SKIP }, async (t) => {
   });
 });
 
-test('staging an EXIF-less export fills telescope, location and date', { skip: OCR_SKIP }, async (t) => {
-  // The original bug: staging only ran watermark OCR when EXIF said
-  // "Seestar", so these exports came back with every field empty.
+test('EXIF-less exports through the HTTP API', { skip: OCR_SKIP }, async (t) => {
   const PASSWORD = 'bandtest';
   const port = 8000 + Math.floor(Math.random() * 4000);
   const base = `http://127.0.0.1:${port}`;
@@ -181,11 +182,26 @@ test('staging an EXIF-less export fills telescope, location and date', { skip: O
   }
 
   const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
-  const fd = new FormData();
-  fd.set('image', new Blob([fs.readFileSync(path.join(FIXTURES, 's50pro-ngc6960.jpg'))], { type: 'image/jpeg' }), 'IMG_0412.jpg');
-  const res = await fetch(`${base}/api/admin/stage`, { method: 'POST', headers: auth, body: fd });
-  assert.equal(res.status, 201);
-  const staged = await res.json();
+  const stage = async (file) => {
+    const fd = new FormData();
+    fd.set('image', new Blob([fs.readFileSync(path.join(FIXTURES, file))], { type: 'image/jpeg' }), 'IMG_0412.jpg');
+    const res = await fetch(`${base}/api/admin/stage`, { method: 'POST', headers: auth, body: fd });
+    assert.equal(res.status, 201);
+    return res.json();
+  };
+  const finalize = async (body) => {
+    const res = await fetch(`${base}/api/admin/observations`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    assert.equal(res.status, 201);
+    const { id } = await res.json();
+    return (await (await fetch(`${base}/api/observations/${id}`)).json()).observation;
+  };
+
+  await t.test('staging fills telescope, location and date', async () => {
+  // The original bug: staging only ran watermark OCR when EXIF said
+  // "Seestar", so these exports came back with every field empty.
+  const staged = await stage('s50pro-ngc6960.jpg');
   assert.equal(staged.exif.device, null, 'fixture really has no EXIF device');
   assert.equal(staged.telescope_match, 'Seestar S50 Pro');
   assert.equal(staged.telescope_source, 'watermark');
@@ -198,4 +214,35 @@ test('staging an EXIF-less export fills telescope, location and date', { skip: O
   assert.equal(staged.guesses.photographer, 'Kyle Caulfield');
   assert.equal(staged.guesses.from_ocr, true);
   await fetch(`${base}/api/admin/stage/${staged.stage_id}`, { method: 'DELETE', headers: auth });
+  });
+
+  await t.test('finalize with only stage_id (iOS shortcut) fills the rest from the band', async () => {
+    // Clients that finalize straight after staging never see the stage
+    // response, so finalize has to read the band itself.
+    const staged = await stage('s30pro-c18.jpg');
+    const obs = await finalize({ stage_id: staged.stage_id });
+    assert.equal(obs.telescope, 'Seestar S30 Pro');
+    assert.equal(obs.latitude, 39);
+    assert.equal(obs.longitude, -90);
+    assert.equal(obs.observed_at, '2026-10-03T20:59');
+    assert.equal(obs.catalog, 'C');
+    assert.equal(obs.catalog_number, '18');
+    assert.ok(obs.list_object_id, 'C18 resolved to its Caldwell list row');
+    assert.equal(obs.exposure_seconds, 23 * 60);
+  });
+
+  await t.test('finalize keeps what the client sent, including deliberately cleared fields', async () => {
+    // The upload form sends every key; null means the user cleared it.
+    const staged = await stage('s30pro-ngc6210.jpg');
+    const obs = await finalize({
+      stage_id: staged.stage_id, telescope: '12" Dobsonian', observed_at: '2026-10-01T21:00',
+      latitude: null, longitude: null, catalog: 'NGC', catalog_number: '6210', object_name: 'NGC 6210',
+      exposure_seconds: null,
+    });
+    assert.equal(obs.telescope, '12" Dobsonian');
+    assert.equal(obs.observed_at, '2026-10-01T21:00');
+    assert.equal(obs.latitude, null, 'cleared latitude stays cleared');
+    assert.equal(obs.longitude, null, 'cleared longitude stays cleared');
+    assert.equal(obs.exposure_seconds, null);
+  });
 });

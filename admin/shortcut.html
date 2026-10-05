@@ -164,10 +164,13 @@
               <li><code>stage_id</code> → variable <code>stage</code></li>
               <li><code>object_name</code> → variable <code>target</code>
                   <span class="step-hint">(or skip if you didn't add the prompt)</span></li>
-              <li><code>telescope</code> → <code>Seestar S50</code>
-                  <span class="step-hint">(set to whatever you image with)</span></li>
-              <li><code>observed_at</code> → <em>Current Date</em>, format ISO 8601</li>
             </ul>
+            Leave out <code>telescope</code>, <code>observed_at</code>,
+            <code>latitude</code> and <code>longitude</code>: for a Seestar
+            export, DeepSkyLog reads the telescope, capture time, location,
+            target and integration time from the watermark band. Add a key only
+            to override it (for example <code>telescope</code> →
+            <code>12" Dobsonian</code> for a non-Seestar photo).
             Repeat the same <strong>Basic auth</strong> setup as in step 2 under
             <strong>Advanced</strong>.
           </li>
@@ -235,7 +238,7 @@
         `  ${origin}/api/admin/stage | jq -r .stage_id)\n\n` +
         `# 2. Finalize\n` +
         `curl -s -u admin:PASSWORD -H 'Content-Type: application/json' \\\n` +
-        `  -d "{\\"stage_id\\":\\"$STAGE\\",\\"telescope\\":\\"Seestar S50\\",\\"observed_at\\":\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\"}" \\\n` +
+        `  -d "{\\"stage_id\\":\\"$STAGE\\"}" \\\n` +
         `  ${origin}/api/admin/observations`;
 
       // Generic copy-to-clipboard handler for any [data-copy] / [data-copy-text]

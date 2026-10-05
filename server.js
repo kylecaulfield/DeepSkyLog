@@ -2525,6 +2525,13 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
       // A band layout the structured reader doesn't recognise still gets the
       // free-form whole-band OCR, mined by parseSeestarText below.
       if (band && !band.found) ocrText = await ocrBanner(req.file.path);
+      // null means OCR could not run at all; say so, so the upload form can
+      // tell "watermark unreadable" from "OCR unavailable on this server".
+      if (band === null) {
+        ocrError = process.env.DISABLE_OCR === '1'
+          ? 'OCR is disabled on this server (DISABLE_OCR=1)'
+          : 'the OCR engine is unavailable (see the server log)';
+      }
     } catch (err) {
       ocrError = err.message;
       console.warn('Seestar OCR failed:', err.message);
@@ -2644,10 +2651,10 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
     return res.status(404).json({ error: 'Staged file not found' });
   }
 
-  const telescope = String(body.telescope || '').trim() || null;
+  let telescope = String(body.telescope || '').trim() || null;
   const location = body.location ? String(body.location).trim() : null;
   const notes = body.notes ? String(body.notes).trim() : null;
-  const observedAt = body.observed_at ? String(body.observed_at).trim() : null;
+  let observedAt = body.observed_at ? String(body.observed_at).trim() : null;
   // Same guard as the PATCH endpoint: a garbage date would silently break
   // COALESCE(observed_at, …) ordering everywhere.
   if (observedAt && Number.isNaN(Date.parse(observedAt))) {
@@ -2714,12 +2721,49 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       .get(rawObjectId);
   }
 
+  // Clients that finalize straight after staging (the iOS share-sheet
+  // shortcut, curl) omit the location, telescope, capture time, target and
+  // integration the upload form pre-fills from POST /api/admin/stage. For an
+  // EXIF-less Seestar export those only exist in the watermark band, so read
+  // it here for the fields the request left out — same reader and gate as
+  // staging. "Left out" means the key is absent: the upload form always sends
+  // every key (null / '' when the user cleared one), so its saves are
+  // unaffected and a deliberately cleared field stays cleared.
+  const omitted = (k) => body[k] === undefined;
+  const wantTelescope = omitted('telescope');
+  const wantDate = omitted('observed_at');
+  const wantCoords = omitted('latitude') && omitted('longitude');
+  const wantExposure = omitted('exposure_seconds');
+  const noTarget = omitted('object_id') && omitted('catalog') && omitted('object_name');
+  let band = null;
+  let stageDevice = null;
+  if (!isFitsPath(stageId)
+      && (wantTelescope || wantDate || wantCoords || wantExposure || noTarget)) {
+    let stageExif = null;
+    try { stageExif = await exifr.parse(stagePath, { tiff: true, ifd0: true, exif: true }); } catch {}
+    stageDevice = deviceFromExif(stageExif);
+    const cameraIdentity = [stageExif?.Make, stageExif?.Model].filter(Boolean).join(' ').trim();
+    if (/seestar|zwo/i.test(stageDevice || '') || !cameraIdentity) {
+      try { band = await readSeestarBand(stagePath); } catch { band = null; }
+    }
+  }
+  if (wantTelescope) telescope = matchTelescope(stageDevice) || band?.telescope || null;
+  if (wantDate && band?.captured_at) observedAt = band.captured_at;
+  if (noTarget && band?.target) {
+    matchedObject = db
+      .prepare('SELECT * FROM list_objects WHERE UPPER(catalog) = UPPER(?) AND catalog_number = ? ORDER BY id LIMIT 1')
+      .get(band.target.catalog, band.target.number) || null;
+  }
+
   const catalog = matchedObject?.catalog
-    || (body.catalog ? String(body.catalog).trim() : null);
+    || (body.catalog ? String(body.catalog).trim() : null)
+    || (noTarget && band?.target ? band.target.catalog : null);
   const catalogNumber = matchedObject?.catalog_number
-    || (body.catalog_number ? String(body.catalog_number).trim() : null);
+    || (body.catalog_number ? String(body.catalog_number).trim() : null)
+    || (noTarget && band?.target ? band.target.number : null);
   const objectName = matchedObject?.name
-    || (body.object_name ? String(body.object_name).trim() : null);
+    || (body.object_name ? String(body.object_name).trim() : null)
+    || (noTarget && band?.target ? band.target.raw : null);
 
   const dateForPath = observedAt && !Number.isNaN(Date.parse(observedAt))
     ? new Date(observedAt)
@@ -2794,10 +2838,12 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   const fx = fitsHeader ? fitsExif(fitsHeader) : null;
   const latitude = formLatitude
     ?? fx?.latitude
-    ?? (typeof exif?.latitude === 'number' ? exif.latitude : null);
+    ?? (typeof exif?.latitude === 'number' ? exif.latitude : null)
+    ?? (wantCoords ? band?.latitude ?? null : null);
   const longitude = formLongitude
     ?? fx?.longitude
-    ?? (typeof exif?.longitude === 'number' ? exif.longitude : null);
+    ?? (typeof exif?.longitude === 'number' ? exif.longitude : null)
+    ?? (wantCoords ? band?.longitude ?? null : null);
 
   const cameraField = fx?.device || (exif?.Model ? String(exif.Model) : null);
   const exposureField = exif?.ExposureTime ?? fx?.exposureSeconds ?? null;
@@ -2838,7 +2884,10 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
       telescope,
       camera: cameraField,
       // Explicit form values override EXIF/FITS-derived defaults.
-      exposure_seconds: formExposure ?? exposureField,
+      // The band's total integration is what the upload form falls back to
+      // when there's no per-frame exposure, so do the same here.
+      exposure_seconds: formExposure ?? exposureField
+        ?? (wantExposure ? band?.exposure_seconds_total ?? null : null),
       iso: formIso ?? exif?.ISO ?? exif?.ISOSpeedRatings ?? null,
       focal_length_mm: focalLengthField,
       aperture: apertureField,
