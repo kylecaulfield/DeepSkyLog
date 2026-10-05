@@ -445,7 +445,9 @@ async function onStaged(res) {
   const metaSource = res.kind === 'fits' ? 'FITS header' : 'EXIF';
   if (res.telescope_match) {
     telescopeSelect.value = res.telescope_match;
-    telescopeHint.textContent = `Auto-detected from ${metaSource}: ${res.exif.device || 'device'}`;
+    telescopeHint.textContent = res.telescope_source === 'watermark'
+      ? `Auto-detected from the Seestar watermark: ${res.telescope_match}`
+      : `Auto-detected from ${metaSource}: ${res.exif.device || 'device'}`;
   } else if (telescopeSelect.value) {
     // Telescope is a shared-across-batch field — keep the user's manual
     // pick when the next image carries no device info, instead of

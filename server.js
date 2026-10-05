@@ -13,6 +13,7 @@ const { altAz, moonPhase, sunPosition, moonPosition, angularSeparationDeg } = re
 const { bodyPosition } = require('./lib/ephemeris');
 const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/fits');
 const { ocrBanner } = require('./lib/seestar_ocr');
+const { readBand: readSeestarBand } = require('./lib/seestar_band');
 const { parseAll: parseSeestarText, parseFilename: parseSeestarFilename } = require('./lib/seestar_meta');
 const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
@@ -2455,6 +2456,9 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
   let aperture = null;
   let objectName = null;
   let exifTextBlob = '';
+  // EXIF Make/Model only — Software gets stamped by editors and the OS, so
+  // it says nothing about which camera took the picture.
+  let cameraIdentity = null;
 
   if (isFits) {
     try {
@@ -2483,6 +2487,7 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
     const captured = exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate || null;
     capturedIso = captured instanceof Date ? captured.toISOString() : null;
     device = deviceFromExif(exif);
+    cameraIdentity = [exif?.Make, exif?.Model].filter(Boolean).map(String).join(' ').trim() || null;
     latitude = typeof exif?.latitude === 'number' ? exif.latitude : null;
     longitude = typeof exif?.longitude === 'number' ? exif.longitude : null;
     iso = exif?.ISO ?? exif?.ISOSpeedRatings ?? null;
@@ -2498,17 +2503,39 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
 
   // Mine the text we have (EXIF text fields plus the watermark band on
   // Seestar JPGs) for target / total exposure / coords / capture date.
-  const telescopeMatch = matchTelescope(device);
-  const isSeestar = !isFits && /seestar/i.test(device || '');
+  let telescopeMatch = matchTelescope(device);
+  let telescopeSource = telescopeMatch ? (isFits ? 'fits' : 'exif') : null;
+  // OCR the watermark band whenever the image could be a Seestar export:
+  // EXIF names a Seestar / ZWO device, or EXIF carries no camera identity at
+  // all. The Seestar app's shared and saved exports arrive with Make/Model
+  // stripped, and that is exactly when the band is the only source of the
+  // telescope, location and date. Photos whose EXIF names some other camera
+  // skip the OCR cost, as before.
+  const mayBeSeestarExport = !isFits
+    && (/seestar|zwo/i.test(device || '') || !cameraIdentity);
   let ocrText = null;
   let ocrError = null;
-  if (isSeestar) {
+  // Structured read of the band (lib/seestar_band): telescope, target,
+  // coordinates, date, integration and photographer, each null unless read
+  // with confidence. null altogether when OCR is unavailable.
+  let band = null;
+  if (mayBeSeestarExport) {
     try {
-      ocrText = await ocrBanner(req.file.path);
+      band = await readSeestarBand(req.file.path);
+      // A band layout the structured reader doesn't recognise still gets the
+      // free-form whole-band OCR, mined by parseSeestarText below.
+      if (band && !band.found) ocrText = await ocrBanner(req.file.path);
     } catch (err) {
       ocrError = err.message;
       console.warn('Seestar OCR failed:', err.message);
     }
+  }
+  // EXIF / FITS stay authoritative; the band only fills what they lack. The
+  // free-form OCR text is deliberately not run through matchTelescope: it
+  // reads "Seestar S50 Pro" as "SeestarS50P0", which would match a plain S50.
+  if (!telescopeMatch && band?.telescope) {
+    telescopeMatch = band.telescope;
+    telescopeSource = 'watermark';
   }
   const combinedText = [exifTextBlob || '', ocrText || ''].filter(Boolean).join('\n');
   const guesses = parseSeestarText(combinedText);
@@ -2527,12 +2554,21 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
     stackCount = fileGuess.stack_count;
     filterName = fileGuess.filter_name;
   }
+  // The band's date-time is to the minute; the filename's (above) is to the
+  // second, so it only fills in when the filename had none.
+  if (!capturedIso && band?.captured_at) capturedIso = band.captured_at;
+  if (!objectName && band?.target?.raw) objectName = band.target.raw;
 
   // Promote OCR/EXIF guesses into the exposed exif block where the form
   // currently has nothing (sub-second EXIF exposure shouldn't be clobbered
   // by a watermark "52min", which is total integration; we put that in a
   // separate field for the UI to interpret).
   let coordsFromText = false;   // true when lat/lon came from OCR/EXIF text mining, not GPS tags
+  if (latitude == null && longitude == null && band?.latitude != null && band?.longitude != null) {
+    latitude = band.latitude;
+    longitude = band.longitude;
+    coordsFromText = true;
+  }
   if (latitude == null && guesses.coords?.latitude != null) {
     latitude = guesses.coords.latitude;
     coordsFromText = true;
@@ -2562,15 +2598,17 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
       filter_name: filterName,
     },
     guesses: {
-      target: guesses.target || fileGuess?.target || null,
-      total_exposure_seconds: guesses.exposure_seconds_total,
-      photographer: guesses.photographer,
-      from_ocr: !!ocrText,
+      target: band?.target || guesses.target || fileGuess?.target || null,
+      total_exposure_seconds: band?.exposure_seconds_total ?? guesses.exposure_seconds_total,
+      photographer: band?.photographer ?? guesses.photographer,
+      from_ocr: !!(ocrText || band?.found),
       coords_from_text: coordsFromText,
       from_filename: !!fileGuess,
       ocr_error: ocrError,
     },
     telescope_match: telescopeMatch,
+    // 'exif' | 'fits' | 'watermark' — where telescope_match came from.
+    telescope_source: telescopeSource,
     telescope_options: TELESCOPE_OPTIONS,
   });
 });
