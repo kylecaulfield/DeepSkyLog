@@ -2455,6 +2455,9 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
   let aperture = null;
   let objectName = null;
   let exifTextBlob = '';
+  // EXIF Make/Model only — Software gets stamped by editors and the OS, so
+  // it says nothing about which camera took the picture.
+  let cameraIdentity = null;
 
   if (isFits) {
     try {
@@ -2483,6 +2486,7 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
     const captured = exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate || null;
     capturedIso = captured instanceof Date ? captured.toISOString() : null;
     device = deviceFromExif(exif);
+    cameraIdentity = [exif?.Make, exif?.Model].filter(Boolean).map(String).join(' ').trim() || null;
     latitude = typeof exif?.latitude === 'number' ? exif.latitude : null;
     longitude = typeof exif?.longitude === 'number' ? exif.longitude : null;
     iso = exif?.ISO ?? exif?.ISOSpeedRatings ?? null;
@@ -2499,10 +2503,17 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
   // Mine the text we have (EXIF text fields plus the watermark band on
   // Seestar JPGs) for target / total exposure / coords / capture date.
   const telescopeMatch = matchTelescope(device);
-  const isSeestar = !isFits && /seestar/i.test(device || '');
+  // OCR the watermark band whenever the image could be a Seestar export:
+  // EXIF names a Seestar / ZWO device, or EXIF carries no camera identity at
+  // all. The Seestar app's shared and saved exports arrive with Make/Model
+  // stripped, and that is exactly when the band is the only source of the
+  // telescope, location and date. Photos whose EXIF names some other camera
+  // skip the OCR cost, as before.
+  const mayBeSeestarExport = !isFits
+    && (/seestar|zwo/i.test(device || '') || !cameraIdentity);
   let ocrText = null;
   let ocrError = null;
-  if (isSeestar) {
+  if (mayBeSeestarExport) {
     try {
       ocrText = await ocrBanner(req.file.path);
     } catch (err) {
