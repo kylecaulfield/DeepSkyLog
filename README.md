@@ -280,7 +280,9 @@ works).
 
 1. In `/admin/upload.html`, drop a JPG/PNG onto the drop zone.
 2. EXIF is parsed server-side. If the camera model matches a Seestar the
-   telescope is auto-selected.
+   telescope is auto-selected. Exports shared from the Seestar app carry no
+   camera EXIF, so for those the server reads the watermark band instead:
+   telescope, target, location, date, integration time and photographer.
 3. Type the object name — the input autocompletes from the seeded catalogs.
 4. Confirm date, location, rating, notes, and save.
 5. The file lands in `uploads/YYYY/MM/<object-slug>/`, a thumbnail is

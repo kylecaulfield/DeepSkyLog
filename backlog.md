@@ -110,6 +110,16 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   rating, size and catalog-id columns sort correctly via per-cell
   `data-sort` keys; blanks sink to the bottom; planner keeps its existing
   bespoke sorter.
+- ✅ **Watermark band reader for EXIF-less exports** — images shared from
+  the Seestar app have no EXIF Make/Model/GPS, and staging only OCR'd the
+  band when EXIF said "Seestar", so telescope, location and date all came
+  back empty. Staging now OCRs any image without a camera identity, and
+  `lib/seestar_band.js` reads the band field by field (row localisation,
+  per-field crops with star removal, whitelisted single-line OCR, voting
+  across renderings, glyph-count and digit-shape checks), preferring null
+  to a wrong value. Scored 175/175 on five real S30 Pro / S50 Pro exports
+  at 720–2160 px and JPEG q55 (old pipeline: −8). Fixtures in
+  `test/fixtures/seestar-bands/`; OCR tests skip under `DISABLE_OCR=1`.
 - ✅ **Seestar S50 Pro** — fourth Seestar model everywhere the app knows
   about the S50 / S30 / S30 Pro: `TELESCOPE_OPTIONS`, `matchTelescope()`
   (the Pro pattern is tested before the plain S50 so an S50 Pro is no
