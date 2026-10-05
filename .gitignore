@@ -6,4 +6,7 @@ uploads/
 thumbnails/
 backups/
 vendor/tessdata/
+# tesseract.js unpacked language cache (lands in the cwd when a script
+# creates a worker without cachePath)
+*.traineddata
 .DS_Store
