@@ -120,6 +120,13 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   to a wrong value. Scored 175/175 on five real S30 Pro / S50 Pro exports
   at 720–2160 px and JPEG q55 (old pipeline: −8). Fixtures in
   `test/fixtures/seestar-bands/`; OCR tests skip under `DISABLE_OCR=1`.
+- ✅ **Watermark fallbacks at finalize + dense star fields** — clients that
+  finalize straight after staging (the iOS share-sheet shortcut, curl) never
+  got the band's location / telescope / date / target, because only the
+  upload form copied them from the stage response. Finalize now reads the
+  band for keys the request omits. The band reader also retries row
+  detection with a star-density-scaled threshold, so rich fields (NGC 1023)
+  no longer hide the band. Staging reports when OCR can't run at all.
 - ✅ **Seestar S50 Pro** — fourth Seestar model everywhere the app knows
   about the S50 / S30 / S30 Pro: `TELESCOPE_OPTIONS`, `matchTelescope()`
   (the Pro pattern is tested before the plain S50 so an S50 Pro is no
