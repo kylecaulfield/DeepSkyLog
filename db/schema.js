@@ -220,6 +220,19 @@ const MIGRATIONS = [
       ALTER TABLE observations ADD COLUMN object_name TEXT;
     `,
   },
+  {
+    id: 16,
+    name: 'add_maintenance_runs',
+    // One-time data repairs that run at boot (lib/repair_dates.js) record
+    // themselves here once finished, so a later boot never repeats them.
+    up: `
+      CREATE TABLE IF NOT EXISTS maintenance_runs (
+        name TEXT PRIMARY KEY,
+        ran_at TEXT NOT NULL DEFAULT (datetime('now')),
+        summary TEXT
+      );
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

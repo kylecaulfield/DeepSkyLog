@@ -154,6 +154,16 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   The old form's browser-rounded 2 / 2.1 s exposure counts as junk on rows
   nobody edited. User-edited values are left alone and a repaired row never
   qualifies again.
+- ✅ **Boot-time fix of upload-time dates** — when an upload had no capture
+  time, the form pre-filled "now" and the shortcut sent the current time, so
+  many Seestar exports were dated by when they were uploaded (74 of 169 on
+  the live site, some by weeks). `lib/repair_dates.js` runs once at boot:
+  rows whose `observed_at` sits 0–15 min before `created_at` on the
+  uploader's own hour offset get the watermark's capture time, cross-checked
+  against the app's EXIF note / raw `DateTimeOriginal` (which also stand in
+  when the watermark has no usable date); disagreement leaves the row alone.
+  Replayed on a copy of the live data: 72 corrected, all within minutes (or
+  one time-zone hour) of the EXIF time, one watermark misread caught.
 - **Band reader gaps on full-resolution (2160×3840) exports** — on real
   originals the model row is sometimes unread (a star touching the model
   text breaks the glyph count; Milky Way glow behind it garbles the crop),

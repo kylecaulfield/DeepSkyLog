@@ -17,6 +17,7 @@ const { readBand: readSeestarBand } = require('./lib/seestar_band');
 const { parseAll: parseSeestarText, parseFilename: parseSeestarFilename } = require('./lib/seestar_meta');
 const { exifGps, exifOptics } = require('./lib/exif_sanity');
 const { repairJunkOptics } = require('./lib/repair_optics');
+const { repairWatermarkDates } = require('./lib/repair_dates');
 const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
 
@@ -3198,9 +3199,13 @@ app.listen(PORT, () => {
   if (!ADMIN_PASSWORD) {
     console.warn('WARNING: ADMIN_PASSWORD is not set — /admin is disabled.');
   }
-  // In the background: repair observations saved with the junk exposure /
-  // focal length / aperture of recent Seestar EXIF (lib/repair_optics). A
-  // no-op once they're fixed.
-  repairJunkOptics({ db, uploadDir: UPLOAD_DIR, backupDir: BACKUP_DIR, readBand: readSeestarBand })
-    .catch((err) => console.warn('Junk EXIF optics repair failed:', err.message));
+  // In the background, one after the other (they share the OCR worker):
+  // repair observations saved with the junk exposure / focal length /
+  // aperture of recent Seestar EXIF (lib/repair_optics), then, once, replace
+  // dates that are really upload times with the watermark's capture time
+  // (lib/repair_dates). Both are no-ops once done.
+  const repairArgs = { db, uploadDir: UPLOAD_DIR, backupDir: BACKUP_DIR, readBand: readSeestarBand };
+  repairJunkOptics(repairArgs)
+    .then(() => repairWatermarkDates(repairArgs))
+    .catch((err) => console.warn('Boot-time data repair failed:', err.message));
 });
