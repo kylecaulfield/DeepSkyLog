@@ -415,11 +415,22 @@ async function onStaged(res) {
     latitudeInput.value = res.exif.latitude.toFixed(6);
     longitudeInput.value = res.exif.longitude.toFixed(6);
     if (gpsHint) {
-      // coords_from_text means the coords were mined out of the watermark /
-      // EXIF text fields; from_ocr alone only says OCR ran, not that it
-      // produced the coordinates (real GPS tags may have).
-      const source = res.guesses?.coords_from_text ? 'watermark text' : 'image EXIF GPS';
-      gpsHint.textContent = `Auto-filled from ${source} (${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)}).`;
+      // coords_source says where the server got them; from_ocr alone only
+      // says OCR ran, not that it produced the coordinates.
+      const here = `${res.exif.latitude.toFixed(4)}, ${res.exif.longitude.toFixed(4)}`;
+      const wm = res.guesses?.watermark_coords;
+      const printed = wm
+        ? `${Math.abs(wm.latitude)}° ${wm.latitude < 0 ? 'S' : 'N'}, ${Math.abs(wm.longitude)}° ${wm.longitude < 0 ? 'W' : 'E'}`
+        : '';
+      const source = res.guesses?.coords_source;
+      if (source === 'watermark_default') {
+        gpsHint.textContent = `The watermark reads ${printed}, which matches your saved default location — using its exact coordinates (${here}).`;
+      } else if (source === 'watermark') {
+        gpsHint.textContent = `Auto-filled from the watermark (${printed}). It only prints whole degrees, so this can be up to a degree (roughly 100 km) off — refine it if you know the site.`;
+      } else {
+        const label = res.guesses?.coords_from_text ? 'watermark text' : 'image EXIF GPS';
+        gpsHint.textContent = `Auto-filled from ${label} (${here}).`;
+      }
     }
   } else if (defaultLatitude != null && defaultLongitude != null) {
     // Admin-configured default home location wins over leaving the field

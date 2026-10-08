@@ -168,7 +168,10 @@
             Leave out <code>telescope</code>, <code>observed_at</code>,
             <code>latitude</code> and <code>longitude</code>: for a Seestar
             export, DeepSkyLog reads the telescope, capture time, location,
-            target and integration time from the watermark band. Add a key only
+            target and integration time from the watermark band. The watermark
+            only prints whole degrees, so when they match your default location
+            (Dashboard → Site settings) its exact coordinates are used; with no
+            location at all, the default location is. Add a key only
             to override it (for example <code>telescope</code> →
             <code>12" Dobsonian</code> for a non-Seestar photo).
             Repeat the same <strong>Basic auth</strong> setup as in step 2 under

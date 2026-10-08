@@ -612,6 +612,59 @@ test('smoke', async (t) => {
     assert.equal(got.photographer, 'Kyle Caulfield');
   });
 
+  await t.test('stage/finalize: zeroed Seestar GPS and junk optics count as missing', async () => {
+    // Recent Seestar app exports: GPS rationals of 0/0 (exifr: NaN) and
+    // ExposureTime / FNumber / FocalLength all ≈ 2.0000076. NaN used to pass
+    // the typeof === 'number' check and block every other location source.
+    const sharp = require('sharp');
+    const { seestarExifJpeg } = require('./helpers/seestar-exif');
+    const plain = await sharp({
+      create: { width: 64, height: 64, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    }).jpeg().toBuffer();
+    const blob = () => new Blob([seestarExifJpeg(plain)], { type: 'image/jpeg' });
+
+    const staged = await stageBlob(blob(), 'IMG_2001.jpg');
+    assert.equal(staged.exif.device, 'ZWO');
+    assert.equal(staged.exif.latitude, null);
+    assert.equal(staged.exif.longitude, null);
+    assert.equal(staged.guesses.coords_source, null);
+    assert.equal(staged.exif.exposure_seconds, null, 'junk ExposureTime dropped');
+    assert.equal(staged.exif.focal_length_mm, null, 'junk FocalLength dropped');
+    assert.equal(staged.exif.aperture, null, 'junk FNumber dropped');
+    await fetchAuthed(`/api/admin/stage/${staged.stage_id}`, { method: 'DELETE' });
+
+    // The shortcut path (location keys omitted) falls back to the default
+    // location, as the upload form does; an explicit null stays null.
+    await fetchJsonAuthed('/api/admin/settings', {
+      method: 'PUT', body: { default_latitude: 42.088682, default_longitude: -87.905189 },
+    });
+    try {
+      const a = await stageBlob(blob(), 'IMG_2002.jpg');
+      const { id } = await fetchJsonAuthed('/api/admin/observations', {
+        method: 'POST', body: { stage_id: a.stage_id },
+      });
+      const { observation: obs } = await (await fetch(`${baseUrl}/api/observations/${id}`)).json();
+      assert.equal(obs.latitude, 42.088682);
+      assert.equal(obs.longitude, -87.905189);
+      assert.equal(obs.exposure_seconds, null);
+      assert.equal(obs.focal_length_mm, null);
+      assert.equal(obs.aperture, null);
+
+      const b = await stageBlob(blob(), 'IMG_2003.jpg');
+      const { id: id2 } = await fetchJsonAuthed('/api/admin/observations', {
+        method: 'POST', body: { stage_id: b.stage_id, latitude: null, longitude: null },
+      });
+      const { observation: cleared } = await (await fetch(`${baseUrl}/api/observations/${id2}`)).json();
+      assert.equal(cleared.latitude, null, 'a cleared location stays cleared');
+      assert.equal(cleared.longitude, null);
+      for (const oid of [id, id2]) await fetchAuthed(`/api/admin/observations/${oid}`, { method: 'DELETE' });
+    } finally {
+      await fetchJsonAuthed('/api/admin/settings', {
+        method: 'PUT', body: { default_latitude: '', default_longitude: '' },
+      });
+    }
+  });
+
   await t.test('Seestar filename parser fills gaps in stage response', async () => {
     const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
     const jpeg = await buildSyntheticJpeg();
