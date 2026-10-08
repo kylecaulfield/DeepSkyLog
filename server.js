@@ -62,6 +62,67 @@ function deviceFromExif(exif) {
   ].filter(Boolean).map(String).join(' ') || null;
 }
 
+// A parsed EXIF number, or null when absent or unreadable: exifr decodes a
+// 0/0 rational as NaN, and typeof NaN is 'number'.
+function exifNumber(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+// GPS position from parsed EXIF, or null. Recent Seestar app exports carry a
+// GPS block whose rationals are all 0/0, which exifr reports as NaN — that
+// must not count as "has GPS", or it hides the watermark's coordinates.
+// 0,0 is the no-fix placeholder some apps write, never a real site.
+function exifGps(exif) {
+  const latitude = exifNumber(exif?.latitude);
+  const longitude = exifNumber(exif?.longitude);
+  if (latitude == null || longitude == null) return null;
+  if (latitude === 0 && longitude === 0) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  return { latitude, longitude };
+}
+
+// Exposure, f-number and focal length from parsed EXIF, each null when
+// unreadable. Those same Seestar exports store all three as pointers into the
+// GPS block, so they decode to one identical junk value (≈2.0000076). No real
+// camera reports the same number for all three, so the set is discarded.
+function exifOptics(exif) {
+  const exposureSeconds = exifNumber(exif?.ExposureTime);
+  const aperture = exifNumber(exif?.FNumber) ?? exifNumber(exif?.ApertureValue);
+  const focalLengthMm = exifNumber(exif?.FocalLength);
+  if (exposureSeconds != null && exposureSeconds === aperture && aperture === focalLengthMm) {
+    return { exposureSeconds: null, aperture: null, focalLengthMm: null };
+  }
+  return { exposureSeconds, aperture, focalLengthMm };
+}
+
+// The admin-configured default observer location, or null when unset.
+function defaultLocation() {
+  const rows = db
+    .prepare(`SELECT key, value FROM site_settings WHERE key IN ('default_latitude', 'default_longitude')`)
+    .all();
+  const get = (k) => {
+    const v = rows.find((r) => r.key === k)?.value;
+    return v == null || v === '' ? null : Number(v);
+  };
+  const latitude = get('default_latitude');
+  const longitude = get('default_longitude');
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+// Coordinates for a watermark reading. The band prints whole degrees,
+// truncated — 42.0887, -87.9052 reads "87° W, 42° N" — so it can be up to a
+// degree off. When those whole degrees match the default location's, the
+// photo was taken there (or within the same degree square), and the precise
+// default is the better answer. `source` says which one was used.
+function watermarkCoords(latitude, longitude) {
+  const home = defaultLocation();
+  if (home && Math.trunc(home.latitude) === latitude && Math.trunc(home.longitude) === longitude) {
+    return { ...home, source: 'watermark_default' };
+  }
+  return { latitude, longitude, source: 'watermark' };
+}
+
 function slugify(value) {
   const raw = String(value || '')
     .toLowerCase()
@@ -2488,12 +2549,14 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
     capturedIso = captured instanceof Date ? captured.toISOString() : null;
     device = deviceFromExif(exif);
     cameraIdentity = [exif?.Make, exif?.Model].filter(Boolean).map(String).join(' ').trim() || null;
-    latitude = typeof exif?.latitude === 'number' ? exif.latitude : null;
-    longitude = typeof exif?.longitude === 'number' ? exif.longitude : null;
+    const gps = exifGps(exif);
+    latitude = gps?.latitude ?? null;
+    longitude = gps?.longitude ?? null;
     iso = exif?.ISO ?? exif?.ISOSpeedRatings ?? null;
-    exposureSeconds = exif?.ExposureTime ?? null;
-    focalLength = exif?.FocalLength ?? null;
-    aperture = exif?.FNumber ?? exif?.ApertureValue ?? null;
+    const optics = exifOptics(exif);
+    exposureSeconds = optics.exposureSeconds;
+    focalLength = optics.focalLengthMm;
+    aperture = optics.aperture;
     exifTextBlob = [
       exif?.Artist, exif?.ImageDescription, exif?.UserComment,
       exif?.XPSubject, exif?.XPComment, exif?.XPAuthor, exif?.XPTitle,
@@ -2571,14 +2634,19 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
   // by a watermark "52min", which is total integration; we put that in a
   // separate field for the UI to interpret).
   let coordsFromText = false;   // true when lat/lon came from OCR/EXIF text mining, not GPS tags
+  // 'exif' | 'fits' | 'watermark' | 'watermark_default' | 'text' | null
+  let coordsSource = latitude != null && longitude != null ? (isFits ? 'fits' : 'exif') : null;
   if (latitude == null && longitude == null && band?.latitude != null && band?.longitude != null) {
-    latitude = band.latitude;
-    longitude = band.longitude;
+    const wc = watermarkCoords(band.latitude, band.longitude);
+    latitude = wc.latitude;
+    longitude = wc.longitude;
     coordsFromText = true;
+    coordsSource = wc.source;
   }
   if (latitude == null && guesses.coords?.latitude != null) {
     latitude = guesses.coords.latitude;
     coordsFromText = true;
+    coordsSource = 'text';
   }
   if (longitude == null && guesses.coords?.longitude != null) longitude = guesses.coords.longitude;
   if (!capturedIso && guesses.captured_at) capturedIso = guesses.captured_at;
@@ -2610,6 +2678,11 @@ app.post('/api/admin/stage', basicAuth, stageUpload.single('image'), async (req,
       photographer: band?.photographer ?? guesses.photographer,
       from_ocr: !!(ocrText || band?.found),
       coords_from_text: coordsFromText,
+      coords_source: coordsSource,
+      // What the watermark itself printed, so the form can show it when the
+      // precise default location was used instead.
+      watermark_coords: band?.latitude != null && band?.longitude != null
+        ? { latitude: band.latitude, longitude: band.longitude } : null,
       from_filename: !!fileGuess,
       ocr_error: ocrError,
     },
@@ -2836,19 +2909,29 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   }
 
   const fx = fitsHeader ? fitsExif(fitsHeader) : null;
+  const gps = exifGps(exif);
+  // A client that left the location out gets what the upload form would
+  // have pre-filled: the watermark's reading, else the default location.
+  const fallbackCoords = !wantCoords ? null
+    : band?.latitude != null && band?.longitude != null
+      ? watermarkCoords(band.latitude, band.longitude)
+      : defaultLocation();
   const latitude = formLatitude
     ?? fx?.latitude
-    ?? (typeof exif?.latitude === 'number' ? exif.latitude : null)
-    ?? (wantCoords ? band?.latitude ?? null : null);
+    ?? gps?.latitude
+    ?? fallbackCoords?.latitude
+    ?? null;
   const longitude = formLongitude
     ?? fx?.longitude
-    ?? (typeof exif?.longitude === 'number' ? exif.longitude : null)
-    ?? (wantCoords ? band?.longitude ?? null : null);
+    ?? gps?.longitude
+    ?? fallbackCoords?.longitude
+    ?? null;
 
+  const optics = exifOptics(exif);
   const cameraField = fx?.device || (exif?.Model ? String(exif.Model) : null);
-  const exposureField = exif?.ExposureTime ?? fx?.exposureSeconds ?? null;
-  const focalLengthField = exif?.FocalLength ?? fx?.focalLengthMm ?? null;
-  const apertureField = exif?.FNumber ?? exif?.ApertureValue ?? fx?.aperture ?? null;
+  const exposureField = optics.exposureSeconds ?? fx?.exposureSeconds ?? null;
+  const focalLengthField = optics.focalLengthMm ?? fx?.focalLengthMm ?? null;
+  const apertureField = optics.aperture ?? fx?.aperture ?? null;
   const metadataJson = fitsHeader ? JSON.stringify({ fits: fitsHeader }) : (exif ? JSON.stringify(exif) : null);
 
   const insert = db.prepare(

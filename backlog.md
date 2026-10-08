@@ -134,6 +134,22 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   heuristic), a fleet input on `/seestar.html`, and the Milky Way
   wide-field gate generalised to a `wide_field` flag so both Pro models
   get MWWF mosaics.
+- ✅ **Recent Seestar EXIF no longer hides the watermark location** — newer
+  Seestar app exports carry `Make: ZWO`, a GPS block whose rationals are all
+  0/0 (exifr: `NaN`), and ExposureTime / FNumber / FocalLength that point at
+  that GPS block (all ≈ 2.0000076). `typeof NaN === 'number'` passed as
+  "has GPS", so the band's coordinates were skipped and the form said "no
+  GPS"; the junk exposure beat the band's integration. `exifGps()` /
+  `exifOptics()` now treat both as missing. Watermark coordinates are whole
+  degrees, truncated, so when they match the default location's degree
+  square the precise default is used (`watermarkCoords()`); the shortcut
+  path falls back to the default location like the upload form does.
+- **Band reader gaps on full-resolution (2160×3840) exports** — on real
+  originals the model row is sometimes unread (a star touching the model
+  text breaks the glyph count; Milky Way glow behind it garbles the crop),
+  and Milky Way exports, whose target sits centred between the rows with no
+  integration time, aren't recognised as a band at all. Location and date
+  still read on everything but the Milky Way layout. *Still open.*
 
 ## Future ideas
 

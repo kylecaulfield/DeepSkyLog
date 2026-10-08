@@ -183,8 +183,9 @@ test('EXIF-less exports through the HTTP API', { skip: OCR_SKIP }, async (t) => 
 
   const auth = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
   const stage = async (file) => {
+    const buf = Buffer.isBuffer(file) ? file : fs.readFileSync(path.join(FIXTURES, file));
     const fd = new FormData();
-    fd.set('image', new Blob([fs.readFileSync(path.join(FIXTURES, file))], { type: 'image/jpeg' }), 'IMG_0412.jpg');
+    fd.set('image', new Blob([buf], { type: 'image/jpeg' }), 'IMG_0412.jpg');
     const res = await fetch(`${base}/api/admin/stage`, { method: 'POST', headers: auth, body: fd });
     assert.equal(res.status, 201);
     return res.json();
@@ -244,5 +245,62 @@ test('EXIF-less exports through the HTTP API', { skip: OCR_SKIP }, async (t) => 
     assert.equal(obs.latitude, null, 'cleared latitude stays cleared');
     assert.equal(obs.longitude, null, 'cleared longitude stays cleared');
     assert.equal(obs.exposure_seconds, null);
+  });
+
+  await t.test('recent app EXIF (zeroed GPS, junk optics) no longer hides the watermark', async () => {
+    // The live-server bug: newer Seestar app exports carry a GPS block of 0/0
+    // rationals (exifr: NaN) and ExposureTime/FNumber/FocalLength ≈ 2.0000076.
+    // NaN passed as "has GPS", so the band's coordinates were skipped and the
+    // form said there was no location; the junk exposure beat the band's 91min.
+    const { seestarExifJpeg } = require('./helpers/seestar-exif');
+    const jpeg = seestarExifJpeg(fs.readFileSync(path.join(FIXTURES, 's50pro-ngc7000.jpg')));
+    const staged = await stage(jpeg);
+    assert.equal(staged.exif.device, 'ZWO');
+    assert.equal(staged.telescope_match, 'Seestar S50 Pro');
+    assert.equal(staged.exif.latitude, 39);
+    assert.equal(staged.exif.longitude, -90);
+    assert.equal(staged.guesses.coords_source, 'watermark');
+    assert.equal(staged.exif.exposure_seconds, null);
+    assert.equal(staged.guesses.total_exposure_seconds, 91 * 60);
+    const obs = await finalize({ stage_id: staged.stage_id });
+    assert.equal(obs.latitude, 39);
+    assert.equal(obs.longitude, -90);
+    assert.equal(obs.exposure_seconds, 91 * 60);
+    assert.equal(obs.focal_length_mm, null);
+  });
+
+  await t.test('a default location in the watermark\'s degree square replaces its coarse reading', async () => {
+    // The band prints whole degrees, truncated (42.0887, -87.9052 reads
+    // "87° W, 42° N"), so a matching default location is the precise answer.
+    const setDefault = async (lat, lon) => {
+      const res = await fetch(`${base}/api/admin/settings`, {
+        method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_latitude: lat, default_longitude: lon }),
+      });
+      assert.equal(res.status, 200);
+    };
+    await setDefault(39.985432, -90.068269);
+    try {
+      const staged = await stage('s50pro-ngc6960.jpg');
+      assert.equal(staged.exif.latitude, 39.985432);
+      assert.equal(staged.exif.longitude, -90.068269);
+      assert.equal(staged.guesses.coords_source, 'watermark_default');
+      assert.deepEqual(staged.guesses.watermark_coords, { latitude: 39, longitude: -90 });
+      const obs = await finalize({ stage_id: staged.stage_id });
+      assert.equal(obs.latitude, 39.985432);
+      assert.equal(obs.longitude, -90.068269);
+
+      // A default somewhere else never overrides what the watermark says.
+      await setDefault(42.088682, -87.905189);
+      const away = await stage('s30pro-c2.jpg');
+      assert.equal(away.exif.latitude, 39);
+      assert.equal(away.exif.longitude, -90);
+      assert.equal(away.guesses.coords_source, 'watermark');
+      const awayObs = await finalize({ stage_id: away.stage_id });
+      assert.equal(awayObs.latitude, 39);
+      assert.equal(awayObs.longitude, -90);
+    } finally {
+      await setDefault('', '');
+    }
   });
 });
