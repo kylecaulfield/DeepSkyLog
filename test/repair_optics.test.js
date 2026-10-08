@@ -38,15 +38,15 @@ test('repairJunkOptics', async (t) => {
   const quiet = { log() {}, warn() {} };
 
   const insert = db.prepare(
-    `INSERT INTO observations (image_path, exif_json, exposure_seconds, focal_length_mm, aperture)
-     VALUES (@image_path, @exif_json, @exposure_seconds, @focal_length_mm, @aperture)`,
+    `INSERT INTO observations (image_path, exif_json, exposure_seconds, focal_length_mm, aperture, stack_count)
+     VALUES (@image_path, @exif_json, @exposure_seconds, @focal_length_mm, @aperture, @stack_count)`,
   );
   const add = (row) => {
     const image = row.image_path === undefined ? `2026/10/img-${Math.random().toString(36).slice(2)}.jpg` : row.image_path;
     if (image && !image.startsWith('..')) fs.writeFileSync(path.join(uploadDir, image), 'jpeg');
     return insert.run({
       image_path: image, exif_json: JUNK_EXIF,
-      exposure_seconds: JUNK, focal_length_mm: JUNK, aperture: JUNK, ...row,
+      exposure_seconds: JUNK, focal_length_mm: JUNK, aperture: JUNK, stack_count: null, ...row,
     }).lastInsertRowid;
   };
   const get = (id) => db.prepare('SELECT exposure_seconds, focal_length_mm, aperture FROM observations WHERE id = ?').get(id);
@@ -129,7 +129,9 @@ test('repairJunkOptics', async (t) => {
 
   await t.test('an image path outside the upload dir is never read', async () => {
     reset();
-    const id = add({ image_path: '../../etc/passwd' });
+    // The file exists, so only the upload-dir check keeps it from the reader.
+    fs.writeFileSync(path.join(tmp, 'outside.jpg'), 'jpeg');
+    const id = add({ image_path: '../outside.jpg' });
     const reads = [];
     await repairJunkOptics({ db, uploadDir, backupDir, log: quiet, readBand: async (p) => { reads.push(p); return null; } });
     assert.deepEqual(reads, []);
@@ -147,6 +149,35 @@ test('repairJunkOptics', async (t) => {
       },
     });
     assert.deepEqual(get(id), { exposure_seconds: 1234, focal_length_mm: null, aperture: null });
+  });
+
+  await t.test('with a stack count, the exposure is restored per frame', async () => {
+    // exposure_seconds is read as per-frame when stack_count is set (stats
+    // multiply the two), so 300 s over 30 frames is stored as 10 s.
+    reset();
+    const id = add({ stack_count: 30 });
+    await repairJunkOptics({
+      db, uploadDir, backupDir, log: quiet,
+      readBand: async () => ({ found: true, exposure_seconds_total: 300 }),
+    });
+    assert.deepEqual(get(id), { exposure_seconds: 10, focal_length_mm: null, aperture: null });
+  });
+
+  await t.test('the old form\'s browser-rounded 2 / 2.1 s counts as junk on an unedited row', async () => {
+    // The pre-fix upload form (step 0.1) refused 2.0000076 and the browser
+    // offered 2 or 2.1, while focal length and aperture kept the junk.
+    reset();
+    const two = add({ exposure_seconds: 2 });
+    const twoOne = add({ exposure_seconds: 2.1 });
+    // Focal length was edited, so the row was looked at: a 2 s exposure stays.
+    const edited = add({ exposure_seconds: 2, focal_length_mm: 250 });
+    await repairJunkOptics({
+      db, uploadDir, backupDir, log: quiet,
+      readBand: async () => ({ found: true, exposure_seconds_total: 91 * 60 }),
+    });
+    assert.deepEqual(get(two), { exposure_seconds: 91 * 60, focal_length_mm: null, aperture: null });
+    assert.deepEqual(get(twoOne), { exposure_seconds: 91 * 60, focal_length_mm: null, aperture: null });
+    assert.deepEqual(get(edited), { exposure_seconds: 2, focal_length_mm: 250, aperture: null });
   });
 
   await t.test('nothing changes when the backup cannot be written', async () => {
@@ -201,6 +232,9 @@ test('the server repairs junk rows on boot', async (t) => {
     env: {
       ...process.env, PORT: String(port), ADMIN_PASSWORD: 'repairtest', DATABASE_PATH: dbPath,
       UPLOAD_DIR: uploadDir, STAGE_DIR: path.join(dataDir, 'stage'), BACKUP_DIR: backupDir,
+      // Same OCR decision as the assertion below, rather than letting the
+      // server work it out for itself.
+      DISABLE_OCR: OCR_SKIP ? '1' : '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -216,7 +250,9 @@ test('the server repairs junk rows on boot', async (t) => {
 
   const deadline = Date.now() + 90_000;
   while (!/Repaired junk EXIF/.test(output)) {
-    if (server.exitCode != null) throw new Error(`server exited with ${server.exitCode}:\n${output}`);
+    if (server.exitCode != null || server.signalCode != null) {
+      throw new Error(`server exited (${server.exitCode ?? server.signalCode}):\n${output}`);
+    }
     if (Date.now() > deadline) throw new Error(`no repair logged:\n${output}`);
     await new Promise((r) => setTimeout(r, 200));
   }
