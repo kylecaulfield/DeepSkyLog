@@ -144,6 +144,14 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   degrees, truncated, so when they match the default location's degree
   square the precise default is used (`watermarkCoords()`); the shortcut
   path falls back to the default location like the upload form does.
+- ✅ **Boot-time repair of saved junk optics** — observations saved before
+  the EXIF fix kept ExposureTime / FNumber / FocalLength ≈ 2.0000076 as their
+  exposure, focal length and aperture. On every boot, `lib/repair_optics.js`
+  finds rows whose stored EXIF has that signature and whose columns still
+  hold the junk value, snapshots the database to `BACKUP_DIR`, re-reads the
+  exposure from the image's watermark (total integration) or clears it, and
+  clears focal length and aperture. User-edited values are left alone and a
+  repaired row never qualifies again.
 - **Band reader gaps on full-resolution (2160×3840) exports** — on real
   originals the model row is sometimes unread (a star touching the model
   text breaks the glyph count; Milky Way glow behind it garbles the crop),

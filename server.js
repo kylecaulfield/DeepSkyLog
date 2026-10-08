@@ -15,6 +15,8 @@ const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/
 const { ocrBanner } = require('./lib/seestar_ocr');
 const { readBand: readSeestarBand } = require('./lib/seestar_band');
 const { parseAll: parseSeestarText, parseFilename: parseSeestarFilename } = require('./lib/seestar_meta');
+const { exifGps, exifOptics } = require('./lib/exif_sanity');
+const { repairJunkOptics } = require('./lib/repair_optics');
 const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
 
@@ -60,39 +62,6 @@ function deviceFromExif(exif) {
     exif.Make, exif.Model, exif.CameraModel, exif.CameraModelName,
     exif.LensMake, exif.LensModel, exif.UniqueCameraModel, exif.Software,
   ].filter(Boolean).map(String).join(' ') || null;
-}
-
-// A parsed EXIF number, or null when absent or unreadable: exifr decodes a
-// 0/0 rational as NaN, and typeof NaN is 'number'.
-function exifNumber(value) {
-  return Number.isFinite(value) ? value : null;
-}
-
-// GPS position from parsed EXIF, or null. Recent Seestar app exports carry a
-// GPS block whose rationals are all 0/0, which exifr reports as NaN — that
-// must not count as "has GPS", or it hides the watermark's coordinates.
-// 0,0 is the no-fix placeholder some apps write, never a real site.
-function exifGps(exif) {
-  const latitude = exifNumber(exif?.latitude);
-  const longitude = exifNumber(exif?.longitude);
-  if (latitude == null || longitude == null) return null;
-  if (latitude === 0 && longitude === 0) return null;
-  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
-  return { latitude, longitude };
-}
-
-// Exposure, f-number and focal length from parsed EXIF, each null when
-// unreadable. Those same Seestar exports store all three as pointers into the
-// GPS block, so they decode to one identical junk value (≈2.0000076). No real
-// camera reports the same number for all three, so the set is discarded.
-function exifOptics(exif) {
-  const exposureSeconds = exifNumber(exif?.ExposureTime);
-  const aperture = exifNumber(exif?.FNumber) ?? exifNumber(exif?.ApertureValue);
-  const focalLengthMm = exifNumber(exif?.FocalLength);
-  if (exposureSeconds != null && exposureSeconds === aperture && aperture === focalLengthMm) {
-    return { exposureSeconds: null, aperture: null, focalLengthMm: null };
-  }
-  return { exposureSeconds, aperture, focalLengthMm };
 }
 
 // The admin-configured default observer location, or null when unset.
@@ -3229,4 +3198,9 @@ app.listen(PORT, () => {
   if (!ADMIN_PASSWORD) {
     console.warn('WARNING: ADMIN_PASSWORD is not set — /admin is disabled.');
   }
+  // In the background: repair observations saved with the junk exposure /
+  // focal length / aperture of recent Seestar EXIF (lib/repair_optics). A
+  // no-op once they're fixed.
+  repairJunkOptics({ db, uploadDir: UPLOAD_DIR, backupDir: BACKUP_DIR, readBand: readSeestarBand })
+    .catch((err) => console.warn('Junk EXIF optics repair failed:', err.message));
 });
