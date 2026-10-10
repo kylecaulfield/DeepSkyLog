@@ -34,6 +34,19 @@ const EXPECTED = {
   // A dense star field: every row of the bottom strip has enough bright star
   // pixels to clear the fixed text-row bar, which used to hide the band.
   's30pro-ngc1023-dense.jpg': { telescope: 'Seestar S30 Pro', target: 'NGC1023', captured_at: '2026-10-04T00:49', exposure_seconds_total: 117 * 60 },
+  // Milky Way exports: no target on the top row and no integration time;
+  // one "Milky Way" label sits on the right, centred between the rows.
+  's50pro-milkyway.jpg': {
+    telescope: 'Seestar S50 Pro', target: 'Milky Way', object_type: 'MW', captured_at: '2026-10-10T02:29',
+    exposure_seconds_total: null, photographer: null,
+  },
+  // Dense stars and a lit horizon along the bottom edge. A star touching the
+  // "3" of "39° N" makes OCR read 89: the latitude bound turns that into no
+  // position rather than the North Pole.
+  's50pro-milkyway-horizon.jpg': {
+    telescope: 'Seestar S50 Pro', target: 'Milky Way', object_type: 'MW', captured_at: '2026-10-03T05:59',
+    exposure_seconds_total: null, latitude: null, longitude: null,
+  },
 };
 // Every fixture band reads "Kyle Caulfield / 90° W, 39° N / …".
 const COMMON = { latitude: 39, longitude: -90, photographer: 'Kyle Caulfield' };
@@ -62,6 +75,8 @@ test('band parsers', async (t) => {
     assert.equal(P.parseCoordsText('90° W, 39° W'), null, 'two longitudes');
     assert.equal(P.parseCoordsText('190° E, 10° N'), null, 'longitude out of range');
     assert.equal(P.parseCoordsText('9 0° W, 39° N'), null, 'a lost decimal point / split number');
+    assert.equal(P.parseCoordsText('90° W, 89° N'), null, 'beyond ±75°: a star-touched 3 read as 8');
+    assert.deepEqual(P.parseCoordsText('18.1° E, 69.6° N'), { latitude: 69.6, longitude: 18.1 }, 'Tromsø is fine');
   });
 
   await t.test('date: fixed-width YYYY.MM.DD HH:MM, tolerant separators', () => {
@@ -88,6 +103,15 @@ test('band parsers', async (t) => {
     assert.equal(P.parseTargetText('M 31'), 'M31');
     assert.equal(P.parseTargetText('1C 434'), 'IC434', 'I read as 1');
     assert.equal(P.parseTargetText('Moon'), null);
+  });
+
+  await t.test('named label: the whole crop must be the name', () => {
+    assert.equal(P.parseNamedLabel('Milky Way'), 'Milky Way');
+    assert.equal(P.parseNamedLabel('Milkv Wav'), 'Milky Way', 'the band font\'s usual OCR slips');
+    assert.equal(P.parseNamedLabel('MilkyWay'), 'Milky Way');
+    assert.equal(P.parseNamedLabel('Milky Way 42'), null);
+    assert.equal(P.parseNamedLabel('Nillevz AA avs'), null);
+    assert.equal(P.parseNamedLabel('M31'), null);
   });
 
   await t.test('whole info line (fallback when the "/" separators are not found)', () => {
@@ -118,14 +142,16 @@ test('reads real EXIF-less Seestar exports', { skip: OCR_SKIP }, async (t) => {
   for (const [file, want] of Object.entries(EXPECTED)) {
     await t.test(file, async () => {
       const got = await readBand(path.join(FIXTURES, file));
+      const exp = { ...COMMON, ...want };
       assert.ok(got && got.found, 'band recognised');
-      assert.equal(got.telescope, want.telescope);
-      assert.equal(got.target?.raw, want.target);
-      assert.equal(got.latitude, COMMON.latitude);
-      assert.equal(got.longitude, COMMON.longitude);
-      assert.equal(got.captured_at, want.captured_at);
-      assert.equal(got.exposure_seconds_total, want.exposure_seconds_total);
-      assert.equal(got.photographer, COMMON.photographer);
+      assert.equal(got.telescope, exp.telescope);
+      assert.equal(got.target?.raw, exp.target);
+      assert.equal(got.target?.object_type ?? null, exp.object_type ?? null);
+      assert.equal(got.latitude, exp.latitude);
+      assert.equal(got.longitude, exp.longitude);
+      assert.equal(got.captured_at, exp.captured_at);
+      assert.equal(got.exposure_seconds_total, exp.exposure_seconds_total);
+      assert.equal(got.photographer, exp.photographer);
     });
   }
 
@@ -245,6 +271,23 @@ test('EXIF-less exports through the HTTP API', { skip: OCR_SKIP }, async (t) => 
     assert.equal(obs.latitude, null, 'cleared latitude stays cleared');
     assert.equal(obs.longitude, null, 'cleared longitude stays cleared');
     assert.equal(obs.exposure_seconds, null);
+  });
+
+  await t.test('a Milky Way export is staged and saved as the Milky Way object type', async () => {
+    const staged = await stage('s50pro-milkyway.jpg');
+    assert.equal(staged.telescope_match, 'Seestar S50 Pro');
+    assert.equal(staged.guesses.target?.raw, 'Milky Way');
+    assert.equal(staged.guesses.target?.object_type, 'MW');
+    assert.equal(staged.guesses.target?.catalog, null);
+    assert.equal(staged.exif.object_name, 'Milky Way');
+    assert.equal(staged.exif.captured_at, '2026-10-10T02:29');
+    // The shortcut path: only stage_id, so finalize reads the band itself.
+    const obs = await finalize({ stage_id: staged.stage_id });
+    assert.equal(obs.object_type, 'MW');
+    assert.equal(obs.object_name, 'Milky Way');
+    assert.equal(obs.catalog, null);
+    assert.equal(obs.observed_at, '2026-10-10T02:29');
+    assert.equal(obs.telescope, 'Seestar S50 Pro');
   });
 
   await t.test('recent app EXIF (zeroed GPS, junk optics) no longer hides the watermark', async () => {

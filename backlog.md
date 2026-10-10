@@ -164,12 +164,21 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   when the watermark has no usable date); disagreement leaves the row alone.
   Replayed on a copy of the live data: 72 corrected, all within minutes (or
   one time-zone hour) of the EXIF time, one watermark misread caught.
-- **Band reader gaps on full-resolution (2160×3840) exports** — on real
-  originals the model row is sometimes unread (a star touching the model
-  text breaks the glyph count; Milky Way glow behind it garbles the crop),
-  and Milky Way exports, whose target sits centred between the rows with no
-  integration time, aren't recognised as a band at all. Location and date
-  still read on everything but the Milky Way layout. *Still open.*
+- ✅ **Milky Way as a detectable category** — Milky Way exports print no
+  target or integration; a "Milky Way" label sits on the right between the
+  band rows. The full-width ink profile took that label for the top row (or,
+  with dense stars and a lit horizon, merged everything), so the band was
+  misread or not found. Rows are now also found on the left 60% of the width
+  (used when the profiles disagree), a row flush with the image bottom is
+  skipped, the label is read as a named target (`NAMED_TARGETS`, object type
+  `MW`, relabelled "Milky Way"), and latitudes beyond ±75° are rejected (a
+  star touching a 3 read "39° N" as 89). On a 175-image corpus: 45 fields
+  gained, none lost or changed. A one-time boot repair types existing rows
+  named "Milky Way".
+- **Band reader gaps on full-resolution (2160×3840) exports** — the model
+  row is sometimes unread when a star touches the model text (the glyph
+  count check rejects it), and a star touching a digit can still flip a
+  coordinate's ones digit (38 vs 39). *Still open.*
 
 ## Future ideas
 

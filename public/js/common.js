@@ -48,7 +48,7 @@ export const OBJECT_TYPES = {
   SNR: 'Supernova Remnant',
   DN: 'Diffuse Nebula',
   GAL: 'Galaxy',
-  MW: 'Star Cloud',
+  MW: 'Milky Way',
   AST: 'Asterism',
   DS: 'Double Star',
   STAR: 'Star',

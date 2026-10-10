@@ -18,6 +18,7 @@ const { parseAll: parseSeestarText, parseFilename: parseSeestarFilename } = requ
 const { exifGps, exifOptics } = require('./lib/exif_sanity');
 const { repairJunkOptics } = require('./lib/repair_optics');
 const { repairWatermarkDates } = require('./lib/repair_dates');
+const { repairNamedTargetTypes } = require('./lib/repair_named_targets');
 const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
 
@@ -2743,7 +2744,7 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   // Free-form object metadata for observations not backed by a list row
   // (notably comets, which don't fit the static catalog model).
   const allowedTypes = ['GC','OC','PN','SNR','DN','GAL','MW','AST','DS','STAR','MOON','PLAN','COMET'];
-  const observationObjectType = (typeof body.object_type === 'string' && allowedTypes.includes(body.object_type))
+  let observationObjectType = (typeof body.object_type === 'string' && allowedTypes.includes(body.object_type))
     ? body.object_type : null;
   const observationRaHours = body.ra_hours != null && body.ra_hours !== ''
     ? clamp(body.ra_hours, 0, 24) : null;
@@ -2792,7 +2793,13 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   }
   if (wantTelescope) telescope = matchTelescope(stageDevice) || band?.telescope || null;
   if (wantDate && band?.captured_at) observedAt = band.captured_at;
-  if (noTarget && band?.target) {
+  // A named target ("Milky Way") has no catalog id; its object type is the
+  // classification, so fill it when the client left the type out.
+  if (noTarget && omitted('object_type') && band?.target?.object_type
+      && allowedTypes.includes(band.target.object_type)) {
+    observationObjectType = band.target.object_type;
+  }
+  if (noTarget && band?.target?.catalog) {
     matchedObject = db
       .prepare('SELECT * FROM list_objects WHERE UPPER(catalog) = UPPER(?) AND catalog_number = ? ORDER BY id LIMIT 1')
       .get(band.target.catalog, band.target.number) || null;
@@ -3201,11 +3208,13 @@ app.listen(PORT, () => {
   }
   // In the background, one after the other (they share the OCR worker):
   // repair observations saved with the junk exposure / focal length /
-  // aperture of recent Seestar EXIF (lib/repair_optics), then, once, replace
+  // aperture of recent Seestar EXIF (lib/repair_optics); then, once, replace
   // dates that are really upload times with the watermark's capture time
-  // (lib/repair_dates). Both are no-ops once done.
+  // (lib/repair_dates) and give observations named "Milky Way" their object
+  // type (lib/repair_named_targets). All are no-ops once done.
   const repairArgs = { db, uploadDir: UPLOAD_DIR, backupDir: BACKUP_DIR, readBand: readSeestarBand };
   repairJunkOptics(repairArgs)
     .then(() => repairWatermarkDates(repairArgs))
+    .then(() => repairNamedTargetTypes(repairArgs))
     .catch((err) => console.warn('Boot-time data repair failed:', err.message));
 });
