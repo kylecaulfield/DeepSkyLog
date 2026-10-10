@@ -144,12 +144,41 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   degrees, truncated, so when they match the default location's degree
   square the precise default is used (`watermarkCoords()`); the shortcut
   path falls back to the default location like the upload form does.
-- **Band reader gaps on full-resolution (2160×3840) exports** — on real
-  originals the model row is sometimes unread (a star touching the model
-  text breaks the glyph count; Milky Way glow behind it garbles the crop),
-  and Milky Way exports, whose target sits centred between the rows with no
-  integration time, aren't recognised as a band at all. Location and date
-  still read on everything but the Milky Way layout. *Still open.*
+- ✅ **Boot-time repair of saved junk optics** — observations saved before
+  the EXIF fix kept ExposureTime / FNumber / FocalLength ≈ 2.0000076 as their
+  exposure, focal length and aperture. On every boot, `lib/repair_optics.js`
+  finds rows whose stored EXIF has that signature and whose columns still
+  hold the junk value, snapshots the database to `BACKUP_DIR`, re-reads the
+  exposure from the image's watermark (total integration, per frame when the
+  row has a stack count) or clears it, and clears focal length and aperture.
+  The old form's browser-rounded 2 / 2.1 s exposure counts as junk on rows
+  nobody edited. User-edited values are left alone and a repaired row never
+  qualifies again.
+- ✅ **Boot-time fix of upload-time dates** — when an upload had no capture
+  time, the form pre-filled "now" and the shortcut sent the current time, so
+  many Seestar exports were dated by when they were uploaded (74 of 169 on
+  the live site, some by weeks). `lib/repair_dates.js` runs once at boot:
+  rows whose `observed_at` sits 0–15 min before `created_at` on the
+  uploader's own hour offset get the watermark's capture time, cross-checked
+  against the app's EXIF note / raw `DateTimeOriginal` (which also stand in
+  when the watermark has no usable date); disagreement leaves the row alone.
+  Replayed on a copy of the live data: 72 corrected, all within minutes (or
+  one time-zone hour) of the EXIF time, one watermark misread caught.
+- ✅ **Milky Way as a detectable category** — Milky Way exports print no
+  target or integration; a "Milky Way" label sits on the right between the
+  band rows. The full-width ink profile took that label for the top row (or,
+  with dense stars and a lit horizon, merged everything), so the band was
+  misread or not found. Rows are now also found on the left 60% of the width
+  (used when the profiles disagree), a row flush with the image bottom is
+  skipped, the label is read as a named target (`NAMED_TARGETS`, object type
+  `MW`, relabelled "Milky Way"), and latitudes beyond ±75° are rejected (a
+  star touching a 3 read "39° N" as 89). On a 175-image corpus: 45 fields
+  gained, none lost or changed. A one-time boot repair types existing rows
+  named "Milky Way".
+- **Band reader gaps on full-resolution (2160×3840) exports** — the model
+  row is sometimes unread when a star touches the model text (the glyph
+  count check rejects it), and a star touching a digit can still flip a
+  coordinate's ones digit (38 vs 39). *Still open.*
 
 ## Future ideas
 

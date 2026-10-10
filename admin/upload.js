@@ -475,6 +475,13 @@ async function onStaged(res) {
   const targetGuess = res.guesses?.target?.raw || res.exif?.object_name;
   if (targetGuess && !objectInput.value) {
     objectInput.value = targetGuess;
+    // A named target from the watermark ("Milky Way") has no catalog id —
+    // its object type is the classification.
+    const guessedType = res.guesses?.target?.object_type;
+    if (guessedType && !objectTypeInput.value
+        && [...objectTypeInput.options].some((o) => o.value === guessedType)) {
+      objectTypeInput.value = guessedType;
+    }
     // Wait for the seeded search so the cache is populated before we
     // resolve. The previous setTimeout(150) raced the fetch on slow
     // networks — by the time it fired, objectCache was still empty,

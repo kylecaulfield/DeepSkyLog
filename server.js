@@ -15,6 +15,10 @@ const { isFitsPath, readFitsHeader, renderFitsJpeg, fitsExif } = require('./lib/
 const { ocrBanner } = require('./lib/seestar_ocr');
 const { readBand: readSeestarBand } = require('./lib/seestar_band');
 const { parseAll: parseSeestarText, parseFilename: parseSeestarFilename } = require('./lib/seestar_meta');
+const { exifGps, exifOptics } = require('./lib/exif_sanity');
+const { repairJunkOptics } = require('./lib/repair_optics');
+const { repairWatermarkDates } = require('./lib/repair_dates');
+const { repairNamedTargetTypes } = require('./lib/repair_named_targets');
 const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
 
@@ -60,39 +64,6 @@ function deviceFromExif(exif) {
     exif.Make, exif.Model, exif.CameraModel, exif.CameraModelName,
     exif.LensMake, exif.LensModel, exif.UniqueCameraModel, exif.Software,
   ].filter(Boolean).map(String).join(' ') || null;
-}
-
-// A parsed EXIF number, or null when absent or unreadable: exifr decodes a
-// 0/0 rational as NaN, and typeof NaN is 'number'.
-function exifNumber(value) {
-  return Number.isFinite(value) ? value : null;
-}
-
-// GPS position from parsed EXIF, or null. Recent Seestar app exports carry a
-// GPS block whose rationals are all 0/0, which exifr reports as NaN — that
-// must not count as "has GPS", or it hides the watermark's coordinates.
-// 0,0 is the no-fix placeholder some apps write, never a real site.
-function exifGps(exif) {
-  const latitude = exifNumber(exif?.latitude);
-  const longitude = exifNumber(exif?.longitude);
-  if (latitude == null || longitude == null) return null;
-  if (latitude === 0 && longitude === 0) return null;
-  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
-  return { latitude, longitude };
-}
-
-// Exposure, f-number and focal length from parsed EXIF, each null when
-// unreadable. Those same Seestar exports store all three as pointers into the
-// GPS block, so they decode to one identical junk value (≈2.0000076). No real
-// camera reports the same number for all three, so the set is discarded.
-function exifOptics(exif) {
-  const exposureSeconds = exifNumber(exif?.ExposureTime);
-  const aperture = exifNumber(exif?.FNumber) ?? exifNumber(exif?.ApertureValue);
-  const focalLengthMm = exifNumber(exif?.FocalLength);
-  if (exposureSeconds != null && exposureSeconds === aperture && aperture === focalLengthMm) {
-    return { exposureSeconds: null, aperture: null, focalLengthMm: null };
-  }
-  return { exposureSeconds, aperture, focalLengthMm };
 }
 
 // The admin-configured default observer location, or null when unset.
@@ -2773,7 +2744,7 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   // Free-form object metadata for observations not backed by a list row
   // (notably comets, which don't fit the static catalog model).
   const allowedTypes = ['GC','OC','PN','SNR','DN','GAL','MW','AST','DS','STAR','MOON','PLAN','COMET'];
-  const observationObjectType = (typeof body.object_type === 'string' && allowedTypes.includes(body.object_type))
+  let observationObjectType = (typeof body.object_type === 'string' && allowedTypes.includes(body.object_type))
     ? body.object_type : null;
   const observationRaHours = body.ra_hours != null && body.ra_hours !== ''
     ? clamp(body.ra_hours, 0, 24) : null;
@@ -2822,7 +2793,13 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
   }
   if (wantTelescope) telescope = matchTelescope(stageDevice) || band?.telescope || null;
   if (wantDate && band?.captured_at) observedAt = band.captured_at;
-  if (noTarget && band?.target) {
+  // A named target ("Milky Way") has no catalog id; its object type is the
+  // classification, so fill it when the client left the type out.
+  if (noTarget && omitted('object_type') && band?.target?.object_type
+      && allowedTypes.includes(band.target.object_type)) {
+    observationObjectType = band.target.object_type;
+  }
+  if (noTarget && band?.target?.catalog) {
     matchedObject = db
       .prepare('SELECT * FROM list_objects WHERE UPPER(catalog) = UPPER(?) AND catalog_number = ? ORDER BY id LIMIT 1')
       .get(band.target.catalog, band.target.number) || null;
@@ -3229,4 +3206,15 @@ app.listen(PORT, () => {
   if (!ADMIN_PASSWORD) {
     console.warn('WARNING: ADMIN_PASSWORD is not set — /admin is disabled.');
   }
+  // In the background, one after the other (they share the OCR worker):
+  // repair observations saved with the junk exposure / focal length /
+  // aperture of recent Seestar EXIF (lib/repair_optics); then, once, replace
+  // dates that are really upload times with the watermark's capture time
+  // (lib/repair_dates) and give observations named "Milky Way" their object
+  // type (lib/repair_named_targets). All are no-ops once done.
+  const repairArgs = { db, uploadDir: UPLOAD_DIR, backupDir: BACKUP_DIR, readBand: readSeestarBand };
+  repairJunkOptics(repairArgs)
+    .then(() => repairWatermarkDates(repairArgs))
+    .then(() => repairNamedTargetTypes(repairArgs))
+    .catch((err) => console.warn('Boot-time data repair failed:', err.message));
 });
