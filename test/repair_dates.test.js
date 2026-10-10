@@ -49,6 +49,11 @@ test('date parsing and matching', async (t) => {
     assert.equal(P.exifCaptureTime(JSON.stringify({ DateTimeOriginal: '2026-04-11T05:43:18.000Z' })), null, 'parsed at upload already');
     assert.equal(P.exifCaptureTime(JSON.stringify({ OwnerName: '\u0000\u0004junk' })), null);
     assert.equal(P.exifCaptureTime('not json'), null);
+    // EXIF's empty-date placeholder and impossible dates are not capture times.
+    assert.equal(P.exifCaptureTime(JSON.stringify({ DateTimeOriginal: '0000:00:00 00:00:00' })), null);
+    assert.equal(P.exifCaptureTime(JSON.stringify({ DateTimeOriginal: '2026:02:30 10:00:00' })), null);
+    assert.equal(P.parseWhen('2026-13-01T10:00'), null);
+    assert.equal(P.parseWhen('2026-10-03T24:00'), null);
   });
 
   await t.test('watermark vs EXIF: minutes apart, or whole hours of time zone', () => {
