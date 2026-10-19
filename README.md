@@ -55,9 +55,11 @@ list, and publish a public gallery and map of where you image from.
 - **FITS uploads** (`.fit` / `.fits`) accepted alongside JPEG/PNG; the
   ASCII header drives metadata and a JPEG preview is rendered for gallery
   display.
-- **Plate solving** via Astrometry.net (set `ASTROMETRY_API_KEY`) — kicks
-  off a job, polls for results, stores RA/Dec/FOV/orientation back on the
-  observation.
+- **Plate solving** via Astrometry.net (set `ASTROMETRY_API_KEY`) — queued
+  and uploaded in the background, polled until solved, RA/Dec/FOV/orientation
+  stored back on the observation. The admin Observations page shows live
+  counts, what's in progress, a log of every step (uploaded, solving, solved
+  with the objects in the field, failed) and a notification as each lands.
 - **Backups.** `./backup.sh` snapshots the database + uploads. The admin
   dashboard lists every archive with a one-click Restore.
 - **Activity heatmap + lifetime stats.** Last 365 days of observations

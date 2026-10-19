@@ -21,6 +21,7 @@ const { repairWatermarkDates } = require('./lib/repair_dates');
 const { repairNamedTargetTypes } = require('./lib/repair_named_targets');
 const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
+const { createSolver } = require('./lib/solver');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -1193,7 +1194,7 @@ app.get('/api/observations/atlas', (_req, res) => {
   const counts = db
     .prepare(
       `SELECT
-         SUM(CASE WHEN solver_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN solver_status IN ('queued', 'pending', 'solving') THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN solver_status = 'failure' THEN 1 ELSE 0 END) AS failed,
          SUM(CASE WHEN image_path IS NOT NULL
                    AND (solver_status IS NULL OR solver_status = 'idle')
@@ -1923,94 +1924,62 @@ app.delete('/api/admin/equipment/:id', basicAuth, (req, res) => {
 });
 
 // --- Astrometry.net plate solving ----------------------------------------
+//
+// Submissions are queued and uploaded in the background by lib/solver.js,
+// which also polls Nova for results and logs every step for the admin
+// observations page (GET /api/admin/platesolve/activity).
 
-function setSolverStatus(observationId, fields) {
-  const sets = Object.keys(fields).map((k) => `${k} = @${k}`).join(', ');
-  db.prepare(`UPDATE observations SET ${sets} WHERE id = @id`)
-    .run({ ...fields, id: observationId });
+const solver = createSolver({
+  db,
+  uploadDir: UPLOAD_DIR,
+  astrometry,
+  pollMs: Number(process.env.SOLVER_POLL_MS) || 30_000,
+  uploadGapMs: Number(process.env.SOLVER_UPLOAD_GAP_MS ?? 1_000),
+});
+
+// Check the API key works before queueing anything, so a missing or wrong
+// key is reported to the button that was pressed rather than only the log.
+async function checkAstrometryLogin(res) {
+  try {
+    await astrometry.login();
+    return true;
+  } catch (err) {
+    if (err.code === 'no_key') {
+      res.status(503).json({ error: 'ASTROMETRY_API_KEY is not set on the server' });
+    } else {
+      res.status(502).json({ error: `astrometry login failed: ${err.message}` });
+    }
+    return false;
+  }
 }
 
-// Bulk-submit a batch of observations to astrometry.net. The caller can pass
-// an explicit `ids` array (e.g. checkboxes on the admin observations page),
-// or omit it to queue every observation that has an image and isn't already
-// solved / pending. Observations are submitted sequentially using a single
-// astrometry session — Nova's free queue is happier with serial uploads than
-// a burst, and a 503 from no API key short-circuits the whole batch.
+// Queue a batch of observations for plate solving. The caller can pass an
+// explicit `ids` array, or omit it to queue every observation that has an
+// image and isn't already solved or in progress. Returns at once; uploads
+// and results show up in the activity log.
 app.post('/api/admin/observations/bulk-platesolve', basicAuth, async (req, res) => {
   const requestedIds = Array.isArray(req.body?.ids)
     ? req.body.ids.map(Number).filter(Number.isFinite)
     : null;
+  if (!(await checkAstrometryLogin(res))) return;
+  const ids = requestedIds && requestedIds.length
+    ? requestedIds
+    : db.prepare(
+      `SELECT id FROM observations
+        WHERE image_path IS NOT NULL
+          AND (solver_status IS NULL OR solver_status IN ('idle', 'failure'))
+        ORDER BY id DESC`,
+    ).all().map((r) => r.id);
 
-  // Eligible = has an image, isn't already solved, isn't currently queued.
-  // For an explicit ids list we still surface skips so the UI can report
-  // them; for the "all unsolved" path we just pull them from SQL.
-  const eligibleClause = `image_path IS NOT NULL
-     AND (solver_status IS NULL OR solver_status IN ('idle', 'failure'))`;
-  let candidates;
-  if (requestedIds && requestedIds.length) {
-    const placeholders = requestedIds.map(() => '?').join(',');
-    candidates = db
-      .prepare(
-        `SELECT id, image_path, solver_status FROM observations
-           WHERE id IN (${placeholders})`,
-      )
-      .all(...requestedIds);
-  } else {
-    candidates = db
-      .prepare(`SELECT id, image_path, solver_status FROM observations
-                  WHERE ${eligibleClause}
-                  ORDER BY id DESC LIMIT 50`)
-      .all();
-  }
-
-  let session;
-  try { session = await astrometry.login(); }
-  catch (err) {
-    if (err.code === 'no_key') {
-      return res.status(503).json({ error: 'ASTROMETRY_API_KEY is not set on the server' });
-    }
-    return res.status(502).json({ error: `astrometry login failed: ${err.message}` });
-  }
-
-  const results = [];
-  for (const obs of candidates) {
-    if (!obs.image_path) {
-      results.push({ id: obs.id, status: 'skipped', reason: 'no image' });
-      continue;
-    }
-    if (obs.solver_status === 'success') {
-      results.push({ id: obs.id, status: 'skipped', reason: 'already solved' });
-      continue;
-    }
-    if (obs.solver_status === 'pending' || obs.solver_status === 'solving') {
-      results.push({ id: obs.id, status: 'skipped', reason: `already ${obs.solver_status}` });
-      continue;
-    }
-    const full = path.resolve(UPLOAD_DIR, obs.image_path);
-    if (!full.startsWith(UPLOAD_DIR + path.sep) || !fs.existsSync(full)) {
-      results.push({ id: obs.id, status: 'error', reason: 'image file not found' });
-      continue;
-    }
-    try {
-      const subid = await astrometry.submitFile(session, full);
-      setSolverStatus(obs.id, {
-        solver_status: 'pending',
-        solver_job_id: String(subid),
-      });
-      results.push({ id: obs.id, status: 'queued', subid: String(subid) });
-    } catch (err) {
-      results.push({ id: obs.id, status: 'error', reason: err.message });
-    }
-  }
-
+  const results = solver.enqueue(ids);
   const queued = results.filter((r) => r.status === 'queued').length;
   const skipped = results.filter((r) => r.status === 'skipped').length;
   const errors = results.filter((r) => r.status === 'error').length;
-  res.status(202).json({
-    queued, skipped, errors,
-    considered: results.length,
-    results,
-  });
+  const bits = [`${queued} queued`];
+  if (skipped) bits.push(`${skipped} skipped`);
+  if (errors) bits.push(`${errors} with no image file`);
+  solver.event(null, 'batch', `Bulk plate solve: ${bits.join(', ')}`, { queued, skipped, errors });
+  res.status(202).json({ queued, skipped, errors, considered: results.length, results });
 });
 
 app.post('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) => {
@@ -2019,29 +1988,19 @@ app.post('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) =
   const obs = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
   if (!obs) return res.status(404).json({ error: 'Observation not found' });
   if (!obs.image_path) return res.status(400).json({ error: 'Observation has no image to solve' });
-
-  let session;
-  try { session = await astrometry.login(); }
-  catch (err) {
-    if (err.code === 'no_key') {
-      return res.status(503).json({ error: 'ASTROMETRY_API_KEY is not set on the server' });
-    }
-    return res.status(502).json({ error: `astrometry login failed: ${err.message}` });
-  }
-
   const full = path.resolve(UPLOAD_DIR, obs.image_path);
   if (!full.startsWith(UPLOAD_DIR + path.sep) || !fs.existsSync(full)) {
     return res.status(404).json({ error: 'Image file not found on disk' });
   }
-
-  let subid;
-  try { subid = await astrometry.submitFile(session, full); }
-  catch (err) {
-    return res.status(502).json({ error: `astrometry upload failed: ${err.message}` });
+  if (['queued', 'pending', 'solving'].includes(obs.solver_status)) {
+    return res.status(202).json({ ok: true, status: obs.solver_status });
   }
-
-  setSolverStatus(id, { solver_status: 'pending', solver_job_id: String(subid) });
-  res.status(202).json({ ok: true, status: 'pending', subid });
+  if (!(await checkAstrometryLogin(res))) return;
+  // An explicit request re-solves a solved image too.
+  if (obs.solver_status === 'success') db.prepare('UPDATE observations SET solver_status = NULL WHERE id = ?').run(id);
+  const [result] = solver.enqueue([id]);
+  if (result.status !== 'queued') return res.status(409).json({ error: result.reason });
+  res.status(202).json({ ok: true, status: 'queued' });
 });
 
 app.get('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) => {
@@ -2049,7 +2008,7 @@ app.get('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) =>
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
   const obs = db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
   if (!obs) return res.status(404).json({ error: 'Observation not found' });
-  if (!obs.solver_job_id) return res.json({ status: obs.solver_status || 'idle' });
+  if (!obs.solver_job_id || obs.solver_status === 'queued') return res.json({ status: obs.solver_status || 'idle' });
   if (obs.solver_status === 'success' || obs.solver_status === 'failure') {
     return res.json({
       status: obs.solver_status,
@@ -2061,37 +2020,23 @@ app.get('/api/admin/observations/:id/platesolve', basicAuth, async (req, res) =>
       solved_at: obs.solved_at,
     });
   }
-
-  // Poll astrometry for a status update.
-  let poll;
-  try { poll = await astrometry.pollStatus(obs.solver_job_id); }
-  catch (err) { return res.status(502).json({ error: err.message }); }
-
-  if (poll.state === 'pending' || poll.state === 'solving') {
-    setSolverStatus(id, { solver_status: poll.state });
-    return res.json({ status: poll.state });
+  try {
+    res.json(await solver.pollOne(obs));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
   }
-  if (poll.state === 'failure') {
-    setSolverStatus(id, {
-      solver_status: 'failure',
-      solved_at: new Date().toISOString(),
-    });
-    return res.json({ status: 'failure' });
-  }
-  // success
-  const cal = poll.calibration || {};
-  const updates = {
-    solver_status: 'success',
-    solved_ra_hours: cal.ra != null ? cal.ra / 15 : null,        // API returns RA in degrees
-    solved_dec_degrees: cal.dec ?? null,
-    solved_radius_deg: cal.radius ?? null,
-    solved_orientation_deg: cal.orientation ?? null,
-    solved_pixscale: cal.pixscale ?? null,
-    solved_at: new Date().toISOString(),
-    solved_json: JSON.stringify({ calibration: cal, info: poll.info || null }),
-  };
-  setSolverStatus(id, updates);
-  res.json({ status: 'success', ...updates });
+});
+
+// The plate-solve activity log: counts per state, what is in progress and
+// since when, and log events after ?after=<event id> (the newest 100 when
+// omitted). Polled by the admin observations page.
+app.get('/api/admin/platesolve/activity', basicAuth, (req, res) => {
+  const after = Math.max(0, Number(req.query.after) || 0);
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+  res.json({
+    enabled: !!(process.env.ASTROMETRY_API_KEY || '').trim(),
+    ...solver.activity(after, limit),
+  });
 });
 
 app.get('/api/admin/stats', basicAuth, (_req, res) => {
@@ -3206,6 +3151,8 @@ app.listen(PORT, () => {
   if (!ADMIN_PASSWORD) {
     console.warn('WARNING: ADMIN_PASSWORD is not set — /admin is disabled.');
   }
+  // Plate solving left queued or at astrometry.net when the server stopped.
+  solver.start();
   // In the background, one after the other (they share the OCR worker):
   // repair observations saved with the junk exposure / focal length /
   // aperture of recent Seestar EXIF (lib/repair_optics); then, once, replace

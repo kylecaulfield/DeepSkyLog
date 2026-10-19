@@ -39,6 +39,18 @@
         <div id="bulk-solve-status" class="dim" style="flex-basis: 100%; margin-top: 0.35rem;"></div>
       </div>
 
+      <section id="solve-panel" class="solve-panel" hidden aria-labelledby="solve-panel-title">
+        <div class="solve-panel-head">
+          <h2 id="solve-panel-title">Plate solving</h2>
+          <div id="solve-counts" class="solve-counts"></div>
+        </div>
+        <div id="solve-active" class="solve-active"></div>
+        <details id="solve-log-wrap" class="solve-log-wrap" open>
+          <summary>Activity log</summary>
+          <ol id="solve-log" class="solve-log"></ol>
+        </details>
+      </section>
+
       <div class="toolbar">
         <label style="flex: 1;">
           Search
@@ -70,6 +82,7 @@
         </table>
       </div>
     </main>
+    <div id="toasts" class="toast-stack" aria-live="polite"></div>
     <script type="module" src="/admin/observations.js"></script>
     <script type="module" src="/js/sortable.js"></script>
     <script type="module" src="/admin/version.js"></script>

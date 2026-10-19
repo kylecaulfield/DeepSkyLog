@@ -55,7 +55,9 @@ async function triggerPlateSolve(o) {
     } else if (data.status === 'failure') {
       alert('Astrometry could not solve this image.');
     } else {
-      alert(`Status: ${data.status}. Click again in a minute to refresh.`);
+      const where = data.status === 'queued' ? 'Queued for plate solving.' : `Status: ${data.status}.`;
+      alert(`${where} The server uploads it and checks astrometry.net for the result on its own — `
+        + 'follow each step in the Plate solving panel on the Observations page.');
     }
     render();
   } catch (err) {
