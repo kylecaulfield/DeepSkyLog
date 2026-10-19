@@ -22,6 +22,7 @@ const { repairNamedTargetTypes } = require('./lib/repair_named_targets');
 const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
 const { createSolver } = require('./lib/solver');
+const { isMoonObservation, createMoonMapStore } = require('./lib/moon_map');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -1312,6 +1313,51 @@ app.get('/api/observations/:id', (req, res) => {
     sibling_index: idx >= 0 ? idx : 0,
     sibling_count: siblings.length,
   });
+});
+
+// --- Moon maps -------------------------------------------------------------
+//
+// Named lunar features projected onto a Moon photo (lib/moon_map.js) for the
+// observation page's overlay: worked out on first request (or right after
+// upload) and cached in moon_maps until anything it depends on changes.
+
+const moonMaps = createMoonMapStore({ db, uploadDir: UPLOAD_DIR, defaultLocation });
+
+const MOON_ROW_SQL = `
+  SELECT o.id, o.image_path, o.observed_at, o.created_at, o.latitude, o.longitude,
+         o.object_type, o.object_name, o.catalog, o.catalog_number,
+         lo.object_type AS list_object_type
+    FROM observations o
+    LEFT JOIN list_objects lo ON lo.id = o.object_id
+   WHERE o.id = ?`;
+
+// The observation for a moonmap route, or null after answering 400/404.
+function moonObservation(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: 'Invalid id' });
+    return null;
+  }
+  const row = db.prepare(MOON_ROW_SQL).get(id);
+  if (!row) {
+    res.status(404).json({ error: 'Observation not found' });
+    return null;
+  }
+  if (!row.image_path || !isMoonObservation(row)) {
+    res.status(404).json({ error: 'Not a Moon photo' });
+    return null;
+  }
+  return row;
+}
+
+app.get('/api/observations/:id/moonmap', async (req, res, next) => {
+  const row = moonObservation(req, res);
+  if (!row) return;
+  try {
+    res.json(await moonMaps.get(row));
+  } catch (err) {
+    next(err);
+  }
 });
 
 // iCalendar feed of dark-sky weekends (Fri–Sun) over the next 12 months,
@@ -2976,6 +3022,46 @@ app.post('/api/admin/observations', basicAuth, async (req, res) => {
     image_path: relImage,
     thumbnail_path: relThumb,
   });
+
+  // Label a Moon photo now rather than on its first view.
+  const saved = db.prepare(MOON_ROW_SQL).get(observationId);
+  if (saved?.image_path && isMoonObservation(saved)) {
+    moonMaps.get(saved).catch((err) => console.warn(`Moon map for #${observationId} failed:`, err.message));
+  }
+});
+
+// Pin a Moon photo's orientation when the automatic match got it wrong —
+// { rotation: degrees lunar north is turned clockwise from straight up,
+// mirrored } — or DELETE to go back to automatic. Both answer with the
+// redone map.
+app.put('/api/admin/observations/:id/moonmap', basicAuth, async (req, res, next) => {
+  const row = moonObservation(req, res);
+  if (!row) return;
+  const body = req.body || {};
+  const rotation = body.rotation === '' || body.rotation == null ? NaN : Number(body.rotation);
+  if (!Number.isFinite(rotation)) {
+    return res.status(400).json({ error: 'rotation must be a number of degrees' });
+  }
+  try {
+    moonMaps.override(row.id, {
+      rotation: ((rotation % 360) + 360) % 360,
+      mirrored: body.mirrored === true || body.mirrored === 'true',
+    });
+    res.json(await moonMaps.fresh(row));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/admin/observations/:id/moonmap', basicAuth, async (req, res, next) => {
+  const row = moonObservation(req, res);
+  if (!row) return;
+  try {
+    moonMaps.override(row.id, null);
+    res.json(await moonMaps.fresh(row));
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.patch('/api/admin/observations/:id', basicAuth, (req, res) => {

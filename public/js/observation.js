@@ -1,4 +1,5 @@
 import { fetchJson, el, formatRA, formatDec, typeLabel, qs } from './common.js';
+import { mountMoonMap, isMoonObservation } from './moon-map.js';
 
 const root = document.getElementById('root');
 const id = qs('id');
@@ -177,7 +178,15 @@ async function render() {
   // Hero: image left, sidebar metadata right
   const heroLeft = el('div', { class: 'obs-photo' });
   if (o.image_path) {
-    heroLeft.appendChild(el('img', { src: `/uploads/${o.image_path}`, alt: title, loading: 'lazy' }));
+    const img = el('img', { src: `/uploads/${o.image_path}`, alt: title, loading: 'lazy' });
+    const frame = el('div', { class: 'photo-frame' }, img);
+    heroLeft.appendChild(frame);
+    // Moon photos get the labelled feature map on top.
+    if (isMoonObservation(o)) {
+      fetchJson(`/api/observations/${encodeURIComponent(o.id)}/moonmap`)
+        .then((map) => mountMoonMap(frame, img, map))
+        .catch(() => {});
+    }
   } else {
     heroLeft.appendChild(el('div', { class: 'empty', text: 'No image uploaded.' }));
   }

@@ -60,6 +60,13 @@ list, and publish a public gallery and map of where you image from.
   stored back on the observation. The admin Observations page shows live
   counts, what's in progress, a log of every step (uploaded, solving, solved
   with the objects in the field, failed) and a notification as each lands.
+- **Moon maps.** Moon photos are labelled like a lunar chart on the
+  observation page — maria outlines, crater rims, mountains, rilles,
+  landing sites — with layer toggles. The disk, the Moon's libration and
+  lighting at the capture time, and how the photo is turned are all worked
+  out automatically; an admin can turn or mirror the labels by hand if the
+  match is off. Feature names from the IAU Gazetteer of Planetary
+  Nomenclature; shading from NASA's LRO mosaic.
 - **Backups.** `./backup.sh` snapshots the database + uploads. The admin
   dashboard lists every archive with a one-click Restore.
 - **Activity heatmap + lifetime stats.** Last 365 days of observations
@@ -154,6 +161,7 @@ list, and publish a public gallery and map of where you image from.
 | `list_objects`     | Catalog entries (M1 … M110, C1 … C109) with RA/Dec/mag/type.     |
 | `observations`     | Every logged photo: date, location, telescope, rating, EXIF …    |
 | `list_completions` | Junction: each time an observation satisfies a list entry.       |
+| `moon_maps`        | Cached Moon-photo feature maps + any manual orientation.         |
 | `migrations`       | Applied migration ids (managed by `db/schema.js`).               |
 
 `observations.latitude` / `longitude` are populated from EXIF GPS on upload and
@@ -170,6 +178,7 @@ drive the Leaflet map. An install-time backfill pulls coords from any existing
 | `GET /api/observations`      | ✗    | `telescope=`, `object_type=`, `has_image=1`.   |
 | `GET /api/observations/map`  | ✗    | Only rows with non-null lat/lon.               |
 | `GET /api/observations.csv`  | ✗    | Downloadable snapshot.                         |
+| `GET /api/observations/:id/moonmap` | ✗ | Lunar features projected onto a Moon photo. |
 | `GET /api/objects/:id`       | ✗    | Object + memberships + observations.           |
 | `GET /api/filters`           | ✗    | Distinct telescopes + object types.            |
 | `/admin/*` (static)          | Basic | Dashboard + upload UI.                        |
@@ -179,6 +188,7 @@ drive the Leaflet map. An install-time backfill pulls coords from any existing
 | `GET /api/admin/stage/:id/preview` | Basic | Preview a staged file.                  |
 | `DELETE /api/admin/stage/:id`| Basic | Discard an in-flight upload.                   |
 | `POST /api/admin/observations`| Basic | Finalize: move file, thumbnail, insert rows.  |
+| `PUT/DELETE /api/admin/observations/:id/moonmap` | Basic | Set / clear a Moon photo's orientation by hand. |
 
 Basic Auth compares the submitted password with `ADMIN_PASSWORD` using
 `crypto.timingSafeEqual`. Failed attempts are counted per client IP with a

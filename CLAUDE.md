@@ -53,12 +53,23 @@ HTTP Basic Auth compares the submitted password to `ADMIN_PASSWORD` with `crypto
 
 ### Public vs admin surface
 
-- Public (no auth): `/api/lists`, `/api/lists/:slug`, `/api/observations` (filters: `telescope`, `object_type`, `has_image=1`), `/api/observations/map`, `/api/observations.csv`, `/api/objects/:id`, `/api/filters`, `/api/tonight` (requires `lat`/`lon`, uses `lib/astro.js` to compute altitude + moon phase).
-- Admin (Basic Auth): `/api/admin/stats`, `/api/admin/config`, `/api/admin/objects` (autocomplete), `/api/admin/stage`, `/api/admin/stage/:id/preview`, `/api/admin/stage/:id` (DELETE), `/api/admin/observations`, `/api/admin/observations/bulk-platesolve`, `/api/admin/observations/:id/platesolve` (POST queue / GET status), `/api/admin/platesolve/activity`.
+- Public (no auth): `/api/lists`, `/api/lists/:slug`, `/api/observations` (filters: `telescope`, `object_type`, `has_image=1`), `/api/observations/map`, `/api/observations.csv`, `/api/observations/:id/moonmap`, `/api/objects/:id`, `/api/filters`, `/api/tonight` (requires `lat`/`lon`, uses `lib/astro.js` to compute altitude + moon phase).
+- Admin (Basic Auth): `/api/admin/stats`, `/api/admin/config`, `/api/admin/objects` (autocomplete), `/api/admin/stage`, `/api/admin/stage/:id/preview`, `/api/admin/stage/:id` (DELETE), `/api/admin/observations`, `/api/admin/observations/bulk-platesolve`, `/api/admin/observations/:id/platesolve` (POST queue / GET status), `/api/admin/platesolve/activity`, `/api/admin/observations/:id/moonmap` (PUT `{ rotation, mirrored }` / DELETE).
 
 ### Plate solving (`lib/solver.js`, `lib/astrometry.js`)
 
 Needs `ASTROMETRY_API_KEY`. The solve endpoints only check the key and put observations in a local queue (`solver_status = 'queued'`, ordered by `solver_queued_at`), then return. A background worker uploads queued images to nova.astrometry.net one at a time (`pending` = uploaded, waiting for a job; `solving` = job running), and a poller checks every pending/solving observation every `SOLVER_POLL_MS` (30 s) until `success` (calibration in `solved_*`) or `failure`; a failed upload returns the observation to unsolved. Every step is written to `solver_events` (migration 17, pruned to the newest 2000), which `/api/admin/platesolve/activity?after=<id>` serves with per-state counts and the in-progress list; the admin observations page polls it for its Plate solving panel, live Solve cells and notifications. `solver.start()` resumes the queue and polling after a restart.
+
+### Moon maps (`lib/moon_map.js`, `lib/moon_detect.js`, `lib/moon_ephem.js`)
+
+A Moon observation (type `MOON`, the Solar System list's SOL 2, or `object_name` "Moon": `isMoonObservation()`) gets its named features drawn over the photo by `public/js/moon-map.js`, from `GET /api/observations/:id/moonmap`. Computing a map:
+
+1. `captureInstant()` turns `observed_at` (zoneless wall clock) into UTC using the observation's longitude, to the hour; the observation's coordinates, else the default location, make the ephemeris topocentric.
+2. `moonFace()` (Meeus ch. 47/48/53, checked against the book's worked examples in `test/moon_map.test.js`) gives libration, the axis position angle, the sub-solar point, bright-limb angle and phase.
+3. `detectMoon()` thresholds the photo, keeps the largest blob, and RANSAC-fits a circle to its *sharp* edge points (the sunlit limb is a hard step; the terminator a soft ramp), then correlates the photo with `canonicalImage()` — `lib/moon_albedo.png` (NASA LRO mosaic, 1°/px) shaded for that face — at every rotation, plain and mirrored. `rotation` = where lunar north points, degrees clockwise from up, in the displayed (EXIF-oriented) image. A handedness the match can't settle stays unmirrored (Seestars never mirror).
+4. `projectFeatures()` places `lib/moon_features.json` (IAU gazetteer: maria with outlines traced from the LRO mosaic, craters ≥ 20 km, mountains, rilles, landing sites) orthographically in photo pixels.
+
+`createMoonMapStore()` caches results in `moon_maps` (migration 18) under a key of everything a map depends on (image, capture time, location, override, `MOON_MAP_VERSION` — bump it when detection or projection changes), sharing concurrent runs; finalize warms it for new Moon uploads. An admin override (`override_json`) pins the orientation; the admin Observations page has a "Moon map" button per Moon photo to check and turn the labels. The two data files are rebuilt by `scripts/build-moon-features.js` and `scripts/build-moon-albedo.js` (sources and URLs in their headers).
 
 ### Frontend conventions
 
