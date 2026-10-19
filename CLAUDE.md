@@ -54,7 +54,11 @@ HTTP Basic Auth compares the submitted password to `ADMIN_PASSWORD` with `crypto
 ### Public vs admin surface
 
 - Public (no auth): `/api/lists`, `/api/lists/:slug`, `/api/observations` (filters: `telescope`, `object_type`, `has_image=1`), `/api/observations/map`, `/api/observations.csv`, `/api/objects/:id`, `/api/filters`, `/api/tonight` (requires `lat`/`lon`, uses `lib/astro.js` to compute altitude + moon phase).
-- Admin (Basic Auth): `/api/admin/stats`, `/api/admin/config`, `/api/admin/objects` (autocomplete), `/api/admin/stage`, `/api/admin/stage/:id/preview`, `/api/admin/stage/:id` (DELETE), `/api/admin/observations`.
+- Admin (Basic Auth): `/api/admin/stats`, `/api/admin/config`, `/api/admin/objects` (autocomplete), `/api/admin/stage`, `/api/admin/stage/:id/preview`, `/api/admin/stage/:id` (DELETE), `/api/admin/observations`, `/api/admin/observations/bulk-platesolve`, `/api/admin/observations/:id/platesolve` (POST queue / GET status), `/api/admin/platesolve/activity`.
+
+### Plate solving (`lib/solver.js`, `lib/astrometry.js`)
+
+Needs `ASTROMETRY_API_KEY`. The solve endpoints only check the key and put observations in a local queue (`solver_status = 'queued'`, ordered by `solver_queued_at`), then return. A background worker uploads queued images to nova.astrometry.net one at a time (`pending` = uploaded, waiting for a job; `solving` = job running), and a poller checks every pending/solving observation every `SOLVER_POLL_MS` (30 s) until `success` (calibration in `solved_*`) or `failure`; a failed upload returns the observation to unsolved. Every step is written to `solver_events` (migration 17, pruned to the newest 2000), which `/api/admin/platesolve/activity?after=<id>` serves with per-state counts and the in-progress list; the admin observations page polls it for its Plate solving panel, live Solve cells and notifications. `solver.start()` resumes the queue and polling after a restart.
 
 ### Frontend conventions
 

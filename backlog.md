@@ -175,6 +175,15 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   star touching a 3 read "39° N" as 89). On a 175-image corpus: 45 fields
   gained, none lost or changed. A one-time boot repair types existing rows
   named "Milky Way".
+- ✅ **Live plate-solve activity** — "Bulk plate solve" used to upload up to
+  50 images inside one request and then say only "50 queued"; nothing polled
+  astrometry.net unless someone clicked each row. Solving now runs in the
+  background (`lib/solver.js`): a local queue uploaded one image at a time, a
+  poller that checks every submission until it solves or fails, and a
+  `solver_events` log. The admin Observations page shows counts per state,
+  what's in progress and for how long, a timestamped log (submission and job
+  numbers; RA/Dec, field, scale and objects in field when solved), live
+  Solve cells, and a notification per solve or failure.
 - **Band reader gaps on full-resolution (2160×3840) exports** — the model
   row is sometimes unread when a star touches the model text (the glyph
   count check rejects it), and a star touching a digit can still flip a

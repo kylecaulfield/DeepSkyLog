@@ -402,3 +402,141 @@ fieldset.sidecar legend {
 @media (max-width: 720px) {
   .version-chip { margin-left: 0; padding-top: 0.5rem; }
 }
+
+/* ---- Plate-solve activity (admin observations page) ---------------------- */
+
+.solve-pill.queued { background: var(--lcars-blue); color: #000; }
+
+.solve-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-left: 10px solid var(--lcars-blue);
+  border-radius: 0 12px 0 12px;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.solve-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+
+.solve-panel-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--peach);
+}
+
+.solve-counts { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+.solve-count {
+  font-size: 0.78rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--pill);
+  border: 1px solid var(--muted);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.solve-count strong { color: var(--fg); }
+.solve-count.queued  { border-color: var(--lcars-blue); }
+.solve-count.pending { border-color: var(--warn); }
+.solve-count.solving { border-color: var(--lcars-cream); }
+.solve-count.success { border-color: var(--success); }
+.solve-count.failure { border-color: var(--danger); }
+
+.solve-active { margin-top: 0.6rem; font-size: 0.85rem; }
+.solve-active ul { list-style: none; margin: 0.25rem 0 0; padding: 0; display: grid; gap: 0.2rem; }
+.solve-active li { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+.solve-active .when { color: var(--muted); }
+
+.solve-log-wrap { margin-top: 0.6rem; }
+.solve-log-wrap > summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.solve-log {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  max-height: 18rem;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.solve-log li {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.15rem 0;
+  border-bottom: 1px solid #222;
+}
+.solve-log time { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.solve-log .what { color: var(--fg); }
+.solve-log .what a { color: var(--accent); }
+
+.solve-kind {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.05rem 0.45rem;
+  border-radius: var(--pill);
+  background: #222;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.solve-kind.queued, .solve-kind.uploading { background: var(--lcars-blue); color: #000; }
+.solve-kind.submitted { background: var(--warn); color: #000; }
+.solve-kind.solving { background: var(--lcars-cream); color: #000; }
+.solve-kind.solved { background: var(--success); color: #000; }
+.solve-kind.failed, .solve-kind.error { background: var(--danger); color: #000; }
+.solve-kind.batch { background: var(--accent-2); color: #000; }
+
+@media (max-width: 720px) {
+  .solve-log li { grid-template-columns: auto 1fr; }
+  .solve-log li .solve-kind { grid-row: 1; grid-column: 2; justify-self: start; }
+  .solve-log li .what { grid-column: 1 / -1; }
+}
+
+/* Notifications (bottom-right stack; tap to dismiss). */
+.toast-stack {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1000;
+  display: grid;
+  gap: 0.5rem;
+  width: min(24rem, calc(100vw - 2rem));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-left: 8px solid var(--accent);
+  border-radius: 0 10px 0 10px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.85rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+  animation: toast-in 0.18s ease-out;
+}
+.toast strong { display: block; color: var(--peach); margin-bottom: 0.15rem; }
+.toast.good { border-left-color: var(--success); }
+.toast.bad { border-left-color: var(--danger); }
+
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+.solve-log li.empty { display: block; border: 0; }

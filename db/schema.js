@@ -233,6 +233,27 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    id: 17,
+    name: 'add_solver_events',
+    // Plate solving runs in the background (lib/solver.js): every step —
+    // queued, uploaded, solving, solved, failed, errors — is logged here for
+    // the admin observations page's live activity log. solver_queued_at
+    // orders the local upload queue (solver_status = 'queued').
+    up: `
+      CREATE TABLE IF NOT EXISTS solver_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        observation_id INTEGER,
+        at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        kind TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details TEXT,
+        FOREIGN KEY (observation_id) REFERENCES observations(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_solver_events_observation ON solver_events(observation_id);
+      ALTER TABLE observations ADD COLUMN solver_queued_at TEXT;
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };
