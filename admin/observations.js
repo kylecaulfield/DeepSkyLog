@@ -1,4 +1,5 @@
 import { fetchJson, el, catalogSortKey } from '/js/common.js';
+import { mountMoonMap, isMoonObservation } from '/js/moon-map.js';
 
 const queryInput = document.getElementById('filter-query');
 const telescopeSelect = document.getElementById('filter-telescope');
@@ -44,6 +45,100 @@ async function featureRow(id, button) {
     button.disabled = false;
     alert(`Feature failed: ${err.message}`);
   }
+}
+
+// Check a Moon photo's feature labels and, if the automatic match turned
+// them the wrong way, set the orientation by hand. Each adjustment is saved
+// straight away (PUT /api/admin/observations/:id/moonmap); Automatic
+// forgets it.
+function openMoonMap(o) {
+  const overlay = el('div', { class: 'modal-overlay' });
+  const card = el('div', { class: 'modal moon-modal' });
+  const stage = el('div', { class: 'moon-modal-stage' });
+  const status = el('p', { class: 'dim moon-modal-status', text: 'Working out the map…' });
+  let map = null;
+
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+
+  const show = (m) => {
+    map = m;
+    stage.replaceChildren();
+    const img = el('img', { src: `/uploads/${o.image_path}`, alt: o.title || `Observation #${o.id}` });
+    const frame = el('div', { class: 'photo-frame' }, img);
+    stage.appendChild(frame);
+    mountMoonMap(frame, img, m, { showUncertain: true });
+    const or = m.orientation;
+    status.textContent = or
+      ? `${or.source === 'manual' ? 'Set by hand' : `Matched automatically (${or.confidence} confidence)`}`
+        + ` · lunar north ${or.rotation}° clockwise from up${or.mirrored ? ' · mirror image' : ''}`
+      : m.disk ? 'Not matched automatically — turn the labels into place.'
+      : m.status === 'no-disk' ? 'No Moon disk found, so there is nothing to turn.'
+      : "The map couldn't be worked out (see the note above); Automatic tries again.";
+    enableButtons();
+  };
+
+  const send = async (method, body) => {
+    for (const b of buttons) b.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+      const res = await fetch(`/api/admin/observations/${o.id}/moonmap`, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      show(await res.json());
+    } catch (err) {
+      status.textContent = `Save failed: ${err.message}`;
+      enableButtons();
+    }
+  };
+  const current = () => ({ rotation: map?.orientation?.rotation ?? 0, mirrored: !!map?.orientation?.mirrored });
+  const turn = (delta) => send('PUT', { ...current(), rotation: current().rotation + delta });
+  const button = (text, title, onClick) => {
+    const b = el('button', { type: 'button', class: 'moon-adjust', text, title, disabled: 'disabled' });
+    b.addEventListener('click', onClick);
+    return b;
+  };
+  const buttons = [
+    button('↺ 10°', 'Turn the labels 10° anticlockwise', () => turn(-10)),
+    button('↺ 1°', 'Turn the labels 1° anticlockwise', () => turn(-1)),
+    button('↻ 1°', 'Turn the labels 1° clockwise', () => turn(1)),
+    button('↻ 10°', 'Turn the labels 10° clockwise', () => turn(10)),
+    button('Mirror', 'Swap east and west (a photo taken through a star diagonal)',
+      () => send('PUT', { ...current(), mirrored: !current().mirrored })),
+    button('Automatic', 'Forget the manual setting and match the photo again', () => send('DELETE')),
+  ];
+  // Turning and mirroring need a disk; Automatic (work it out again) never does.
+  const automatic = buttons[buttons.length - 1];
+  const enableButtons = () => {
+    for (const b of buttons) b.disabled = b !== automatic && !map?.disk;
+  };
+  const closeBtn = el('button', { type: 'button', class: 'ghost', text: 'Close' });
+  closeBtn.addEventListener('click', close);
+
+  card.append(
+    el('h3', { text: `Moon map · ${o.title || `observation #${o.id}`}` }),
+    stage,
+    el('div', { class: 'moon-adjust-row' }, ...buttons),
+    status,
+    el('div', { class: 'actions' }, closeBtn),
+  );
+  overlay.appendChild(card);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
+
+  fetchJson(`/api/observations/${encodeURIComponent(o.id)}/moonmap`)
+    .then(show)
+    .catch((err) => { status.textContent = `Couldn't load the map: ${err.message}`; });
 }
 
 async function solveRow(id, button) {
@@ -175,10 +270,16 @@ function renderRows() {
       : null;
     if (featureBtn) featureBtn.addEventListener('click', () => featureRow(o.id, featureBtn));
 
+    // Moon photos get their feature map checked / turned here.
+    const moonBtn = o.image_path && isMoonObservation(o)
+      ? el('button', { type: 'button', class: 'feature-btn moon-btn', text: 'Moon map', title: 'Check the feature labels' })
+      : null;
+    if (moonBtn) moonBtn.addEventListener('click', () => openMoonMap(o));
+
     const deleteBtn = el('button', { type: 'button', class: 'delete-btn', text: 'Delete' });
     deleteBtn.addEventListener('click', () => deleteRow(o.id, deleteBtn));
 
-    const actions = el('div', { class: 'tile-actions' }, ...(featureBtn ? [featureBtn] : []), deleteBtn);
+    const actions = el('div', { class: 'tile-actions' }, ...(featureBtn ? [featureBtn] : []), ...(moonBtn ? [moonBtn] : []), deleteBtn);
 
     const captured = o.observed_at || o.created_at || '';
     const capturedMs = captured ? Date.parse(captured) : NaN;

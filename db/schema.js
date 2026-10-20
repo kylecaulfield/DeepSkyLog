@@ -254,6 +254,24 @@ const MIGRATIONS = [
       ALTER TABLE observations ADD COLUMN solver_queued_at TEXT;
     `,
   },
+  {
+    id: 18,
+    name: 'add_moon_maps',
+    // Labelled Moon photos (lib/moon_map.js): the computed map per
+    // observation, cached under a key of everything it depends on, and an
+    // admin's orientation override ({ rotation, mirrored }) when the
+    // automatic match got it wrong.
+    up: `
+      CREATE TABLE IF NOT EXISTS moon_maps (
+        observation_id INTEGER PRIMARY KEY,
+        cache_key TEXT,
+        result_json TEXT,
+        override_json TEXT,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        FOREIGN KEY (observation_id) REFERENCES observations(id) ON DELETE CASCADE
+      );
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

@@ -184,6 +184,20 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   what's in progress and for how long, a timestamped log (submission and job
   numbers; RA/Dec, field, scale and objects in field when solved), live
   Solve cells, and a notification per solve or failure.
+- ✅ **Moon maps** — Moon photos get the named lunar features drawn over
+  them on the observation page: mare outlines, crater rims, mountains,
+  rilles, landing sites, a compass, layer toggles. The server finds the disk
+  (circle fit to the sharp sunlit limb), works out the Moon's face at the
+  capture time (`lib/moon_ephem.js`, Meeus — libration, axis angle, where
+  the Sun stands) and matches a rendering of it (NASA's LRO mosaic, shaded)
+  against the photo at every rotation, plain and mirrored, to find how the
+  photo is turned (`lib/moon_detect.js`). Features are the IAU gazetteer's
+  (`lib/moon_features.json`). Results are cached in `moon_maps`; an admin
+  can turn or mirror the labels by hand from the Observations page.
+- **Recognise "Moon" in the Seestar watermark** — Moon observations are
+  found by type Moon, the Solar System list's Moon (SOL 2) or the name
+  "Moon"; the band reader doesn't map a printed "Moon" target to any of
+  those yet (no Seestar lunar export to test against). *Still open.*
 - **Band reader gaps on full-resolution (2160×3840) exports** — the model
   row is sometimes unread when a star touches the model text (the glyph
   count check rejects it), and a star touching a digit can still flip a
