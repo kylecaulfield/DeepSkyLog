@@ -11,7 +11,7 @@
 //       ?item wdt:P2824 ?gpn ; wdt:P376 wd:Q405 .
 //       OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }
 //       OPTIONAL { ?item wdt:P138 ?person . }
-//       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } }' \
+//       SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul". } }' \
 //     https://query.wikidata.org/sparql
 //   node scripts/build-moon-features.js MOON_nomenclature_center_pts.dbf lroc_color_poles_1k.jpg moon-wikidata.json
 //
@@ -68,6 +68,21 @@ const LANDING_ARTICLES = {
   'Guang Han Gong': "Chang'e_3",
   'Statio Tianchuan': "Chang'e_5",
 };
+// Namesakes by gazetteer id where Wikidata disagrees with the IAU's own
+// note: it names the wrong person (Geber), adds one the IAU doesn't
+// (Sheepshanks), or lists one of the two people the note names. The build
+// warns about any other crater whose note and namesakes don't add up.
+const EPONYM_OVERRIDES = {
+  2128: ['Jabir ibn Aflah'], // Geber; Wikidata has the alchemist Jabir ibn Hayyan
+  5480: ['Anne Sheepshanks'],
+  2520: ['Kiyotsugu Hirayama', 'Shin Hirayama'],
+  5235: ['Henry Norris Russell', 'John Russell'],
+  2321: ['George Ellery Hale', 'William Hale'],
+  709: ['Jacob Bernoulli', 'Johann Bernoulli'],
+  3253: ['Johann Heinrich Lambert', 'Gérard Lambert'],
+  5158: ['Carl Ritter', 'Georg August Dietrich Ritter'],
+  3308: ['Ernest Lawrence', 'Robert Henry Lawrence Jr.'],
+};
 
 function readDbf(file) {
   const b = fs.readFileSync(file);
@@ -92,6 +107,10 @@ function readDbf(file) {
 const MIN_RING_DIAMETER = 200;
 const MOON_RADIUS_KM = 1737.4;
 
+// Text with a full stop at the end, unless it already has one ("Jr.",
+// "(Spelling changed from Walter.)").
+const endSentence = (text) => (/\.\)?$/.test(text) ? text : `${text}.`);
+
 // Where a feature's name comes from, readable on its own. For a crater
 // named after a person: "Named after <who Wikidata says>, <the gazetteer's
 // description>" — the gazetteer note "Nicholas; Polish astronomer
@@ -105,11 +124,17 @@ function originText(name, kind, raw, eponyms = []) {
   const text = String(raw || '').replace(/\s+/g, ' ').trim();
   if (kind !== 'crater') return text || null;
   if (eponyms.length > 1) {
-    return `Named after ${eponyms.slice(0, -1).join(', ')} and ${eponyms[eponyms.length - 1]}.`;
+    return endSentence(`Named after ${eponyms.slice(0, -1).join(', ')} and ${eponyms[eponyms.length - 1]}`);
   }
-  // The note's leading name part ends at its first ";" (or ":"), if any.
-  const m = /^([^;:]{1,80})[;:]\s*(.+)$/.exec(text);
-  const about = (m ? m[2] : text).replace(/\.?$/, '.');
+  // The note's leading name part ends at its first ";" (or ":"), if any —
+  // or at a comma after a lone given name ("Wernher, German-American
+  // rocket pioneer"), when that name is the namesake's.
+  let m = /^([^;:]{1,80})[;:]\s*(.+)$/.exec(text);
+  if (!m && eponyms[0]) {
+    const c = /^(\p{Lu}[\p{L}'-]*),\s*(.+)$/u.exec(text);
+    if (c && eponyms[0].includes(c[1])) m = c;
+  }
+  const about = endSentence(m ? m[2] : text);
   let who = eponyms[0];
   if (!who && m && /^\p{Lu}[\p{L}'-]*\.?(?: \p{Lu}[\p{L}'-]*\.?){0,2}$/u.test(m[1].trim())) {
     const given = m[1].trim();
@@ -117,7 +142,7 @@ function originText(name, kind, raw, eponyms = []) {
     who = given.toLowerCase().includes(surname.toLowerCase()) ? given : `${given} ${surname}`;
   }
   if (!who) return text || null;
-  return about !== '.' ? `Named after ${who}, ${about}` : `Named after ${who}.`;
+  return about !== '.' ? `Named after ${who}, ${about}` : endSentence(`Named after ${who}`);
 }
 
 // Gazetteer id -> { article: English Wikipedia title, eponyms: [names] },
@@ -341,7 +366,14 @@ async function main() {
     const g = (/\/Feature\/(\d+)/.exec(r.link) || [])[1];
     if (g) f.g = Number(g);
     const wd = (g && wikidata.get(g)) || null;
-    const o = originText(n, kind, r.origin, wd?.eponyms);
+    const eponyms = EPONYM_OVERRIDES[g] || wd?.eponyms || [];
+    // A note with more (or fewer) life dates than namesakes probably names
+    // someone Wikidata misses (or adds): check it, then add an override.
+    const lives = (String(r.origin).match(/\([^)]*\d{3,4}[^)]*\)/g) || []).length;
+    if (kind === 'crater' && eponyms.length && lives && lives !== eponyms.length) {
+      console.warn(`check ${n} (${g}): ${eponyms.join(' / ')} vs "${r.origin}"`);
+    }
+    const o = originText(n, kind, r.origin, eponyms);
     if (o) f.o = o;
     const w = wd?.article || LANDING_ARTICLES[n];
     if (w) f.w = w;

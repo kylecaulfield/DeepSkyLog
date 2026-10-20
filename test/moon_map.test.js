@@ -99,6 +99,18 @@ test('feature data: every feature can explain itself and link somewhere', () => 
   assert.equal(by('Clavius').o, 'Named after Christopher Clavius, German mathematician (1537-1612).');
   assert.equal(by('Mare Imbrium').o, '"Sea of Showers."');
   assert.match(by('Apollo 15').o, /landing site \(30 July 1971\)/);
+  // Where Wikidata and the IAU disagree, the IAU's people win; punctuation
+  // stays single.
+  assert.equal(by('Geber').o, 'Named after Jabir ibn Aflah, Spanish-Arab astronomer (fl. first half of twelfth cent.).');
+  assert.equal(by('Sheepshanks').o, 'Named after Anne Sheepshanks, British benefactor (1789-1876).');
+  assert.equal(by('Lambert').o, 'Named after Johann Heinrich Lambert and Gérard Lambert.');
+  assert.equal(by('von Braun').o, 'Named after Wernher von Braun, German-American rocket pioneer (1912-1977).');
+  assert.equal(by('Lawrence').o, 'Named after Ernest Lawrence and Robert Henry Lawrence Jr.');
+  assert.match(by('Walther').o, /\(Spelling changed from Walter\.\)$/);
+  // A sentence in brackets keeps its own full stop and gets no other
+  // ("(fl. 140 B.C.)." is right: an abbreviation, then the full stop).
+  const doubled = /\.\.(?!\.)|\(Spelling changed from [^)]*\.\)\./;
+  assert.deepEqual(features.filter((f) => doubled.test(f.o)).map((f) => f.n), [], 'no doubled full stops');
 });
 
 test('isMoonObservation', () => {

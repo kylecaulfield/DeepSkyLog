@@ -741,7 +741,7 @@ button.moon-toggle {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
   color: var(--fg);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 0.8rem; line-height: 1.35; letter-spacing: 0;
+  font-size: 0.8rem; line-height: 1.35; letter-spacing: 0; text-align: left;
   pointer-events: none;
 }
 .moon-tip[hidden] { display: none; }

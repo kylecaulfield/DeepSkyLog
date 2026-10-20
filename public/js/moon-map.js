@@ -143,6 +143,9 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
   const overlay = svg('svg', {
     class: 'moon-map-svg', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet',
     role: 'group', 'aria-label': 'Named features on this photo',
+    // Its focus listeners would otherwise make Chrome give the svg itself a
+    // (nearly invisible) tab stop.
+    tabindex: '-1',
   });
   frame.appendChild(overlay);
   const tip = el('div', { class: 'moon-tip', role: 'tooltip', hidden: 'hidden' });
@@ -184,6 +187,7 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
 
   let tipFor = null; // index into shownFeatures, or null
   let pinned = false;
+  let shownBy = null; // 'pointer' | 'focus' | 'touch'
   let lastPointer = 'mouse';
 
   function fillTip(f, link, withLink) {
@@ -202,20 +206,23 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
   }
 
   // Put the card near (x, y) in frame pixels: beside the point, within the
-  // frame's width; below it unless it fits above, where it must stay clear
-  // of the frame's top and of a sticky site header (it may run past the
-  // photo's bottom edge, over the controls).
+  // frame's width; below it unless that runs past the photo or the bottom of
+  // the window and it fits above, where it must stay clear of the frame's
+  // top and of a sticky site header (failing both, below wins: it may run
+  // past the photo's bottom edge, over the controls).
   function placeTip(x, y) {
     const fw = frame.clientWidth, fh = frame.clientHeight;
     const tw = tip.offsetWidth, th = tip.offsetHeight;
     let left = x + 14;
     if (left + tw > fw - 4) left = x - 14 - tw;
+    const frameTop = frame.getBoundingClientRect().top;
     const header = document.querySelector('.site-header');
     const headerBottom = header && /sticky|fixed/.test(getComputedStyle(header).position)
       ? header.getBoundingClientRect().bottom : 0;
-    const clearTop = Math.max(4, headerBottom - frame.getBoundingClientRect().top + 4);
+    const clearTop = Math.max(4, headerBottom - frameTop + 4);
+    const bottom = Math.min(fh, window.innerHeight - frameTop);
     let top = y + 14;
-    if (top + th > fh - 4 && y - 14 - th >= clearTop) top = y - 14 - th;
+    if (top + th > bottom - 4 && y - 14 - th >= clearTop) top = y - 14 - th;
     tip.style.left = `${Math.max(4, Math.min(left, fw - tw - 4))}px`;
     tip.style.top = `${Math.max(clearTop, top)}px`;
   }
@@ -224,12 +231,13 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
     for (const node of overlay.querySelectorAll(`[data-i="${i}"]`)) node.classList.toggle('hot', on);
   }
 
-  function showTip(i, x, y, { pin = false } = {}) {
+  function showTip(i, x, y, { pin = false, by = 'pointer' } = {}) {
     const f = shownFeatures[i];
     if (!f) return;
     if (tipFor !== null && tipFor !== i) highlight(tipFor, false);
     tipFor = i;
     pinned = pin;
+    shownBy = by;
     fillTip(f, featureLink(f), pin);
     tip.classList.toggle('pinned', pin);
     tip.hidden = false;
@@ -241,6 +249,7 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
     if (tipFor !== null) highlight(tipFor, false);
     tipFor = null;
     pinned = false;
+    shownBy = null;
     tip.hidden = true;
     tip.classList.remove('pinned');
   }
@@ -266,14 +275,15 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
     else placeTip(...framePoint(e));
   });
   overlay.addEventListener('pointerleave', () => { if (!pinned) hideTip(); });
-  // Touch: the first tap on a feature shows its card; a second follows the link.
+  // Touch: the first tap on a feature shows its card; a second follows the
+  // link. (Enter on a focused label is a click with no pointer: detail 0.)
   overlay.addEventListener('click', (e) => {
     const node = featureOf(e.target);
-    if (!node || lastPointer !== 'touch') return;
+    if (!node || e.detail === 0 || lastPointer !== 'touch') return;
     const i = Number(node.dataset.i);
     if (pinned && tipFor === i) return;
     e.preventDefault();
-    showTip(i, ...framePoint(e), { pin: true });
+    showTip(i, ...framePoint(e), { pin: true, by: 'touch' });
   });
   // Keyboard: a focused label shows its card beside the feature (a click
   // focuses it too, but the card is already at the pointer).
@@ -284,9 +294,11 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
     try { keyboard = node.matches(':focus-visible'); } catch { /* old browser */ }
     if (!f || !keyboard) return;
     const scale = img.clientWidth / W;
-    showTip(Number(node.dataset.i), f.x * scale, f.y * scale);
+    showTip(Number(node.dataset.i), f.x * scale, f.y * scale, { by: 'focus' });
   });
-  overlay.addEventListener('focusout', () => { if (!pinned) hideTip(); });
+  // Only a card focus opened goes with the focus (a click focuses the link
+  // too, and the card it hovers over must stay).
+  overlay.addEventListener('focusout', () => { if (!pinned && shownBy === 'focus') hideTip(); });
   // A pinned card closes on a tap elsewhere or Escape. These listen on the
   // document, so they let go once the overlay is gone (the admin modal
   // mounts a fresh one each time it redraws).
@@ -294,16 +306,21 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
     if (!frame.isConnected) return unlisten();
     if (pinned && !tip.contains(e.target) && !featureOf(e.target)) hideTip();
   };
+  // Escape is caught on the way down and stops there when it closes a card,
+  // so it doesn't also close a dialog the map sits in (the admin modal).
   const onDocKey = (e) => {
     if (!frame.isConnected) return unlisten();
-    if (e.key === 'Escape' && tipFor !== null) hideTip();
+    if (e.key === 'Escape' && tipFor !== null) {
+      hideTip();
+      e.stopPropagation();
+    }
   };
   const unlisten = () => {
     document.removeEventListener('pointerdown', onDocPointer);
-    document.removeEventListener('keydown', onDocKey);
+    document.removeEventListener('keydown', onDocKey, true);
   };
   document.addEventListener('pointerdown', onDocPointer);
-  document.addEventListener('keydown', onDocKey);
+  document.addEventListener('keydown', onDocKey, true);
 
   function draw() {
     const shown = img.clientWidth;
@@ -319,7 +336,8 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
     overlay.style.fontSize = `${px(fontPx)}px`;
 
     const groups = {};
-    for (const k of ['mare', 'rima', 'mons', 'crater', 'landing', 'labels']) {
+    // Bigger things underneath, so the smaller ones on top answer the pointer.
+    for (const k of ['mare', 'crater', 'rima', 'mons', 'landing', 'labels']) {
       groups[k] = svg('g', { class: `moon-layer moon-${k}` });
       overlay.appendChild(groups[k]);
     }
@@ -415,7 +433,7 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
 function drawCompass(overlay, compass, W, px) {
   if (!compass) return;
   const len = px(26), cx = W - px(40), cy = px(40);
-  const g = svg('g', { class: 'moon-compass' });
+  const g = svg('g', { class: 'moon-compass', 'aria-hidden': 'true' });
   for (const [label, angle] of [['N', compass.north], ['E', compass.east]]) {
     const t = (angle * Math.PI) / 180;
     const x = cx + Math.sin(t) * len, y = cy - Math.cos(t) * len;
