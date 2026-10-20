@@ -65,8 +65,11 @@ list, and publish a public gallery and map of where you image from.
   landing sites — with layer toggles. The disk, the Moon's libration and
   lighting at the capture time, and how the photo is turned are all worked
   out automatically; an admin can turn or mirror the labels by hand if the
-  match is off. Feature names from the IAU Gazetteer of Planetary
-  Nomenclature; shading from NASA's LRO mosaic.
+  match is off. Hover any feature for a card (kind, size, who or what it
+  is named after, position, sunlit or not); click it for its Wikipedia
+  article or IAU entry. Feature names from the IAU Gazetteer of Planetary
+  Nomenclature, eponyms and article links from Wikidata; shading from
+  NASA's LRO mosaic.
 - **Backups.** `./backup.sh` snapshots the database + uploads. The admin
   dashboard lists every archive with a one-click Restore.
 - **Activity heatmap + lifetime stats.** Last 365 days of observations

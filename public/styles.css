@@ -673,15 +673,29 @@ button:hover { background: var(--peach); }
    mountains peach, rilles green, landing sites pink. Stroke and halo widths
    come from the script so they stay a constant screen size as the photo
    scales. */
-.photo-frame { position: relative; }
-.moon-map-svg {
+.photo-frame {
+  position: relative;
   --moon-mare: #8ec5ff; --moon-crater: #f2d27a; --moon-mons: #f6b48f;
   --moon-rima: #8be0b5; --moon-landing: #ff8fd0;
+}
+.moon-map-svg {
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none; overflow: hidden; border-radius: 8px;
 }
-.moon-map-svg polygon, .moon-map-svg ellipse { fill: none; stroke-width: var(--moon-stroke); pointer-events: visibleStroke; }
-.moon-map-svg circle { pointer-events: visiblePainted; }
+.moon-map-svg polygon, .moon-map-svg ellipse { fill: none; stroke-width: var(--moon-stroke); }
+/* Each feature is a link: the whole of a mare or crater answers the
+   pointer (smaller features sit on top, so they win), a dot its bigger
+   invisible .hit circle, a label its glyphs. */
+.moon-map-svg .moon-feature { cursor: pointer; }
+.moon-map-svg .moon-feature polygon, .moon-map-svg .moon-feature ellipse { pointer-events: visible; }
+.moon-map-svg .moon-feature circle { pointer-events: visiblePainted; }
+.moon-map-svg .moon-feature .hit { fill: transparent; stroke: none; pointer-events: all; }
+.moon-map-svg .moon-feature .moon-label { pointer-events: visiblePainted; }
+.moon-map-svg .hot polygon, .moon-map-svg .hot ellipse { stroke-width: calc(var(--moon-stroke) * 2.2); opacity: 1; }
+.moon-map-svg .hot circle:not(.hit) { stroke: #fff; stroke-width: var(--moon-stroke); }
+.moon-map-svg .hot .moon-label { fill: #fff; }
+.moon-map-svg .moon-feature:focus { outline: none; }
+.moon-map-svg .moon-feature:focus-visible .moon-label { text-decoration: underline; }
 .moon-mare polygon { stroke: var(--moon-mare); opacity: 0.7; }
 .moon-crater ellipse { stroke: var(--moon-crater); opacity: 0.8; }
 .moon-mons circle { fill: var(--moon-mons); }
@@ -715,3 +729,31 @@ button.moon-toggle {
 .moon-toggle:disabled { opacity: 0.4; cursor: default; }
 .moon-toggle:focus-visible { outline: 2px solid var(--peach); outline-offset: 2px; }
 .moon-map-caption, .moon-map-note { font-size: 0.8rem; margin: 0.45rem 0 0; }
+
+/* The tooltip card for a feature on the Moon map. */
+.moon-tip {
+  position: absolute; z-index: 5;
+  width: max-content; max-width: min(280px, calc(100% - 8px));
+  padding: 0.5rem 0.7rem 0.55rem;
+  background: rgba(8, 8, 8, 0.94);
+  border: 1px solid #444; border-left: 5px solid var(--moon-tip-accent, var(--accent));
+  border-radius: 0 10px 0 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.8rem; line-height: 1.35; letter-spacing: 0;
+  pointer-events: none;
+}
+.moon-tip[hidden] { display: none; }
+.moon-tip.pinned { pointer-events: auto; }
+.moon-tip[data-kind="mare"] { --moon-tip-accent: var(--moon-mare); }
+.moon-tip[data-kind="crater"] { --moon-tip-accent: var(--moon-crater); }
+.moon-tip[data-kind="mons"] { --moon-tip-accent: var(--moon-mons); }
+.moon-tip[data-kind="rima"] { --moon-tip-accent: var(--moon-rima); }
+.moon-tip[data-kind="landing"] { --moon-tip-accent: var(--moon-landing); }
+.moon-tip-name { display: block; font-size: 0.95rem; color: var(--moon-tip-accent, var(--fg)); }
+.moon-tip-kind { display: block; color: var(--fg-dim); }
+.moon-tip-origin { margin: 0.3rem 0 0; }
+.moon-tip-meta { display: block; margin-top: 0.3rem; color: var(--muted); font-size: 0.75rem; }
+.moon-tip-link { display: block; margin-top: 0.35rem; font-size: 0.75rem; color: var(--accent); }
+a.moon-tip-link { text-decoration: underline; }
