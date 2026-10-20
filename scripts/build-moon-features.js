@@ -11,8 +11,9 @@
 // Kept: features on or near the Earth-facing side (|longitude| <= 98°, so
 // libration can bring them into view) — every mare / oceanus / lacus /
 // sinus / palus, craters of 20 km or more, and the larger mountains,
-// rilles, valleys, scarps, ridges and promontories — plus the Apollo
-// landing sites (not gazetteer features; NASA's published coordinates).
+// rilles, valleys, scarps, ridges and promontories, and the named landing
+// sites — plus the Apollo sites the gazetteer doesn't name (NASA's
+// published coordinates; Apollo 11's is its Statio Tranquillitatis).
 //
 // The gazetteer has only centres and bounding boxes, so outlines for the
 // larger dark plains are traced from NASA's public-domain LRO mosaic (the
@@ -34,10 +35,9 @@ const KIND = {
   MO: 'mons', PR: 'mons',
   RI: 'rima', VA: 'rima', RU: 'rima', DO: 'rima',
   ST: 'landing',
-  AL: 'albedo',
 };
 // Smallest size kept per gazetteer code (km); codes absent here are dropped.
-const MIN_DIAMETER = { AA: 20, ME: 0, OC: 0, LC: 0, SI: 0, PA: 0, MO: 10, PR: 10, RI: 60, VA: 60, RU: 60, DO: 150, ST: 0, AL: 0 };
+const MIN_DIAMETER = { AA: 20, ME: 0, OC: 0, LC: 0, SI: 0, PA: 0, MO: 10, PR: 10, RI: 60, VA: 60, RU: 60, DO: 150, ST: 0 };
 const MAX_ABS_LON = 98;
 
 const APOLLO = [
@@ -270,9 +270,14 @@ async function main() {
   }
   const outlined = mosaic ? await addOutlines(features, mosaic) : 0;
   for (const f of features) delete f.box;
-  for (const [n, lat, lon] of APOLLO) features.push({ n, t: 'landing', lat, lon, d: 0 });
+  // An Apollo site the gazetteer already names keeps the gazetteer's name.
+  const named = features.filter((f) => f.t === 'landing');
+  for (const [n, lat, lon] of APOLLO) {
+    if (named.some((f) => Math.abs(f.lat - lat) < 0.05 && Math.abs(f.lon - lon) < 0.05)) continue;
+    features.push({ n, t: 'landing', lat, lon, d: 0 });
+  }
   // Biggest first: the map labels in this order and skips what collides.
-  const rank = { mare: 0, landing: 1, mons: 2, rima: 3, crater: 4, albedo: 5 };
+  const rank = { mare: 0, landing: 1, mons: 2, rima: 3, crater: 4 };
   features.sort((a, b) => (rank[a.t] - rank[b.t]) || (b.d - a.d) || a.n.localeCompare(b.n));
   const out = path.join(__dirname, '..', 'lib', 'moon_features.json');
   fs.writeFileSync(out, `${JSON.stringify(features).replace(/\},\{/g, '},\n{')}\n`);

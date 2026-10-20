@@ -703,7 +703,9 @@ button:hover { background: var(--peach); }
 .moon-compass text { fill: rgba(255, 255, 255, 0.85); font-family: system-ui, sans-serif; font-weight: 700; }
 .moon-map-controls { margin-top: 0.6rem; }
 .moon-map-toggles { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.moon-toggle {
+/* button.moon-toggle, not .moon-toggle: it must outrank the global
+   button:hover so a disabled toggle doesn't light up on hover. */
+button.moon-toggle {
   font-size: 0.72rem; padding: 0.25rem 0.75rem; letter-spacing: 0.12em;
   background: #2a2a2a; color: var(--fg-dim);
 }

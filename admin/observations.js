@@ -75,8 +75,10 @@ function openMoonMap(o) {
     status.textContent = or
       ? `${or.source === 'manual' ? 'Set by hand' : `Matched automatically (${or.confidence} confidence)`}`
         + ` · lunar north ${or.rotation}° clockwise from up${or.mirrored ? ' · mirror image' : ''}`
-      : (m.disk ? 'Not matched automatically — turn the labels into place.' : 'No Moon disk found, so there is nothing to adjust.');
-    for (const b of buttons) b.disabled = !m.disk;
+      : m.disk ? 'Not matched automatically — turn the labels into place.'
+      : m.status === 'no-disk' ? 'No Moon disk found, so there is nothing to turn.'
+      : "The map couldn't be worked out (see the note above); Automatic tries again.";
+    enableButtons();
   };
 
   const send = async (method, body) => {
@@ -95,7 +97,7 @@ function openMoonMap(o) {
       show(await res.json());
     } catch (err) {
       status.textContent = `Save failed: ${err.message}`;
-      for (const b of buttons) b.disabled = !map?.disk;
+      enableButtons();
     }
   };
   const current = () => ({ rotation: map?.orientation?.rotation ?? 0, mirrored: !!map?.orientation?.mirrored });
@@ -114,6 +116,11 @@ function openMoonMap(o) {
       () => send('PUT', { ...current(), mirrored: !current().mirrored })),
     button('Automatic', 'Forget the manual setting and match the photo again', () => send('DELETE')),
   ];
+  // Turning and mirroring need a disk; Automatic (work it out again) never does.
+  const automatic = buttons[buttons.length - 1];
+  const enableButtons = () => {
+    for (const b of buttons) b.disabled = b !== automatic && !map?.disk;
+  };
   const closeBtn = el('button', { type: 'button', class: 'ghost', text: 'Close' });
   closeBtn.addEventListener('click', close);
 

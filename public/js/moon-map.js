@@ -15,14 +15,35 @@ const LAYERS = [
   { key: 'mare', label: 'Maria' },
   { key: 'crater', label: 'Craters' },
   { key: 'mons', label: 'Mountains' },
-  { key: 'rima', label: 'Rilles' },
+  { key: 'rima', label: 'Rilles & ridges' },
   { key: 'landing', label: 'Landing sites' },
   { key: 'labels', label: 'Labels' },
   { key: 'night', label: 'Night side' },
 ];
 const DEFAULTS = { mare: true, crater: true, mons: true, rima: true, landing: true, labels: true, night: false };
 
-const KIND_NAME = { mare: 'Mare', crater: 'Crater', mons: 'Mountain', rima: 'Rille / valley', landing: 'Landing site', albedo: 'Albedo feature' };
+const KIND_NAME = { mare: 'Mare', crater: 'Crater', mons: 'Mountain', rima: 'Rille', landing: 'Landing site' };
+
+// Rilles, valleys, scarps and wrinkle ridges share one layer ('rima'); the
+// gazetteer's names say which is which.
+function kindName(f) {
+  if (f.t === 'rima') {
+    if (/^Vall/i.test(f.n)) return 'Valley';
+    if (/^Rup/i.test(f.n)) return 'Scarp';
+    if (/^Dors/i.test(f.n)) return 'Wrinkle ridge';
+  }
+  return KIND_NAME[f.t] || f.t;
+}
+
+// Label width in screen px, measured in the labels' own font (a fixed
+// per-character guess under-reads wide names, and labels then collide).
+let measurer = null;
+function textWidth(text, fontPx) {
+  if (!measurer) measurer = document.createElement('canvas').getContext('2d');
+  if (!measurer) return text.length * fontPx * 0.62;
+  measurer.font = `600 ${fontPx}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  return measurer.measureText(text).width;
+}
 
 // Smallest on-screen sizes (px, diameter) worth drawing / labelling.
 const MIN_RIM_PX = 7;
@@ -107,12 +128,13 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
   });
   master.addEventListener('click', () => { visible = !visible; sync(); });
   toggles.append(master, ...layerButtons);
-  const note = el('p', { class: 'moon-map-caption dim', text: uncertain
-    ? "Couldn't confidently tell how this photo is turned, so the map is hidden — it may mislabel features."
-    : caption(map) });
+  const note = el('p', { class: 'moon-map-caption dim' });
   frame.after(el('div', { class: 'moon-map-controls' }, toggles, note));
 
   function sync() {
+    note.textContent = !uncertain ? caption(map)
+      : visible ? `Low-confidence match, so some labels may be in the wrong place · ${caption(map)}`
+      : "Couldn't confidently tell how this photo is turned, so the map is hidden — it may mislabel features.";
     master.setAttribute('aria-pressed', String(visible));
     for (const b of layerButtons) {
       b.setAttribute('aria-pressed', String(!!layers[b.dataset.layer]));
@@ -154,7 +176,7 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
       const sizePx = 2 * f.a * scale;
       const notable = f.t === 'crater' && NOTABLE.has(f.n);
       const tip = svg('title');
-      tip.textContent = `${f.n} — ${KIND_NAME[f.t] || f.t}${f.d > 0 ? `, ${Math.round(f.d)} km` : ''}`;
+      tip.textContent = `${f.n} — ${kindName(f)}${f.d > 0 ? `, ${Math.round(f.d)} km` : ''}`;
       let marker = null;
       if (f.t === 'mare') {
         if (f.ring) marker = svg('polygon', { points: f.ring.map((p) => p.join(',')).join(' ') });
@@ -176,7 +198,8 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
       }
 
       if (!layers.labels) continue;
-      const tw = f.n.length * fontPx * 0.55, th = fontPx * 1.15;
+      // +4 for the dark halo round the glyphs.
+      const tw = textWidth(f.n, fontPx) + 4, th = fontPx * 1.15;
       // A plain gets its name once it is at least half as wide as the name.
       const big = f.t === 'landing' || notable || (f.t === 'mare' ? sizePx >= tw / 2 : sizePx >= MIN_LABEL_PX);
       if (!big) continue;

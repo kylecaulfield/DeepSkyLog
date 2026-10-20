@@ -14,9 +14,11 @@ const sharp = require('sharp');
 const ROOT = path.resolve(__dirname, '..');
 const { moonFace } = require(path.join(ROOT, 'lib', 'moon_ephem'));
 const { renderMoon, detectMoon } = require(path.join(ROOT, 'lib', 'moon_detect'));
-const { projectFeatures, captureInstant, isMoonObservation, computeMoonMap } = require(path.join(ROOT, 'lib', 'moon_map'));
+const { projectFeatures, captureInstant, isMoonObservation, computeMoonMap, createMoonMapStore } = require(path.join(ROOT, 'lib', 'moon_map'));
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsl-moon-'));
+// The store test below uses the app's own database module on a throwaway file.
+process.env.DATABASE_PATH = path.join(tmp, 'store.sqlite');
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const close = (actual, expected, tol, what) =>
@@ -63,15 +65,25 @@ test('ephemeris matches Meeus, Astronomical Algorithms examples 47.a, 48.a and 5
 });
 
 test('captureInstant reads stored times as the photographer\'s clock', () => {
-  // Zoneless: local mean time at the longitude, to the hour (−87.9° → UTC−6).
-  assert.equal(captureInstant('2026-10-18T22:00', -87.9).toISOString(), '2026-10-19T04:00:00.000Z');
-  assert.equal(captureInstant('2026-10-18 22:00:30', 135).toISOString(), '2026-10-18T13:00:30.000Z');
-  assert.equal(captureInstant('2026-10-18T22:00', null).toISOString(), '2026-10-18T22:00:00.000Z');
+  const at = (...args) => captureInstant(...args)?.toISOString() ?? null;
+  // No server zone: local mean time at the longitude, to the hour (−87.9° → UTC−6).
+  assert.equal(at('2026-10-18T22:00', -87.9, null), '2026-10-19T04:00:00.000Z');
+  assert.equal(at('2026-10-18 22:00:30', 135, null), '2026-10-18T13:00:30.000Z');
+  assert.equal(at('2026-10-18T22:00', null, null), '2026-10-18T22:00:00.000Z');
+  // The server's zone, when it fits the longitude: DST and the date line right.
+  assert.equal(at('2026-10-18T22:00', -87.9, 'America/Chicago'), '2026-10-19T03:00:00.000Z', 'CDT');
+  assert.equal(at('2026-12-18T22:00', -87.9, 'America/Chicago'), '2026-12-19T04:00:00.000Z', 'CST');
+  assert.equal(at('2026-07-25T23:00', 2.35, 'Europe/Paris'), '2026-07-25T21:00:00.000Z', 'CEST, 2 h from mean time');
+  assert.equal(at('2026-03-01T21:00', -175.2, 'Pacific/Tongatapu'), '2026-03-01T08:00:00.000Z', 'UTC+13 at 175°W');
+  assert.equal(at('2026-10-18T22:00', null, 'America/Chicago'), '2026-10-19T03:00:00.000Z', 'no location: home zone');
+  // ...but not for a photo taken far from it, nor with a zone name it doesn't know.
+  assert.equal(at('2026-10-18T22:00', 135, 'America/Chicago'), '2026-10-18T13:00:00.000Z');
+  assert.equal(at('2026-10-18T22:00', -87.9, 'Nowhere/Zone'), '2026-10-19T04:00:00.000Z');
   // An explicit zone wins.
-  assert.equal(captureInstant('2026-10-18T22:00Z', -87.9).toISOString(), '2026-10-18T22:00:00.000Z');
-  assert.equal(captureInstant('2026-10-18T22:00-05:00', 10).toISOString(), '2026-10-19T03:00:00.000Z');
-  assert.equal(captureInstant('', 0), null);
-  assert.equal(captureInstant('not a date', 0), null);
+  assert.equal(at('2026-10-18T22:00Z', -87.9, 'Europe/Paris'), '2026-10-18T22:00:00.000Z');
+  assert.equal(at('2026-10-18T22:00-05:00', 10, 'Europe/Paris'), '2026-10-19T03:00:00.000Z');
+  assert.equal(at('', 0), null);
+  assert.equal(at('not a date', 0), null);
 });
 
 test('isMoonObservation', () => {
@@ -109,9 +121,13 @@ test('projection: lunar east is right and north up when unturned', () => {
   assert.ok(at(mirror, 'Mare Crisium').x < 250, 'mirrored: Crisium left of centre');
   assert.ok(at(mirror, 'Plato').y < 250, 'mirrored: Plato still above');
 
-  // Far-side features are left out.
-  assert.equal(at(plain, 'Apollo 11') != null, true);
-  assert.ok(plain.every((f) => (f.x - 500) ** 2 + (f.y - 500) ** 2 <= 400 ** 2 + 1));
+  // Features behind the limb (or too close to it to place) are left out.
+  assert.ok(at(plain, 'Statio Tranquillitatis'), 'near side kept');
+  assert.equal(at(plain, 'Mare Orientale'), undefined, 'Mare Orientale (95°W) is behind the limb');
+  assert.equal(at(plain, 'Montes Cordillera'), undefined, 'Montes Cordillera (95°W) is behind the limb');
+  // Kept centres face the viewer by at least MIN_VIEW_Z (0.06), allowing for
+  // the 0.1 px rounding of the output.
+  assert.ok(plain.every((f) => Math.hypot(f.x - 500, f.y - 500) <= 400 * Math.sqrt(1 - 0.06 ** 2) + 0.15));
 });
 
 test('detectMoon finds the disk and how the photo is turned', async () => {
@@ -139,6 +155,70 @@ test('detectMoon finds the disk and how the photo is turned', async () => {
   }
 });
 
+test('detectMoon on awkward photos', async () => {
+  const angleOk = (res, want, what) => assert.ok(res.orientation && angleOff(res.orientation.rotation, want) <= 1.5,
+    `${what}: rotation ${res.orientation?.rotation} vs ${want}`);
+  // Paste a rendered Moon (radius r, centre cx,cy) onto a w × h greyscale canvas.
+  const compose = async (w, h, { when, r, cx, cy, rotation, gain = 1.6, under = null }) => {
+    const face = moonFace(new Date(when));
+    const m = Math.ceil(r) + 4, S = 2 * m;
+    const moon = await renderMoon({ face, size: S, cx: m, cy: m, r, rotation, gain });
+    const canvas = under || Buffer.alloc(w * h);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const X = Math.round(cx) - m + x, Y = Math.round(cy) - m + y;
+      if (X >= 0 && Y >= 0 && X < w && Y < h) canvas[Y * w + X] = Math.max(canvas[Y * w + X], moon[y * S + x]);
+    }
+    return { face, canvas };
+  };
+
+  // A small Moon in a big frame (a wide DSLR or phone shot): well under 1%
+  // of the pixels are Moon.
+  {
+    const { face, canvas } = await compose(3000, 2000, { when: '2026-02-25T03:00Z', r: 75, cx: 1800, cy: 800, rotation: 45 });
+    const file = path.join(tmp, 'small.jpg');
+    await sharp(canvas, { raw: { width: 3000, height: 2000, channels: 1 } }).jpeg({ quality: 90 }).toFile(file);
+    const res = await detectMoon(file, face);
+    close(res.disk.cx, 1800, 3, 'small Moon x');
+    close(res.disk.r, 75, 3, 'small Moon radius');
+    angleOk(res, 45, 'small Moon');
+  }
+
+  // A transparent sky with white hidden under it reads as the black it shows.
+  {
+    const when = '2026-03-10T12:00Z';
+    const face = moonFace(new Date(when));
+    const grey = await renderMoon({ face, size: 400, r: 160, rotation: 70 });
+    const rgba = Buffer.alloc(400 * 400 * 4);
+    for (let i = 0; i < grey.length; i++) {
+      const sky = grey[i] === 0;
+      rgba.fill(sky ? 255 : grey[i], i * 4, i * 4 + 3);
+      rgba[i * 4 + 3] = sky ? 0 : 255;
+    }
+    const file = path.join(tmp, 'alpha.png');
+    await sharp(rgba, { raw: { width: 400, height: 400, channels: 4 } }).png().toFile(file);
+    const res = await detectMoon(file, face);
+    close(res.disk.r, 160, 2, 'transparent-sky radius');
+    angleOk(res, 70, 'transparent sky');
+  }
+
+  // A dim Moon above a Seestar watermark band whose white text outshines it
+  // (and whose logo is round): the Moon is found, not the logo.
+  {
+    const W = 1449, H = 1100, bandH = 221;
+    const band = await sharp(path.join(ROOT, 'test', 'fixtures', 'seestar-bands', 's50pro-ngc6960.jpg'))
+      .extract({ left: 0, top: 721 - bandH, width: W, height: bandH }).greyscale().raw().toBuffer();
+    const under = Buffer.alloc(W * H);
+    band.copy(under, (H - bandH) * W);
+    const { face, canvas } = await compose(W, H, { when: '2026-03-01T12:00Z', r: 330, cx: 724, cy: 500, rotation: 30, gain: 0.3, under });
+    const file = path.join(tmp, 'banded.jpg');
+    await sharp(canvas, { raw: { width: W, height: H, channels: 1 } }).jpeg({ quality: 90 }).toFile(file);
+    const res = await detectMoon(file, face);
+    close(res.disk.cy, 500, 3, 'banded Moon y');
+    close(res.disk.r, 330, 4, 'banded Moon radius');
+    angleOk(res, 30, 'banded Moon');
+  }
+});
+
 test('detectMoon gives up on photos without a Moon', async () => {
   const blank = path.join(tmp, 'blank.png');
   await sharp({ create: { width: 300, height: 200, channels: 3, background: '#000' } }).png().toFile(blank);
@@ -157,7 +237,7 @@ test('computeMoonMap: labels land on the rendered features', async () => {
   assert.ok(angleOff(map.orientation.rotation, 70) <= 1);
   // Against the truth: project with the render's own disk and rotation.
   const truth = projectFeatures(face, { cx: 260, cy: 260, r: 200 }, { rotation: 70, mirrored: false });
-  for (const name of ['Copernicus', 'Tycho', 'Mare Crisium', 'Plato', 'Apollo 11']) {
+  for (const name of ['Copernicus', 'Tycho', 'Mare Crisium', 'Plato', 'Statio Tranquillitatis']) {
     const got = map.features.find((f) => f.n === name), want = truth.find((f) => f.n === name);
     assert.ok(got && want, `${name} projected`);
     assert.ok(Math.hypot(got.x - want.x, got.y - want.y) < 4, `${name} within 4 px (${got.x},${got.y} vs ${want.x},${want.y})`);
@@ -175,6 +255,40 @@ test('computeMoonMap: labels land on the rendered features', async () => {
   assert.equal((await computeMoonMap({ imagePath: file, observedAt: null })).status, 'no-date');
 });
 
+test('moon map store: retries photos that were missing or unreadable', async () => {
+  const { getDb } = require(path.join(ROOT, 'db'));
+  const db = getDb();
+  const uploadDir = path.join(tmp, 'store-uploads');
+  fs.mkdirSync(uploadDir, { recursive: true });
+  const store = createMoonMapStore({ db, uploadDir, log: { warn() {} } });
+  const add = (image_path) => Number(db.prepare(
+    `INSERT INTO observations (image_path, observed_at, object_type) VALUES (?, '2026-03-08T09:00Z', 'MOON')`,
+  ).run(image_path).lastInsertRowid);
+  const row = (id) => db.prepare('SELECT * FROM observations WHERE id = ?').get(id);
+  const { file: good } = await moonPhoto('store-good', { when: '2026-03-08T09:00Z', rotation: 30 });
+
+  // Missing now, there later (uploads not mounted yet, being restored).
+  const a = add('a.png');
+  assert.equal((await store.get(row(a))).status, 'no-image');
+  fs.copyFileSync(good, path.join(uploadDir, 'a.png'));
+  assert.equal((await store.get(row(a))).status, 'ok');
+
+  // Unreadable, then replaced on disk: the new file is looked at again.
+  const b = add('b.png');
+  fs.writeFileSync(path.join(uploadDir, 'b.png'), 'not an image');
+  assert.equal((await store.get(row(b))).status, 'error');
+  assert.equal((await store.get(row(b))).status, 'error', 'a broken file is cached, not re-read every view');
+  fs.copyFileSync(good, path.join(uploadDir, 'b.png'));
+  fs.utimesSync(path.join(uploadDir, 'b.png'), new Date(), new Date(Date.now() + 5000));
+  assert.equal((await store.get(row(b))).status, 'ok');
+
+  // "Automatic" (clearing the override) always works the map out again.
+  db.prepare(`UPDATE moon_maps SET result_json = '{"status":"error"}' WHERE observation_id = ?`).run(a);
+  assert.equal((await store.get(row(a))).status, 'error');
+  store.override(a, null);
+  assert.equal((await store.fresh(row(a))).status, 'ok');
+});
+
 test('moon map API: upload, cache, override', async (t) => {
   const PASSWORD = 'moontest';
   const dataDir = path.join(tmp, 'app');
@@ -187,6 +301,9 @@ test('moon map API: upload, cache, override', async (t) => {
     STAGE_DIR: path.join(dataDir, 'stage'),
     BACKUP_DIR: path.join(dataDir, 'backups'),
     DISABLE_OCR: '1',
+    // Capture times below are read as local mean time at the longitude;
+    // pin the zone so a machine set to Chicago time doesn't read them as CDT.
+    TZ: 'UTC',
   };
   let server = null;
   let out = '';

@@ -53,7 +53,6 @@
 {"n":"Sinus Viscositatis","t":"mare","lat":35.25,"lon":-40.99,"d":68},
 {"n":"Lacus Hiemalis","t":"mare","lat":15.008,"lon":13.974,"d":48},
 {"n":"Guang Han Gong","t":"landing","lat":44.118,"lon":-19.512,"d":0.1},
-{"n":"Apollo 11","t":"landing","lat":0.674,"lon":23.473,"d":0},
 {"n":"Apollo 12","t":"landing","lat":-3.012,"lon":-23.422,"d":0},
 {"n":"Apollo 14","t":"landing","lat":-3.645,"lon":-17.471,"d":0},
 {"n":"Apollo 15","t":"landing","lat":26.132,"lon":3.634,"d":0},
@@ -885,5 +884,4 @@
 {"n":"Alfraganus","t":"crater","lat":-5.422,"lon":18.971,"d":20.5},
 {"n":"Le Verrier","t":"crater","lat":40.327,"lon":-20.61,"d":20.5},
 {"n":"Maclear","t":"crater","lat":10.522,"lon":20.105,"d":20.3},
-{"n":"Whitaker","t":"crater","lat":-84.67,"lon":0.69,"d":20},
-{"n":"Reiner Gamma","t":"albedo","lat":7.385,"lon":-58.958,"d":73.4}]
+{"n":"Whitaker","t":"crater","lat":-84.67,"lon":0.69,"d":20}]
