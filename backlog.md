@@ -193,7 +193,10 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   against the photo at every rotation, plain and mirrored, to find how the
   photo is turned (`lib/moon_detect.js`). Features are the IAU gazetteer's
   (`lib/moon_features.json`). Results are cached in `moon_maps`; an admin
-  can turn or mirror the labels by hand from the Observations page.
+  can turn or mirror the labels by hand from the Observations page. Every
+  feature has a tooltip card (kind, size, namesake, position, sunlit or
+  not) and links to its Wikipedia article or IAU gazetteer entry (first tap
+  shows the card on touch screens).
 - **Recognise "Moon" in the Seestar watermark** — Moon observations are
   found by type Moon, the Solar System list's Moon (SOL 2) or the name
   "Moon"; the band reader doesn't map a printed "Moon" target to any of

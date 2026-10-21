@@ -6,7 +6,14 @@
 //   curl -O https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.zip
 //   unzip MOON_nomenclature_center_pts.zip
 //   curl -O https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/lroc_color_poles_1k.jpg
-//   node scripts/build-moon-features.js MOON_nomenclature_center_pts.dbf lroc_color_poles_1k.jpg
+//   curl -G -H 'Accept: application/sparql-results+json' -o moon-wikidata.json \
+//     --data-urlencode 'query=SELECT ?gpn ?article ?personLabel WHERE {
+//       ?item wdt:P2824 ?gpn ; wdt:P376 wd:Q405 .
+//       OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }
+//       OPTIONAL { ?item wdt:P138 ?person . }
+//       SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul". } }' \
+//     https://query.wikidata.org/sparql
+//   node scripts/build-moon-features.js MOON_nomenclature_center_pts.dbf lroc_color_poles_1k.jpg moon-wikidata.json
 //
 // Kept: features on or near the Earth-facing side (|longitude| <= 98°, so
 // libration can bring them into view) — every mare / oceanus / lacus /
@@ -21,8 +28,16 @@
 // pixels are shared out between the maria whose boxes they fall in, nearest
 // centre (relative to size) winning, and each mare's patch is traced.
 //
-// Output: [{ n: name, t: kind, lat, lon, d: diameter km, ring? }], lon east-
-// positive in -180..180; `ring` = the traced outline, [[lat, lon], ...].
+// For the map's tooltips each feature also carries its gazetteer id, where
+// its name comes from, and its English Wikipedia article. The last two lean
+// on Wikidata (CC0, the third argument), which links gazetteer ids to
+// articles and records whom each crater is named after: the gazetteer's own
+// note gives only the given names ("Nicholas; Polish astronomer").
+//
+// Output: [{ n: name, t: kind, lat, lon, d: diameter km, g?, o?, w?, ring? }],
+// lon east-positive in -180..180; `g` = gazetteer feature id; `o` = where the
+// name comes from; `w` = Wikipedia article title; `ring` = the traced
+// outline, [[lat, lon], ...].
 'use strict';
 
 const fs = require('fs');
@@ -41,9 +56,33 @@ const MIN_DIAMETER = { AA: 20, ME: 0, OC: 0, LC: 0, SI: 0, PA: 0, MO: 10, PR: 10
 const MAX_ABS_LON = 98;
 
 const APOLLO = [
-  ['Apollo 11', 0.674, 23.473], ['Apollo 12', -3.012, -23.422], ['Apollo 14', -3.645, -17.471],
-  ['Apollo 15', 26.132, 3.634], ['Apollo 16', -8.973, 15.501], ['Apollo 17', 20.191, 30.772],
+  ['Apollo 11', 0.674, 23.473, '20 July 1969'], ['Apollo 12', -3.012, -23.422, '19 November 1969'],
+  ['Apollo 14', -3.645, -17.471, '5 February 1971'], ['Apollo 15', 26.132, 3.634, '30 July 1971'],
+  ['Apollo 16', -8.973, 15.501, '21 April 1972'], ['Apollo 17', 20.191, 30.772, '11 December 1972'],
 ];
+// Wikipedia articles for the landing sites the gazetteer names (Wikidata
+// links none of them to an article).
+const LANDING_ARTICLES = {
+  'Statio Tranquillitatis': 'Tranquility_Base',
+  'Statio Shiv Shakti': 'Chandrayaan-3',
+  'Guang Han Gong': "Chang'e_3",
+  'Statio Tianchuan': "Chang'e_5",
+};
+// Namesakes by gazetteer id where Wikidata disagrees with the IAU's own
+// note: it names the wrong person (Geber), adds one the IAU doesn't
+// (Sheepshanks), or lists one of the two people the note names. The build
+// warns about any other crater whose note and namesakes don't add up.
+const EPONYM_OVERRIDES = {
+  2128: ['Jabir ibn Aflah'], // Geber; Wikidata has the alchemist Jabir ibn Hayyan
+  5480: ['Anne Sheepshanks'],
+  2520: ['Kiyotsugu Hirayama', 'Shin Hirayama'],
+  5235: ['Henry Norris Russell', 'John Russell'],
+  2321: ['George Ellery Hale', 'William Hale'],
+  709: ['Jacob Bernoulli', 'Johann Bernoulli'],
+  3253: ['Johann Heinrich Lambert', 'Gérard Lambert'],
+  5158: ['Carl Ritter', 'Georg August Dietrich Ritter'],
+  3308: ['Ernest Lawrence', 'Robert Henry Lawrence Jr.'],
+};
 
 function readDbf(file) {
   const b = fs.readFileSync(file);
@@ -67,6 +106,62 @@ function readDbf(file) {
 // Plains at least this wide (km) get a traced outline.
 const MIN_RING_DIAMETER = 200;
 const MOON_RADIUS_KM = 1737.4;
+
+// Text with a full stop at the end, unless it already has one ("Jr.",
+// "(Spelling changed from Walter.)").
+const endSentence = (text) => (/\.\)?$/.test(text) ? text : `${text}.`);
+
+// Where a feature's name comes from, readable on its own. For a crater
+// named after a person: "Named after <who Wikidata says>, <the gazetteer's
+// description>" — the gazetteer note "Nicholas; Polish astronomer
+// (1473-1543)." becomes "Named after Nicolaus Copernicus, Polish astronomer
+// (1473-1543)." Without a name from Wikidata, plain given names in the note
+// ("George; British mathematician") are joined to the crater's ("George
+// Boole"). A crater named after several people just lists them (their
+// shared note runs the descriptions together). Anything else keeps the
+// gazetteer's note as it is.
+function originText(name, kind, raw, eponyms = []) {
+  const text = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (kind !== 'crater') return text || null;
+  if (eponyms.length > 1) {
+    return endSentence(`Named after ${eponyms.slice(0, -1).join(', ')} and ${eponyms[eponyms.length - 1]}`);
+  }
+  // The note's leading name part ends at its first ";" (or ":"), if any —
+  // or at a comma after a lone given name ("Wernher, German-American
+  // rocket pioneer"), when that name is the namesake's.
+  let m = /^([^;:]{1,80})[;:]\s*(.+)$/.exec(text);
+  if (!m && eponyms[0]) {
+    const c = /^(\p{Lu}[\p{L}'-]*),\s*(.+)$/u.exec(text);
+    if (c && eponyms[0].includes(c[1])) m = c;
+  }
+  const about = endSentence(m ? m[2] : text);
+  let who = eponyms[0];
+  if (!who && m && /^\p{Lu}[\p{L}'-]*\.?(?: \p{Lu}[\p{L}'-]*\.?){0,2}$/u.test(m[1].trim())) {
+    const given = m[1].trim();
+    const surname = name.split(',')[0].trim();
+    who = given.toLowerCase().includes(surname.toLowerCase()) ? given : `${given} ${surname}`;
+  }
+  if (!who) return text || null;
+  return about !== '.' ? `Named after ${who}, ${about}` : endSentence(`Named after ${who}`);
+}
+
+// Gazetteer id -> { article: English Wikipedia title, eponyms: [names] },
+// from the Wikidata SPARQL result described in the header.
+function readWikidata(file) {
+  const out = new Map();
+  if (!file) return out;
+  for (const b of JSON.parse(fs.readFileSync(file, 'utf8')).results.bindings) {
+    const entry = out.get(b.gpn.value) || { article: null, eponyms: [] };
+    if (b.article && !entry.article) {
+      entry.article = decodeURIComponent(b.article.value.replace(/^https:\/\/en\.wikipedia\.org\/wiki\//, ''));
+    }
+    // An entity without an English label comes back as its Q-id.
+    const person = b.personLabel?.value;
+    if (person && !/^Q\d+$/.test(person) && !entry.eponyms.includes(person)) entry.eponyms.push(person);
+    out.set(b.gpn.value, entry);
+  }
+  return out;
+}
 
 const wrap = (lon) => { const l = ((Number(lon) + 180) % 360 + 360) % 360 - 180; return Math.round(l * 1000) / 1000; };
 const r3 = (v) => Math.round(Number(v) * 1000) / 1000;
@@ -252,11 +347,13 @@ async function addOutlines(features, mosaic) {
 }
 
 async function main() {
-  const [file, mosaic] = process.argv.slice(2);
+  const [file, ...rest] = process.argv.slice(2);
   if (!file) {
-    console.error('usage: node scripts/build-moon-features.js MOON_nomenclature_center_pts.dbf [lroc_color_poles_1k.jpg]');
+    console.error('usage: node scripts/build-moon-features.js MOON_nomenclature_center_pts.dbf [lroc_color_poles_1k.jpg] [moon-wiki.json]');
     process.exit(2);
   }
+  const mosaic = rest.find((f) => !/\.json$/i.test(f));
+  const wikidata = readWikidata(rest.find((f) => /\.json$/i.test(f)));
   const features = [];
   for (const r of readDbf(file)) {
     const kind = KIND[r.code];
@@ -264,7 +361,22 @@ async function main() {
     const lon = wrap(r.center_lon);
     const d = Number(r.diameter) || 0;
     if (Math.abs(lon) > MAX_ABS_LON || d < MIN_DIAMETER[r.code]) continue;
-    const f = { n: r.clean_name || r.name, t: kind, lat: r3(r.center_lat), lon, d: Math.round(d * 10) / 10 };
+    const n = r.clean_name || r.name;
+    const f = { n, t: kind, lat: r3(r.center_lat), lon, d: Math.round(d * 10) / 10 };
+    const g = (/\/Feature\/(\d+)/.exec(r.link) || [])[1];
+    if (g) f.g = Number(g);
+    const wd = (g && wikidata.get(g)) || null;
+    const eponyms = EPONYM_OVERRIDES[g] || wd?.eponyms || [];
+    // A note with more (or fewer) life dates than namesakes probably names
+    // someone Wikidata misses (or adds): check it, then add an override.
+    const lives = (String(r.origin).match(/\([^)]*\d{3,4}[^)]*\)/g) || []).length;
+    if (kind === 'crater' && eponyms.length && lives && lives !== eponyms.length) {
+      console.warn(`check ${n} (${g}): ${eponyms.join(' / ')} vs "${r.origin}"`);
+    }
+    const o = originText(n, kind, r.origin, eponyms);
+    if (o) f.o = o;
+    const w = wd?.article || LANDING_ARTICLES[n];
+    if (w) f.w = w;
     if (kind === 'mare') f.box = [r3(r.min_lat), r3(r.max_lat), wrap(r.min_lon), wrap(r.max_lon)];
     features.push(f);
   }
@@ -272,9 +384,9 @@ async function main() {
   for (const f of features) delete f.box;
   // An Apollo site the gazetteer already names keeps the gazetteer's name.
   const named = features.filter((f) => f.t === 'landing');
-  for (const [n, lat, lon] of APOLLO) {
+  for (const [n, lat, lon, date] of APOLLO) {
     if (named.some((f) => Math.abs(f.lat - lat) < 0.05 && Math.abs(f.lon - lon) < 0.05)) continue;
-    features.push({ n, t: 'landing', lat, lon, d: 0 });
+    features.push({ n, t: 'landing', lat, lon, d: 0, o: `${n} landing site (${date}).`, w: n.replace(/ /g, '_') });
   }
   // Biggest first: the map labels in this order and skips what collides.
   const rank = { mare: 0, landing: 1, mons: 2, rima: 3, crater: 4 };
@@ -282,7 +394,8 @@ async function main() {
   const out = path.join(__dirname, '..', 'lib', 'moon_features.json');
   fs.writeFileSync(out, `${JSON.stringify(features).replace(/\},\{/g, '},\n{')}\n`);
   const counts = features.reduce((m, f) => ({ ...m, [f.t]: (m[f.t] || 0) + 1 }), {});
-  console.log(`wrote ${features.length} features (${outlined} outlined) to ${path.relative(process.cwd(), out)}`, counts);
+  const linked = features.filter((f) => f.w).length;
+  console.log(`wrote ${features.length} features (${outlined} outlined, ${linked} with a Wikipedia article) to ${path.relative(process.cwd(), out)}`, counts);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

@@ -5,6 +5,11 @@
 // don't collide. Coordinates arrive in the photo's own pixels; the SVG's
 // viewBox matches them, so it scales with the image and only the label
 // layout (done in screen pixels) is redone on resize.
+//
+// Every feature is a link (its Wikipedia article, else its IAU gazetteer
+// entry) with a tooltip card: kind and size, where the name comes from,
+// position, sunlit or not. On touch screens the first tap shows the card
+// (with the link in it) and a second tap follows the link.
 
 import { el } from './common.js';
 
@@ -24,15 +29,38 @@ const DEFAULTS = { mare: true, crater: true, mons: true, rima: true, landing: tr
 
 const KIND_NAME = { mare: 'Mare', crater: 'Crater', mons: 'Mountain', rima: 'Rille', landing: 'Landing site' };
 
-// Rilles, valleys, scarps and wrinkle ridges share one layer ('rima'); the
-// gazetteer's names say which is which.
+// What kind of feature, in plain words. The layers lump several gazetteer
+// types together (seas, lakes, bays and marshes are all 'mare'; rilles,
+// valleys, scarps and wrinkle ridges all 'rima'); the names say which.
+const NAME_KINDS = [
+  [/^Mare /, 'Sea (mare)'], [/^Oceanus /, 'Ocean'], [/^Lacus /, 'Lake (lacus)'],
+  [/^Sinus /, 'Bay (sinus)'], [/^Palus /, 'Marsh (palus)'],
+  [/^Montes /, 'Mountain range'], [/^Mons /, 'Mountain'], [/^Promontorium /, 'Promontory'],
+  [/^Rimae /, 'Rilles'], [/^Rima /, 'Rille'], [/^Vall/, 'Valley'], [/^Rup/, 'Scarp'],
+  [/^Dorsa /, 'Wrinkle ridges'], [/^Dorsum /, 'Wrinkle ridge'],
+];
 function kindName(f) {
-  if (f.t === 'rima') {
-    if (/^Vall/i.test(f.n)) return 'Valley';
-    if (/^Rup/i.test(f.n)) return 'Scarp';
-    if (/^Dors/i.test(f.n)) return 'Wrinkle ridge';
+  if (f.t !== 'crater' && f.t !== 'landing') {
+    const hit = NAME_KINDS.find(([re]) => re.test(f.n));
+    if (hit) return hit[1];
   }
   return KIND_NAME[f.t] || f.t;
+}
+
+// "96 km across" / "155 km long", or '' when the gazetteer gives no size.
+function sizeText(f) {
+  if (!(f.d > 0)) return '';
+  const km = `${f.d >= 10 ? Math.round(f.d) : f.d} km`;
+  return f.t === 'rima' || /^Montes /.test(f.n) ? `${km} long` : `${km} across`;
+}
+
+const latLon = (f) => `${Math.abs(f.lat).toFixed(1)}° ${f.lat >= 0 ? 'N' : 'S'}, ${Math.abs(f.lon).toFixed(1)}° ${f.lon >= 0 ? 'E' : 'W'}`;
+
+// Where a feature links: its Wikipedia article, else its IAU entry.
+function featureLink(f) {
+  if (f.w) return { href: `https://en.wikipedia.org/wiki/${encodeURIComponent(f.w)}`, site: 'Wikipedia' };
+  if (f.g) return { href: `https://planetarynames.wr.usgs.gov/Feature/${f.g}`, site: 'the IAU gazetteer' };
+  return null;
 }
 
 // Label width in screen px, measured in the labels' own font (a fixed
@@ -112,8 +140,18 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
   const uncertain = map.orientation.confidence === 'low';
   let visible = !uncertain || showUncertain;
 
-  const overlay = svg('svg', { class: 'moon-map-svg', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true' });
+  const overlay = svg('svg', {
+    class: 'moon-map-svg', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet',
+    role: 'group', 'aria-label': 'Named features on this photo',
+    // Its focus listeners would otherwise make Chrome give the svg itself a
+    // (nearly invisible) tab stop.
+    tabindex: '-1',
+  });
   frame.appendChild(overlay);
+  const tip = el('div', { class: 'moon-tip', role: 'tooltip', hidden: 'hidden' });
+  frame.appendChild(tip);
+  // The features drawn last, by the data-i on their elements.
+  let shownFeatures = [];
 
   const toggles = el('div', { class: 'moon-map-toggles', role: 'group', 'aria-label': 'Moon map layers' });
   const master = el('button', { type: 'button', class: 'moon-toggle master', text: 'Moon map' });
@@ -141,8 +179,148 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
       b.disabled = !visible;
     }
     overlay.style.display = visible ? '' : 'none';
+    hideTip();
     if (visible) draw();
   }
+
+  // --- Tooltip ------------------------------------------------------------
+
+  let tipFor = null; // index into shownFeatures, or null
+  let pinned = false;
+  let shownBy = null; // 'pointer' | 'focus' | 'touch'
+  let lastPointer = 'mouse';
+
+  function fillTip(f, link, withLink) {
+    const kind = [kindName(f), sizeText(f)].filter(Boolean).join(' · ');
+    tip.replaceChildren(
+      el('strong', { class: 'moon-tip-name', text: f.n }),
+      el('span', { class: 'moon-tip-kind', text: kind }),
+      f.o ? el('p', { class: 'moon-tip-origin', text: f.o }) : null,
+      el('span', { class: 'moon-tip-meta', text: `${latLon(f)} · ${f.lit ? 'in sunlight' : 'on the night side'}` }),
+      !link ? null
+        : withLink
+          ? el('a', { class: 'moon-tip-link', href: link.href, target: '_blank', rel: 'noopener', text: `Read more on ${link.site} ↗` })
+          : el('span', { class: 'moon-tip-link', text: `Click for more on ${link.site} ↗` }),
+    );
+    tip.dataset.kind = f.t;
+  }
+
+  // Put the card near (x, y) in frame pixels: beside the point, within the
+  // frame's width; below it unless that runs past the photo or the bottom of
+  // the window and it fits above, where it must stay clear of the frame's
+  // top and of a sticky site header (failing both, below wins: it may run
+  // past the photo's bottom edge, over the controls).
+  function placeTip(x, y) {
+    const fw = frame.clientWidth, fh = frame.clientHeight;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x + 14;
+    if (left + tw > fw - 4) left = x - 14 - tw;
+    const frameTop = frame.getBoundingClientRect().top;
+    const header = document.querySelector('.site-header');
+    const headerBottom = header && /sticky|fixed/.test(getComputedStyle(header).position)
+      ? header.getBoundingClientRect().bottom : 0;
+    const clearTop = Math.max(4, headerBottom - frameTop + 4);
+    const bottom = Math.min(fh, window.innerHeight - frameTop);
+    let top = y + 14;
+    if (top + th > bottom - 4 && y - 14 - th >= clearTop) top = y - 14 - th;
+    tip.style.left = `${Math.max(4, Math.min(left, fw - tw - 4))}px`;
+    tip.style.top = `${Math.max(clearTop, top)}px`;
+  }
+
+  function highlight(i, on) {
+    for (const node of overlay.querySelectorAll(`[data-i="${i}"]`)) node.classList.toggle('hot', on);
+  }
+
+  function showTip(i, x, y, { pin = false, by = 'pointer' } = {}) {
+    const f = shownFeatures[i];
+    if (!f) return;
+    if (tipFor !== null && tipFor !== i) highlight(tipFor, false);
+    tipFor = i;
+    pinned = pin;
+    shownBy = by;
+    fillTip(f, featureLink(f), pin);
+    tip.classList.toggle('pinned', pin);
+    tip.hidden = false;
+    placeTip(x, y);
+    highlight(i, true);
+  }
+
+  function hideTip() {
+    if (tipFor !== null) highlight(tipFor, false);
+    tipFor = null;
+    pinned = false;
+    shownBy = null;
+    tip.hidden = true;
+    tip.classList.remove('pinned');
+  }
+
+  const framePoint = (e) => {
+    const r = frame.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+  const featureOf = (node) => node?.closest?.('[data-i]');
+
+  overlay.addEventListener('pointerdown', (e) => { lastPointer = e.pointerType || 'mouse'; });
+  overlay.addEventListener('pointerover', (e) => {
+    if (pinned || e.pointerType === 'touch') return;
+    const node = featureOf(e.target);
+    if (node) showTip(Number(node.dataset.i), ...framePoint(e));
+  });
+  overlay.addEventListener('pointermove', (e) => {
+    if (pinned || e.pointerType === 'touch' || tipFor === null) return;
+    const node = featureOf(e.target);
+    if (!node) return hideTip();
+    const i = Number(node.dataset.i);
+    if (i !== tipFor) showTip(i, ...framePoint(e));
+    else placeTip(...framePoint(e));
+  });
+  overlay.addEventListener('pointerleave', () => { if (!pinned) hideTip(); });
+  // Touch: the first tap on a feature shows its card; a second follows the
+  // link. (Enter on a focused label is a click with no pointer: detail 0.)
+  overlay.addEventListener('click', (e) => {
+    const node = featureOf(e.target);
+    if (!node || e.detail === 0 || lastPointer !== 'touch') return;
+    const i = Number(node.dataset.i);
+    if (pinned && tipFor === i) return;
+    e.preventDefault();
+    showTip(i, ...framePoint(e), { pin: true, by: 'touch' });
+  });
+  // Keyboard: a focused label shows its card beside the feature (a click
+  // focuses it too, but the card is already at the pointer).
+  overlay.addEventListener('focusin', (e) => {
+    const node = featureOf(e.target);
+    const f = node && shownFeatures[Number(node.dataset.i)];
+    let keyboard = true;
+    try { keyboard = node.matches(':focus-visible'); } catch { /* old browser */ }
+    if (!f || !keyboard) return;
+    const scale = img.clientWidth / W;
+    showTip(Number(node.dataset.i), f.x * scale, f.y * scale, { by: 'focus' });
+  });
+  // Only a card focus opened goes with the focus (a click focuses the link
+  // too, and the card it hovers over must stay).
+  overlay.addEventListener('focusout', () => { if (!pinned && shownBy === 'focus') hideTip(); });
+  // A pinned card closes on a tap elsewhere or Escape. These listen on the
+  // document, so they let go once the overlay is gone (the admin modal
+  // mounts a fresh one each time it redraws).
+  const onDocPointer = (e) => {
+    if (!frame.isConnected) return unlisten();
+    if (pinned && !tip.contains(e.target) && !featureOf(e.target)) hideTip();
+  };
+  // Escape is caught on the way down and stops there when it closes a card,
+  // so it doesn't also close a dialog the map sits in (the admin modal).
+  const onDocKey = (e) => {
+    if (!frame.isConnected) return unlisten();
+    if (e.key === 'Escape' && tipFor !== null) {
+      hideTip();
+      e.stopPropagation();
+    }
+  };
+  const unlisten = () => {
+    document.removeEventListener('pointerdown', onDocPointer);
+    document.removeEventListener('keydown', onDocKey, true);
+  };
+  document.addEventListener('pointerdown', onDocPointer);
+  document.addEventListener('keydown', onDocKey, true);
 
   function draw() {
     const shown = img.clientWidth;
@@ -151,12 +329,15 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
     const px = (n) => n / scale; // screen px → photo px
     const fontPx = shown < 560 ? 11 : 13;
     overlay.replaceChildren();
+    hideTip();
+    shownFeatures = [];
     overlay.style.setProperty('--moon-stroke', `${px(1.25)}px`);
     overlay.style.setProperty('--moon-halo', `${px(3)}px`);
     overlay.style.fontSize = `${px(fontPx)}px`;
 
     const groups = {};
-    for (const k of ['mare', 'rima', 'mons', 'crater', 'landing', 'labels']) {
+    // Bigger things underneath, so the smaller ones on top answer the pointer.
+    for (const k of ['mare', 'crater', 'rima', 'mons', 'landing', 'labels']) {
       groups[k] = svg('g', { class: `moon-layer moon-${k}` });
       overlay.appendChild(groups[k]);
     }
@@ -171,28 +352,41 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
       .filter((f) => layers[f.t] && (f.lit || layers.night || f.t === 'mare'))
       .sort((a, b) => (rankOf(a) - rankOf(b)) || (b.a - a.a));
 
+    // A feature's marker and label are each wrapped in a link to it; only the
+    // label is a tab stop (and named for screen readers), so the marker
+    // doesn't double it.
+    const linkFor = (f, i, labelled) => {
+      const link = featureLink(f);
+      const attrs = { class: 'moon-feature', 'data-i': i };
+      if (link) Object.assign(attrs, { href: link.href, target: '_blank', rel: 'noopener' });
+      if (labelled) attrs['aria-label'] = [f.n, [kindName(f), sizeText(f)].filter(Boolean).join(', '), f.o].filter(Boolean).join('. ');
+      else Object.assign(attrs, { tabindex: '-1', 'aria-hidden': 'true' });
+      return svg(link ? 'a' : 'g', attrs);
+    };
+
     for (const f of features) {
       const dim = !f.lit;
       const sizePx = 2 * f.a * scale;
       const notable = f.t === 'crater' && NOTABLE.has(f.n);
-      const tip = svg('title');
-      tip.textContent = `${f.n} — ${kindName(f)}${f.d > 0 ? `, ${Math.round(f.d)} km` : ''}`;
-      let marker = null;
+      const parts = [];
       if (f.t === 'mare') {
-        if (f.ring) marker = svg('polygon', { points: f.ring.map((p) => p.join(',')).join(' ') });
+        if (f.ring) parts.push(svg('polygon', { points: f.ring.map((p) => p.join(',')).join(' ') }));
       } else if (f.t === 'crater') {
         if (sizePx < MIN_RIM_PX && !notable) continue;
         const ry = Math.max(f.a, px(3));
         const rx = Math.max(f.a > 0 ? f.b * (ry / f.a) : ry, px(1));
-        marker = svg('ellipse', { cx: f.x, cy: f.y, rx, ry, transform: `rotate(${f.rot} ${f.x} ${f.y})` });
-      } else if (f.t === 'landing') {
-        marker = svg('circle', { cx: f.x, cy: f.y, r: px(3.5) });
+        parts.push(svg('ellipse', { cx: f.x, cy: f.y, rx, ry, transform: `rotate(${f.rot} ${f.x} ${f.y})` }));
       } else {
-        if (sizePx < MIN_RIM_PX) continue;
-        marker = svg('circle', { cx: f.x, cy: f.y, r: px(2.5) });
+        if (f.t !== 'landing' && sizePx < MIN_RIM_PX) continue;
+        // A dot is small to point at: an invisible, bigger target round it.
+        parts.push(svg('circle', { class: 'hit', cx: f.x, cy: f.y, r: px(9) }));
+        parts.push(svg('circle', { cx: f.x, cy: f.y, r: px(f.t === 'landing' ? 3.5 : 2.5) }));
       }
-      if (marker) {
-        marker.appendChild(tip);
+      const i = shownFeatures.length;
+      shownFeatures.push(f);
+      if (parts.length) {
+        const marker = linkFor(f, i, false);
+        marker.append(...parts);
         if (dim) marker.classList.add('night');
         groups[f.t].appendChild(marker);
       }
@@ -214,7 +408,9 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
         boxes.push(box);
         const text = svg('text', { x: px(x0), y: px(y0 + th * 0.8), class: `moon-label moon-label-${f.t}${dim ? ' night' : ''}` });
         text.textContent = f.n;
-        groups.labels.appendChild(text);
+        const label = linkFor(f, i, true);
+        label.appendChild(text);
+        groups.labels.appendChild(label);
         break;
       }
     }
@@ -237,7 +433,7 @@ export function mountMoonMap(frame, img, map, { showUncertain = false } = {}) {
 function drawCompass(overlay, compass, W, px) {
   if (!compass) return;
   const len = px(26), cx = W - px(40), cy = px(40);
-  const g = svg('g', { class: 'moon-compass' });
+  const g = svg('g', { class: 'moon-compass', 'aria-hidden': 'true' });
   for (const [label, angle] of [['N', compass.north], ['E', compass.east]]) {
     const t = (angle * Math.PI) / 180;
     const x = cx + Math.sin(t) * len, y = cy - Math.cos(t) * len;

@@ -86,6 +86,33 @@ test('captureInstant reads stored times as the photographer\'s clock', () => {
   assert.equal(at('not a date', 0), null);
 });
 
+test('feature data: every feature can explain itself and link somewhere', () => {
+  const features = require(path.join(ROOT, 'lib', 'moon_features.json'));
+  for (const f of features) {
+    assert.ok(f.o && f.o.length > 3, `${f.n} has an origin note`);
+    assert.ok(f.w || f.g, `${f.n} links to Wikipedia or the gazetteer`);
+    assert.ok(!/\bQ\d+\b/.test(f.o), `${f.n}: no bare Wikidata ids (${f.o})`);
+    if (f.t === 'crater') assert.match(f.o, /^Named after /, `${f.n}: ${f.o}`);
+    if (f.t === 'landing') assert.ok(f.w, `${f.n} has an article`);
+  }
+  const by = (n) => features.find((f) => f.n === n);
+  assert.equal(by('Clavius').o, 'Named after Christopher Clavius, German mathematician (1537-1612).');
+  assert.equal(by('Mare Imbrium').o, '"Sea of Showers."');
+  assert.match(by('Apollo 15').o, /landing site \(30 July 1971\)/);
+  // Where Wikidata and the IAU disagree, the IAU's people win; punctuation
+  // stays single.
+  assert.equal(by('Geber').o, 'Named after Jabir ibn Aflah, Spanish-Arab astronomer (fl. first half of twelfth cent.).');
+  assert.equal(by('Sheepshanks').o, 'Named after Anne Sheepshanks, British benefactor (1789-1876).');
+  assert.equal(by('Lambert').o, 'Named after Johann Heinrich Lambert and Gérard Lambert.');
+  assert.equal(by('von Braun').o, 'Named after Wernher von Braun, German-American rocket pioneer (1912-1977).');
+  assert.equal(by('Lawrence').o, 'Named after Ernest Lawrence and Robert Henry Lawrence Jr.');
+  assert.match(by('Walther').o, /\(Spelling changed from Walter\.\)$/);
+  // A sentence in brackets keeps its own full stop and gets no other
+  // ("(fl. 140 B.C.)." is right: an abbreviation, then the full stop).
+  const doubled = /\.\.(?!\.)|\(Spelling changed from [^)]*\.\)\./;
+  assert.deepEqual(features.filter((f) => doubled.test(f.o)).map((f) => f.n), [], 'no doubled full stops');
+});
+
 test('isMoonObservation', () => {
   assert.ok(isMoonObservation({ object_type: 'MOON' }));
   assert.ok(isMoonObservation({ list_object_type: 'MOON' }));
@@ -112,6 +139,14 @@ test('projection: lunar east is right and north up when unturned', () => {
   // Foreshortened towards the limb: Crisium's radial axis is the short one.
   assert.ok(crisium.b < crisium.a * 0.6);
   assert.ok(Array.isArray(crisium.ring) && crisium.ring.length > 6, 'Crisium carries its traced outline');
+
+  // What the page's tooltips and links use.
+  const copernicus = at(plain, 'Copernicus');
+  assert.equal(copernicus.g, 1296, 'gazetteer id');
+  assert.equal(copernicus.w, 'Copernicus_(lunar_crater)', 'Wikipedia article');
+  assert.equal(copernicus.o, 'Named after Nicolaus Copernicus, Polish astronomer (1473-1543).');
+  assert.deepEqual([copernicus.lat, copernicus.lon], [9.6, -20.1]);
+  assert.equal(at(plain, 'Statio Tranquillitatis').w, 'Tranquility_Base');
 
   // Turned 90° clockwise, north points right; mirrored, east points left.
   const turned = projectFeatures(face, disk, { rotation: 90, mirrored: false });
@@ -357,6 +392,13 @@ test('moon map API: upload, cache, override', async (t) => {
   assert.ok(first.body.features.some((f) => f.n === 'Copernicus'));
   // Cached: same answer.
   assert.deepEqual((await api(`/api/observations/${moonId}/moonmap`)).body, first.body);
+  // Gzipped for clients that accept it (the JSON runs to ~150 KB), plain otherwise.
+  const zipped = await fetch(`${base}/api/observations/${moonId}/moonmap`, { headers: { 'Accept-Encoding': 'gzip' } });
+  assert.equal(zipped.headers.get('content-encoding'), 'gzip');
+  assert.deepEqual(await zipped.json(), first.body);
+  const plain = await fetch(`${base}/api/observations/${moonId}/moonmap`, { headers: { 'Accept-Encoding': 'identity' } });
+  assert.equal(plain.headers.get('content-encoding'), null);
+  assert.deepEqual(await plain.json(), first.body);
 
   assert.equal((await api(`/api/observations/${otherId}/moonmap`)).status, 404);
   assert.equal((await api('/api/observations/999999/moonmap')).status, 404);

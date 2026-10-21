@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
@@ -1331,6 +1332,19 @@ const MOON_ROW_SQL = `
     LEFT JOIN list_objects lo ON lo.id = o.object_id
    WHERE o.id = ?`;
 
+// A map runs to ~150 KB of JSON (names, notes and outlines for hundreds of
+// features) and the app has no compression middleware, so gzip it for
+// clients that take it.
+function sendMoonMap(req, res, map) {
+  const json = JSON.stringify(map);
+  res.type('json');
+  if (/\bgzip\b/.test(req.get('accept-encoding') || '')) {
+    res.set({ 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+    return res.send(zlib.gzipSync(json));
+  }
+  return res.send(json);
+}
+
 // The observation for a moonmap route, or null after answering 400/404.
 function moonObservation(req, res) {
   const id = Number(req.params.id);
@@ -1354,7 +1368,7 @@ app.get('/api/observations/:id/moonmap', async (req, res, next) => {
   const row = moonObservation(req, res);
   if (!row) return;
   try {
-    res.json(await moonMaps.get(row));
+    sendMoonMap(req, res, await moonMaps.get(row));
   } catch (err) {
     next(err);
   }
@@ -3047,7 +3061,7 @@ app.put('/api/admin/observations/:id/moonmap', basicAuth, async (req, res, next)
       rotation: ((rotation % 360) + 360) % 360,
       mirrored: body.mirrored === true || body.mirrored === 'true',
     });
-    res.json(await moonMaps.fresh(row));
+    sendMoonMap(req, res, await moonMaps.fresh(row));
   } catch (err) {
     next(err);
   }
@@ -3058,7 +3072,7 @@ app.delete('/api/admin/observations/:id/moonmap', basicAuth, async (req, res, ne
   if (!row) return;
   try {
     moonMaps.override(row.id, null);
-    res.json(await moonMaps.fresh(row));
+    sendMoonMap(req, res, await moonMaps.fresh(row));
   } catch (err) {
     next(err);
   }
