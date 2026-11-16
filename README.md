@@ -25,9 +25,10 @@ list, and publish a public gallery and map of where you image from.
   app's defaults (main camera, 10 s subs, no LP filter) and start times in
   the browser's time zone. **This uses ZWO's share service, which has no
   public API or documentation — it was worked out from the app and may
-  change or stop working without notice.** Everything that depends on it
-  is in `lib/seestar_share.js`; `scripts/seestar-share-probe.js` checks
-  whether the service still answers the way that file expects.
+  change or stop working without notice.** Everything the app depends on
+  is in `lib/seestar_share.js`; `scripts/seestar-share-probe.js` is a
+  standalone check (with its own copy of the request) of whether the
+  service still answers.
 - **Solar System ephemeris.** Sun, Moon, and the eight major planets
   carry an `ephemeris` tag instead of stored coordinates; the server
   computes live RA/Dec/magnitude on every fetch.

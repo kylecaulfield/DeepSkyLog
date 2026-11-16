@@ -47,6 +47,31 @@ test('startMinutes counts from local midnight, on past 1440 after midnight', () 
   assert.equal(share.startMinutes(new Date('2026-11-16T14:00:00Z'), 330), 1170); // 19:30 IST
 });
 
+test('a plan that starts before noon or runs across it stays in order', () => {
+  const plan = (...times) => share.planStartMinutes(times.map(([hhmm, day]) => at(hhmm, day)), TZ);
+  // An ordinary night: evening, then past midnight.
+  assert.deepEqual(plan(['21:00', 16], ['23:30', 16], ['00:15', 17], ['04:00', 17]), [1260, 1410, 1455, 1680]);
+  // Started after midnight, over before noon: the tail of the night before.
+  assert.deepEqual(plan(['01:30', 17], ['03:00', 17]), [1530, 1620]);
+  // Polar night: a session from 08:00 to the evening, and one from 02:00
+  // across noon. Neither may put its morning after its afternoon.
+  assert.deepEqual(plan(['08:00', 16], ['11:00', 16], ['12:30', 16], ['16:00', 16]), [480, 660, 750, 960]);
+  assert.deepEqual(plan(['02:00', 16], ['11:45', 16], ['12:00', 16], ['13:30', 16]), [120, 705, 720, 810]);
+  // Afternoon start running past the next noon keeps counting.
+  assert.deepEqual(plan(['13:00', 16], ['12:30', 17]), [780, 2190]);
+
+  const targets = share.buildTargets([
+    slot({ start: at('08:00') }),
+    slot({ start: at('12:30'), object: { catalog: 'M', catalog_number: '1', name: 'Crab Nebula' } }),
+  ], TZ);
+  assert.deepEqual(targets.map((x) => x.start_min), [480, 750]);
+  assert.deepEqual(share.validateTargets(targets), []);
+  // Out of order is refused rather than shared.
+  const swapped = share.validateTargets([targets[1], targets[0]]);
+  assert.equal(swapped.length, 1);
+  assert.match(swapped[0], /Target 2 \(M 42\): starts before the target ahead of it/);
+});
+
 test('buildTargets maps planner slots onto TargetItems', () => {
   const targets = share.buildTargets([
     slot(),
@@ -84,10 +109,13 @@ test('target ids are stable, positive, and unique within a plan', () => {
   const twice = share.buildTargets([slot(), slot({ start: at('01:00', 17) })], TZ);
   assert.notEqual(twice[0].target_id, twice[1].target_id);
   assert.deepEqual(share.validateTargets(twice), []);
-  // A clash at the top of the range wraps to 1 rather than overflowing.
-  const taken = new Set([share.targetId('M 42', new Set())]);
-  const bumped = share.targetId('M 42', taken);
-  assert.ok(bumped > 0 && bumped <= 0x7fffffff && taken.size === 2);
+  // A clash moves on to the next free id.
+  const first = share.targetId('M 42', new Set());
+  assert.equal(share.targetId('M 42', new Set([first])), first + 1);
+  const upTo = new Set();
+  for (let id = first; id < first + 5; id++) upTo.add(id);
+  assert.equal(share.targetId('M 42', upTo), first + 5);
+  assert.ok(first + 5 <= 0x7fffffff);
 });
 
 test('validateTargets names everything the app would silently drop', () => {
@@ -295,7 +323,7 @@ test('sharing a planner schedule through the API', async (t) => {
   const password = 'sharetest';
   const env = {
     ...process.env,
-    PORT: String(24000 + Math.floor(Math.random() * 4000)),
+    PORT: String(28000 + Math.floor(Math.random() * 4000)),
     ADMIN_PASSWORD: password,
     DATABASE_PATH: path.join(dataDir, 'deepskylog.sqlite'),
     UPLOAD_DIR: path.join(dataDir, 'uploads'),
