@@ -103,6 +103,13 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   after sunset for the location (never before the requested start), and
   Milky Way wide-field (MWWF) mosaics are scheduled only on the Pro models
   (originally S30 Pro only; the S50 Pro entry below extends the gate).
+- ✅ **Sky forecast** — weather for astronomy on Tonight and the Seestar
+  planner (`/api/astro-weather`, Open-Meteo): hourly cloud by layer, seeing
+  and transparency estimates, wind, dew, Moon, a go / marginal / no-go
+  verdict per hour and a line per night; planner slots carry their
+  forecast. Not done: a real seeing model (7Timer or Astrospheric as a
+  second source), smoke / aerosol, and using the forecast to reorder or
+  skip planner slots.
 - ✅ **Share to Seestar** — each schedule on the Seestar planner has a
   "Share to Seestar" button that creates a Seestar Share Plan on ZWO's
   (undocumented) share service and shows its QR code and link; the app

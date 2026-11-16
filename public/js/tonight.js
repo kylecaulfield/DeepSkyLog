@@ -1,6 +1,7 @@
 import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
+import { mountAstroWeather } from './astro-weather.js';
 
 highlightNav('tonight');
 
@@ -27,6 +28,8 @@ const refreshBtn = document.getElementById('refresh-btn');
 const status = document.getElementById('status');
 const moonLine = document.getElementById('moon-line');
 const rows = document.getElementById('rows');
+
+const weather = mountAstroWeather(document.getElementById('sky-forecast'));
 
 const STORE_KEY = 'deepskylog.location';
 let stored = null;
@@ -58,6 +61,7 @@ async function load() {
   }
   localStorage.setItem(STORE_KEY, JSON.stringify({ lat, lon }));
   loadRan = true;
+  weather.load(lat, lon);
 
   status.textContent = 'Computing…';
   rows.innerHTML = '';

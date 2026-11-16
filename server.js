@@ -25,6 +25,7 @@ const astrometry = require('./lib/astrometry');
 const { createSolver } = require('./lib/solver');
 const { isMoonObservation, createMoonMapStore } = require('./lib/moon_map');
 const seestarShare = require('./lib/seestar_share');
+const { createAstroWeather, AstroWeatherError } = require('./lib/astro_weather');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -1076,6 +1077,27 @@ app.get('/api/seestar-planner', (req, res) => {
     slots: scopes[0].slots,
     scopes,
   });
+});
+
+// Weather for astronomy (lib/astro_weather.js): hour-by-hour cloud by
+// layer, seeing and transparency estimates, dew, wind, darkness and the
+// Moon for the coming week, a go / marginal / no-go verdict per hour and a
+// summary per night. Public, like /api/tonight; the module caches per
+// 0.1° square for an hour and caps upstream requests.
+const astroWeather = createAstroWeather();
+app.get('/api/astro-weather', async (req, res, next) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  if (req.query.lat == null || req.query.lon == null || req.query.lat === '' || req.query.lon === ''
+      || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return res.status(400).json({ error: 'lat and lon query params are required (decimal degrees)' });
+  }
+  try {
+    res.json(await astroWeather.forecast(lat, lon));
+  } catch (err) {
+    if (!(err instanceof AstroWeatherError)) return next(err);
+    res.status(err.status).json({ error: err.message });
+  }
 });
 
 app.get('/api/tonight', (req, res) => {

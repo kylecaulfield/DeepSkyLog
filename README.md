@@ -17,6 +17,14 @@ list, and publish a public gallery and map of where you image from.
   date+time and location, with astronomical-dark and moon-up bands and
   a moon-distance filter so you can rule out targets too close to the
   moon at their best altitude.
+- **Sky forecast.** `/tonight.html` and the Seestar planner show weather
+  for astronomy for the coming nights: cloud by layer (low / mid / high),
+  seeing and transparency estimates, wind and gusts, dew risk, temperature
+  and the Moon, hour by hour, with a go / marginal / no-go verdict per hour
+  and a one-line summary per night. The planner also marks each scheduled
+  target with the forecast for its slot. Data comes from Open-Meteo (free,
+  no key). Seeing and transparency are estimates derived from jet-stream
+  wind, humidity and visibility, not a seeing model.
 - **Share to Seestar.** Each schedule on `/seestar.html` has a "Share to
   Seestar" button: it makes a Seestar Share Plan and shows its QR code
   (scan it from your phone) and link (tap it on your phone), which the
@@ -197,6 +205,7 @@ drive the Leaflet map. An install-time backfill pulls coords from any existing
 | `GET /api/observations/:id/moonmap` | ✗ | Lunar features projected onto a Moon photo. |
 | `GET /api/objects/:id`       | ✗    | Object + memberships + observations.           |
 | `GET /api/filters`           | ✗    | Distinct telescopes + object types.            |
+| `GET /api/astro-weather`     | ✗    | `lat=`, `lon=`: hourly astronomy forecast + nightly summary. |
 | `/admin/*` (static)          | Basic | Dashboard + upload UI.                        |
 | `GET /api/admin/stats`       | Basic | Totals + recent uploads + telescope counts.    |
 | `GET /api/admin/objects`     | Basic | Autocomplete over seeded catalogs.             |

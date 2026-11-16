@@ -757,3 +757,52 @@ button.moon-toggle {
 .moon-tip-meta { display: block; margin-top: 0.3rem; color: var(--muted); font-size: 0.75rem; }
 .moon-tip-link { display: block; margin-top: 0.35rem; font-size: 0.75rem; color: var(--accent); }
 a.moon-tip-link { text-decoration: underline; }
+
+/* ---------- Sky forecast (js/astro-weather.js) ---------- */
+.sky-forecast { margin-bottom: 1.25rem; }
+.sky-forecast h2 { margin-bottom: 0.5rem; }
+.sky-nights { list-style: none; margin: 0 0 0.6rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; }
+.sky-night { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.sky-pill {
+  border-radius: var(--pill); padding: 0.05rem 0.6rem; font-weight: 700;
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: #000;
+}
+.sky-go .sky-pill, td.sky-verdict.sky-go { background: var(--success); color: #000; }
+.sky-marginal .sky-pill, td.sky-verdict.sky-marginal { background: var(--warn); color: #000; }
+.sky-no-go .sky-pill, td.sky-verdict.sky-no-go { background: var(--danger); color: #000; }
+.sky-scroll { overflow-x: auto; border: 1px solid var(--accent); border-radius: 12px; }
+.sky-scroll:focus-visible { outline: none; box-shadow: var(--ring); }
+.sky-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 0.82rem; }
+.sky-grid th, .sky-grid td {
+  padding: 0.3rem 0.45rem; text-align: center; white-space: nowrap;
+  border: 0; border-top: 1px solid #2a2a2a; font-variant-numeric: tabular-nums;
+}
+.sky-grid thead th {
+  border-top: 0; background: var(--bg-card); color: var(--peach); font-weight: 600;
+  vertical-align: bottom; text-transform: none; letter-spacing: 0; font-size: 0.8rem;
+}
+.sky-grid th[scope="row"] {
+  position: sticky; left: 0; z-index: 1; background: var(--bg-card);
+  text-align: left; color: var(--peach); font-weight: 600; border-right: 1px solid #2a2a2a;
+}
+.sky-grid thead th:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg-card); text-align: left; }
+.sky-dayname { display: block; color: var(--accent-2); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.sky-grid td.sky-verdict { font-weight: 700; font-size: 0.72rem; text-transform: uppercase; }
+.sky-grid td.sky-cloud { background: rgba(153, 153, 204, calc(var(--cover, 0) / 100 * 0.75)); }
+.sky-grid .sky-sub th, .sky-grid .sky-small { font-size: 0.74rem; color: var(--fg-dim); font-weight: 400; }
+.sky-grid td.sky-s5, .sky-grid td.sky-s4 { color: var(--success); }
+.sky-grid td.sky-s3 { color: var(--fg); }
+.sky-grid td.sky-s2, .sky-grid td.sky-warn { color: var(--warn); }
+.sky-grid td.sky-s1, .sky-grid td.sky-bad { color: var(--danger); font-weight: 700; }
+.sky-grid td.sky-muted { color: var(--muted); }
+/* Daylight and twilight hours stay readable but step back. */
+.sky-grid td.sky-day { opacity: 0.45; }
+.sky-grid th.sky-day { color: var(--muted); }
+.sky-grid td.sky-twilight { opacity: 0.75; }
+.sky-foot { font-size: 0.78rem; margin: 0.4rem 0 0; }
+.sky-error { color: var(--danger); }
+td.sky-slot { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; white-space: nowrap; }
+td.sky-slot.sky-go { color: var(--success); }
+td.sky-slot.sky-marginal { color: var(--warn); }
+td.sky-slot.sky-no-go { color: var(--danger); }
+.sky-note { color: var(--warn); }

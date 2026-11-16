@@ -2,6 +2,7 @@ import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 import { mountDurationPicker } from './seestar-durations.js';
+import { mountAstroWeather } from './astro-weather.js';
 
 highlightNav('seestar');
 
@@ -39,6 +40,8 @@ const status = document.getElementById('status');
 const moonLine = document.getElementById('moon-line');
 const windowLine = document.getElementById('window-line');
 const schedules = document.getElementById('schedules');
+// Sky forecast panel; fillSkyCells (below) marks each slot with its forecast.
+const weather = mountAstroWeather(document.getElementById('sky-forecast'), { onUpdate: fillSkyCells });
 
 // Per-model fleet counts. Keys match the SEESTAR_SCOPES keys on the server.
 const FLEET_MODELS = [
@@ -161,6 +164,8 @@ async function load() {
   const durParam = getDurationParam();
   if (durParam) params.set('durations', durParam);
 
+  weather.load(lat, lon, { from: new Date(startISO) });
+
   let data;
   try {
     data = await fetchJson(`/api/seestar-planner?${params}`);
@@ -203,6 +208,30 @@ async function load() {
     : `${totalTargets} target${totalTargets === 1 ? '' : 's'} scheduled`;
 
   for (const scope of scopes) schedules.appendChild(buildScheduleSection(scope));
+  fillSkyCells();
+}
+
+// The forecast for each slot (the worst hour it touches), filled in once
+// both the schedule and the forecast are on the page, in either order.
+function fillSkyCells() {
+  for (const section of schedules.querySelectorAll('section.schedule')) {
+    let blocked = 0;
+    let rated = 0;
+    for (const td of section.querySelectorAll('td.sky-slot')) {
+      const sky = weather.verdictFor(td.dataset.start, td.dataset.end);
+      td.className = sky ? `sky-slot sky-${sky.verdict}` : 'sky-slot dim';
+      td.textContent = sky ? sky.label : '—';
+      td.title = sky && sky.reasons.length ? sky.reasons.join(', ') : '';
+      td.dataset.sort = sky ? String(sky.rank) : '';
+      if (sky) rated += 1;
+      if (sky && sky.verdict === 'no-go') blocked += 1;
+    }
+    const note = section.querySelector('.sky-note');
+    if (note) {
+      note.textContent = blocked ? `Forecast: ${blocked} of ${rated} target${rated === 1 ? '' : 's'} clouded or rained out` : '';
+      note.hidden = !blocked;
+    }
+  }
 }
 
 function buildRow(slot) {
@@ -222,11 +251,12 @@ function buildRow(slot) {
     el('td', { text: fmtDeg(t.altitude_at_end) }),
     el('td', { text: fmtDeg(t.azimuth_at_start) }),
     el('td', { class: 'dim list-cell', text: t.list_name }),
+    el('td', { class: 'sky-slot dim', 'data-start': slot.slot_start, 'data-end': slot.slot_end, 'data-sort': '', text: '—' }),
   );
 }
 
 const COLUMNS = ['Slot', 'Duration', 'Object', 'Name', 'Type', 'Constellation',
-  'Mag', 'Alt start', 'Alt end', 'Az start', 'List'];
+  'Mag', 'Alt start', 'Alt end', 'Az start', 'List', 'Sky'];
 
 function buildScheduleSection(scope) {
   const capBit = scope.max_magnitude != null
@@ -237,6 +267,7 @@ function buildScheduleSection(scope) {
     el('h2', { text: scope.label || scope.name }),
     el('span', { class: 'dim', text: `${capBit} · ${n} target${n === 1 ? '' : 's'}` }),
   );
+  head.appendChild(el('span', { class: 'sky-note', hidden: true }));
   if (scope.notes) head.appendChild(el('div', { class: 'dim schedule-notes', text: scope.notes }));
 
   const tbody = el('tbody');
