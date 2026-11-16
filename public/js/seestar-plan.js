@@ -251,8 +251,164 @@ function buildScheduleSection(scope) {
     el('thead', {}, el('tr', {}, ...COLUMNS.map((c) => el('th', { text: c })))),
     tbody,
   );
-  return el('section', { class: 'schedule' }, head, el('div', { class: 'table-wrapper' }, table));
+  const section = el('section', { class: 'schedule' }, head);
+  if (n) {
+    const panel = el('div', { class: 'share-panel', hidden: true, 'aria-live': 'polite' });
+    const btn = el('button', { type: 'button', class: 'share-btn', text: 'Share to Seestar' });
+    btn.addEventListener('click', () => shareSchedule(scope, btn, panel));
+    head.appendChild(btn);
+    section.appendChild(panel);
+  }
+  section.appendChild(el('div', { class: 'table-wrapper' }, table));
+  return section;
 }
+
+// ---- Share to Seestar ------------------------------------------------------
+// Sends one scope's schedule to the server, which creates a Seestar Share
+// Plan (lib/seestar_share.js) and answers with a link and QR code the Seestar
+// app imports. Admin-only: the browser asks for the admin password once.
+
+// What a share is and how to open it: the QR for a phone next to this
+// screen, the link for when this page is on the phone itself.
+function shareCard(share) {
+  const made = share.createdAt ? new Date(share.createdAt).toLocaleString() : '';
+  const hours = (share.durationMinutes / 60).toFixed(1).replace(/\.0$/, '');
+  return el('div', { class: 'share-card' },
+    share.qrPngBase64
+      ? el('img', { class: 'share-qr', alt: `QR code for the Seestar plan "${share.planName}"`,
+        src: `data:image/png;base64,${share.qrPngBase64}`, width: '240', height: '240' })
+      : null,
+    el('div', { class: 'share-info' },
+      el('strong', { text: share.planName }),
+      el('div', { class: 'dim', text:
+        `${share.targetCount} target${share.targetCount === 1 ? '' : 's'} · ${hours} h${made ? ` · shared ${made}` : ''}` }),
+      el('p', { text: 'Scan the code with the Seestar app (or your phone camera), or on your phone tap:' }),
+      el('a', { class: 'share-link', href: share.shareLink, target: '_blank', rel: 'noopener', text: share.shareLink }),
+      el('p', { class: 'dim', text: 'The plan is added to Local Plans in the app. Start times are for this device\'s time zone.' }),
+    ),
+  );
+}
+
+function shareError(message, problems) {
+  const box = el('div', { class: 'share-error', role: 'alert' }, el('strong', { text: message }));
+  if (problems && problems.length > 1) {
+    box.appendChild(el('ul', {}, ...problems.map((p) => el('li', { text: p }))));
+  }
+  return box;
+}
+
+// A JSON request to an admin endpoint. Throws an Error carrying the server's
+// own message (and its `problems` list) when the answer isn't a success.
+async function adminJson(url, options) {
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch {
+    throw new Error('Couldn\'t reach DeepSkyLog. Check your connection and try again.');
+  }
+  const body = await res.json().catch(() => null);
+  if (res.ok) return body;
+  let message = body?.error || `${res.status} ${res.statusText}`;
+  if (res.status === 401) message = 'Sharing needs the admin password.';
+  else if (res.status === 429) message = 'Too many wrong passwords. Try again later.';
+  throw Object.assign(new Error(message), { problems: body?.problems });
+}
+
+// The schedules are rebuilt whenever a planner input changes, which can
+// happen while a share is still being created. Its outcome then goes above
+// the schedules instead of into a panel that is no longer on the page.
+const strayShare = document.getElementById('share-result');
+function showShareResult(panel, content) {
+  const box = panel.isConnected ? panel : strayShare;
+  box.replaceChildren(content);
+  box.hidden = false;
+}
+
+async function shareSchedule(scope, btn, panel) {
+  const first = new Date(scope.slots[0].slot_start);
+  const night = first.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  btn.disabled = true;
+  btn.textContent = 'Sharing…';
+  panel.hidden = false;
+  panel.replaceChildren(el('span', { class: 'dim', text: 'Creating the share…' }));
+  try {
+    const share = await adminJson('/api/admin/seestar/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: scope.key === 'any' ? `DSL ${night}` : `DSL ${night} ${scope.label || scope.name}`,
+        scope: scope.label || scope.name,
+        // Minutes east of UTC on the night itself, so a plan made before a
+        // clock change still starts at the times shown in the table.
+        tz_offset_minutes: -first.getTimezoneOffset(),
+        slots: scope.slots.map((slot) => ({
+          object_id: slot.target.id,
+          slot_start: slot.slot_start,
+          duration_minutes: slot.duration_minutes,
+        })),
+      }),
+    });
+    showShareResult(panel, shareCard(share));
+    if (pastShares.open) loadPastShares();
+  } catch (err) {
+    showShareResult(panel, shareError(err.message, err.problems));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Share to Seestar';
+  }
+}
+
+const pastShares = document.getElementById('past-shares');
+const pastSharesBody = document.getElementById('past-shares-body');
+
+async function loadPastShares() {
+  pastSharesBody.replaceChildren(el('span', { class: 'dim', text: 'Loading…' }));
+  try {
+    const { shares } = await adminJson('/api/admin/seestar/shares');
+    if (!shares.length) {
+      pastSharesBody.replaceChildren(el('div', { class: 'empty-state', text: 'Nothing shared yet.' }));
+      return;
+    }
+    const list = el('ul', { class: 'share-list' });
+    for (const share of shares) {
+      const qrBox = el('div', { hidden: true });
+      const qrBtn = el('button', { type: 'button', text: 'Show QR' });
+      qrBtn.addEventListener('click', async () => {
+        if (!qrBox.hidden) {
+          qrBox.hidden = true;
+          qrBtn.textContent = 'Show QR';
+          return;
+        }
+        qrBtn.disabled = true;
+        try {
+          qrBox.replaceChildren(shareCard(await adminJson(`/api/admin/seestar/shares/${share.id}`)));
+        } catch (err) {
+          qrBox.replaceChildren(shareError(err.message));
+        }
+        qrBox.hidden = false;
+        qrBtn.disabled = false;
+        qrBtn.textContent = 'Hide QR';
+      });
+      list.appendChild(el('li', {},
+        el('div', { class: 'share-row' },
+          el('span', { text: new Date(share.createdAt).toLocaleString() }),
+          el('strong', { text: share.planName }),
+          el('span', { class: 'dim', text: `${share.targetCount} target${share.targetCount === 1 ? '' : 's'}` }),
+          el('a', { href: share.shareLink, target: '_blank', rel: 'noopener', text: 'Open link' }),
+          qrBtn,
+        ),
+        qrBox,
+      ));
+    }
+    pastSharesBody.replaceChildren(list);
+  } catch (err) {
+    pastSharesBody.replaceChildren(shareError(err.message));
+  }
+}
+
+pastShares.addEventListener('toggle', () => {
+  if (pastShares.open) loadPastShares();
+});
 
 locateBtn.addEventListener('click', () => {
   if (!navigator.geolocation) {

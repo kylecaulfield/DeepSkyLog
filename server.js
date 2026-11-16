@@ -24,6 +24,7 @@ const ngc = require('./lib/ngc');
 const astrometry = require('./lib/astrometry');
 const { createSolver } = require('./lib/solver');
 const { isMoonObservation, createMoonMapStore } = require('./lib/moon_map');
+const seestarShare = require('./lib/seestar_share');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -2097,6 +2098,129 @@ app.get('/api/admin/platesolve/activity', basicAuth, (req, res) => {
     enabled: !!(process.env.ASTROMETRY_API_KEY || '').trim(),
     ...solver.activity(after, limit),
   });
+});
+
+// Share to Seestar (lib/seestar_share.js): the planner page posts one
+// scope's schedule — { name, scope, tz_offset_minutes, slots: [{ object_id,
+// slot_start, duration_minutes }] } — and gets back a link and QR code the
+// Seestar app imports as a plan. The planner computes schedules per request
+// and stores none, so the slots come from the page; names and coordinates
+// are looked up here (Sun, Moon and planets at their slot's start). Each
+// share is recorded in seestar_shares. Admin-only: it writes to the
+// database and creates something on a third party's service.
+app.post('/api/admin/seestar/share', basicAuth, async (req, res, next) => {
+  const body = req.body || {};
+  const rawSlots = Array.isArray(body.slots) ? body.slots : [];
+  if (rawSlots.length > seestarShare.MAX_TARGETS) {
+    return res.status(400).json({ error: `A plan can hold at most ${seestarShare.MAX_TARGETS} targets.` });
+  }
+  const findObject = db.prepare(
+    'SELECT id, catalog, catalog_number, name, ra_hours, dec_degrees, ephemeris FROM list_objects WHERE id = ?',
+  );
+  const slots = [];
+  for (const [i, raw] of rawSlots.entries()) {
+    const start = new Date(raw?.slot_start);
+    const object = Number.isInteger(raw?.object_id) ? findObject.get(raw.object_id) : null;
+    if (!object || typeof raw.slot_start !== 'string' || Number.isNaN(start.getTime())) {
+      return res.status(400).json({ error: `Slot ${i + 1} has no known target or no valid start time.` });
+    }
+    // A plan slews the telescope unattended, and the app can't be told here
+    // that a solar filter is on.
+    if (object.ephemeris === 'sun') {
+      return res.status(400).json({ error: `Slot ${i + 1} is the Sun, which can't go in a shared plan. Remove it and share again.` });
+    }
+    const eph = object.ephemeris ? bodyPosition(object.ephemeris, start) : null;
+    slots.push({
+      start,
+      // Anything but a number fails validation, by name.
+      durationMinutes: typeof raw.duration_minutes === 'number' ? raw.duration_minutes : NaN,
+      object,
+      // NaN when a target has no position: validation names it.
+      raHours: eph ? eph.raHours : (object.ra_hours ?? NaN),
+      decDeg: eph ? eph.decDeg : (object.dec_degrees ?? NaN),
+    });
+  }
+  try {
+    const shared = await seestarShare.sharePlan({
+      name: body.name,
+      slots,
+      tzOffsetMinutes: typeof body.tz_offset_minutes === 'number' ? body.tz_offset_minutes : NaN,
+    });
+    const scope = typeof body.scope === 'string' ? body.scope.slice(0, 60) : null;
+    // The share exists on ZWO's side by now: if it can't be recorded, the
+    // link still goes back, since there is no other way to get it again.
+    let id = null;
+    let createdAt = new Date().toISOString();
+    try {
+      const info = db
+        .prepare(
+          `INSERT INTO seestar_shares (share_id, share_link, plan_name, scope, target_count, duration_minutes, targets_json)
+           VALUES (@shareId, @shareLink, @planName, @scope, @targetCount, @durationMinutes, @targetsJson)`,
+        )
+        .run({
+          shareId: shared.shareId,
+          shareLink: shared.shareLink,
+          planName: shared.planName,
+          scope,
+          targetCount: shared.targetCount,
+          durationMinutes: shared.durationMinutes,
+          targetsJson: JSON.stringify(shared.targets),
+        });
+      id = Number(info.lastInsertRowid);
+      createdAt = db.prepare('SELECT created_at FROM seestar_shares WHERE id = ?').get(id).created_at;
+    } catch (err) {
+      console.error('Seestar share created but not recorded:', err);
+    }
+    res.status(201).json({
+      id,
+      shareId: shared.shareId,
+      shareLink: shared.shareLink,
+      qrPngBase64: shared.qrPngBase64,
+      planName: shared.planName,
+      targetCount: shared.targetCount,
+      durationMinutes: shared.durationMinutes,
+      createdAt,
+    });
+  } catch (err) {
+    if (!(err instanceof seestarShare.SeestarShareError)) return next(err);
+    if (err.problems) return res.status(400).json({ error: err.message, problems: err.problems });
+    res.status(502).json({
+      error: err.message,
+      zwo_code: err.zwoCode ?? null,
+      zwo_message: err.zwoMessage ?? null,
+      http_status: err.httpStatus ?? null,
+    });
+  }
+});
+
+// Past shares, newest first.
+app.get('/api/admin/seestar/shares', basicAuth, (_req, res) => {
+  res.json({
+    shares: db
+      .prepare(
+        `SELECT id, share_id AS shareId, share_link AS shareLink, plan_name AS planName, scope,
+                target_count AS targetCount, duration_minutes AS durationMinutes, created_at AS createdAt
+           FROM seestar_shares ORDER BY id DESC LIMIT 100`,
+      )
+      .all(),
+  });
+});
+
+// One past share with its QR code drawn again.
+app.get('/api/admin/seestar/shares/:id', basicAuth, async (req, res, next) => {
+  const row = db
+    .prepare(
+      `SELECT id, share_id AS shareId, share_link AS shareLink, plan_name AS planName, scope,
+              target_count AS targetCount, duration_minutes AS durationMinutes, created_at AS createdAt
+         FROM seestar_shares WHERE id = ?`,
+    )
+    .get(Number(req.params.id) || 0);
+  if (!row) return res.status(404).json({ error: 'No such share.' });
+  try {
+    res.json({ ...row, qrPngBase64: await seestarShare.qrPngBase64(row.shareLink) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get('/api/admin/stats', basicAuth, (_req, res) => {

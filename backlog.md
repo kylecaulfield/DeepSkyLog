@@ -103,6 +103,13 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   after sunset for the location (never before the requested start), and
   Milky Way wide-field (MWWF) mosaics are scheduled only on the Pro models
   (originally S30 Pro only; the S50 Pro entry below extends the gate).
+- ✅ **Share to Seestar** — each schedule on the Seestar planner has a
+  "Share to Seestar" button that creates a Seestar Share Plan on ZWO's
+  (undocumented) share service and shows its QR code and link; the app
+  imports it into Local Plans. `lib/seestar_share.js` holds everything
+  ZWO-specific; shares are recorded in `seestar_shares`. Not done: camera
+  mode (always "tele"), exposure and LP filter can't be chosen per target,
+  and Solar System targets are sent as fixed coordinates.
 - ✅ **Sortable table headers everywhere** — shared `makeTableSortable()`
   helper in `common.js` + auto-init `js/sortable.js` make every data table
   click-to-sort (list, tonight, seestar, admin observations / equipment /

@@ -17,6 +17,18 @@ list, and publish a public gallery and map of where you image from.
   date+time and location, with astronomical-dark and moon-up bands and
   a moon-distance filter so you can rule out targets too close to the
   moon at their best altitude.
+- **Share to Seestar.** Each schedule on `/seestar.html` has a "Share to
+  Seestar" button: it makes a Seestar Share Plan and shows its QR code
+  (scan it from your phone) and link (tap it on your phone), which the
+  Seestar app imports into Local Plans. Needs the admin password; past
+  shares are listed at the bottom of the page. Plans are sent with the
+  app's defaults (main camera, 10 s subs, no LP filter) and start times in
+  the browser's time zone. **This uses ZWO's share service, which has no
+  public API or documentation — it was worked out from the app and may
+  change or stop working without notice.** Everything the app depends on
+  is in `lib/seestar_share.js`; `scripts/seestar-share-probe.js` is a
+  standalone check (with its own copy of the request) of whether the
+  service still answers.
 - **Solar System ephemeris.** Sun, Moon, and the eight major planets
   carry an `ephemeris` tag instead of stored coordinates; the server
   computes live RA/Dec/magnitude on every fetch.
@@ -165,6 +177,7 @@ list, and publish a public gallery and map of where you image from.
 | `observations`     | Every logged photo: date, location, telescope, rating, EXIF …    |
 | `list_completions` | Junction: each time an observation satisfies a list entry.       |
 | `moon_maps`        | Cached Moon-photo feature maps + any manual orientation.         |
+| `seestar_shares`   | Planner schedules shared to the Seestar app (id, link, when).    |
 | `migrations`       | Applied migration ids (managed by `db/schema.js`).               |
 
 `observations.latitude` / `longitude` are populated from EXIF GPS on upload and
@@ -192,6 +205,8 @@ drive the Leaflet map. An install-time backfill pulls coords from any existing
 | `DELETE /api/admin/stage/:id`| Basic | Discard an in-flight upload.                   |
 | `POST /api/admin/observations`| Basic | Finalize: move file, thumbnail, insert rows.  |
 | `PUT/DELETE /api/admin/observations/:id/moonmap` | Basic | Set / clear a Moon photo's orientation by hand. |
+| `POST /api/admin/seestar/share` | Basic | Share a planner schedule to the Seestar app; returns link + QR. |
+| `GET /api/admin/seestar/shares[/:id]` | Basic | Past shares; one share with its QR. |
 
 Basic Auth compares the submitted password with `ADMIN_PASSWORD` using
 `crypto.timingSafeEqual`. Failed attempts are counted per client IP with a

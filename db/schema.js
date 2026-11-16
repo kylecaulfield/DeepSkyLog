@@ -272,6 +272,26 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    id: 19,
+    name: 'add_seestar_shares',
+    // Planner schedules shared to the Seestar app (lib/seestar_share.js):
+    // one row per share created on ZWO's service, so past links can be
+    // found again. targets_json is what was sent (the TargetItem array).
+    up: `
+      CREATE TABLE IF NOT EXISTS seestar_shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        share_id TEXT NOT NULL,
+        share_link TEXT NOT NULL,
+        plan_name TEXT NOT NULL,
+        scope TEXT,
+        target_count INTEGER NOT NULL,
+        duration_minutes INTEGER NOT NULL,
+        targets_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };
