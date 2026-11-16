@@ -51,6 +51,9 @@ test('seeing follows the jet stream, less a point for strong gusts', () => {
   assert.equal(wx.seeingEstimate(250, 60), 1, 'never below 1');
   assert.equal(wx.seeingEstimate(90, null), 4);
   assert.equal(wx.seeingEstimate(null, 5), null, 'no jet-stream wind, no estimate');
+  // The band edges.
+  assert.deepEqual([60, 61, 100, 101, 140, 141, 180, 181].map((jet) => wx.seeingEstimate(jet, 0)), [5, 4, 4, 3, 3, 2, 2, 1]);
+  assert.deepEqual([34, 35].map((gust) => wx.seeingEstimate(50, gust)), [5, 4]);
 });
 
 test('transparency follows humidity and visibility', () => {
@@ -62,6 +65,8 @@ test('transparency follows humidity and visibility', () => {
   assert.equal(wx.transparencyEstimate(97, 3000), 1);
   assert.equal(wx.transparencyEstimate(null, 30000), 5);
   assert.equal(wx.transparencyEstimate(null, null), null);
+  assert.deepEqual([79, 80, 94, 95].map((rh) => wx.transparencyEstimate(rh, 30000)), [5, 4, 4, 3]);
+  assert.deepEqual([20000, 19999, 10000, 9999, 5000, 4999].map((vis) => wx.transparencyEstimate(50, vis)), [5, 4, 4, 3, 3, 2]);
 });
 
 test('dew risk is the temperature / dew point gap', () => {
@@ -70,6 +75,8 @@ test('dew risk is the temperature / dew point gap', () => {
   assert.equal(wx.dewRisk(10, 9.5), 'high');
   assert.equal(wx.dewRisk(-2, -2.5), 'frost');
   assert.equal(wx.dewRisk(null, 3), null);
+  assert.deepEqual([[10, 6.9], [10, 7], [10, 8.9], [10, 9], [0, -1], [0.1, -0.9]].map(([t, d]) => wx.dewRisk(t, d)),
+    ['low', 'likely', 'likely', 'high', 'frost', 'high']);
 });
 
 test('darkness bands', () => {
@@ -94,8 +101,15 @@ test('the hourly verdict and its reasons', () => {
   // Everything that is wrong is listed, the blockers first.
   assert.deepEqual(wx.verdict({ cloud: 90, precipitation_probability: 30, gusts: 50, transparency: 1 }).reasons,
     ['90% cloud', 'gusts 50 km/h', '30% chance of rain or snow', 'poor transparency']);
-  // No cloud figure, no verdict.
+  // The cut-offs themselves.
+  const v = (over) => wx.verdict({ ...clear, ...over }).verdict;
+  assert.deepEqual([25, 26, 69, 70].map((cloud) => v({ cloud })), ['go', 'marginal', 'marginal', 'no-go']);
+  assert.deepEqual([19, 20, 49, 50].map((p) => v({ precipitation_probability: p })), ['go', 'marginal', 'marginal', 'no-go']);
+  assert.deepEqual([29, 30, 44, 45].map((gusts) => v({ gusts })), ['go', 'marginal', 'marginal', 'no-go']);
+  assert.deepEqual([3, 2].map((transparency) => v({ transparency })), ['go', 'marginal']);
+  // No cloud figure, no verdict — unless rain or a gale settles it anyway.
   assert.deepEqual(wx.verdict({ ...clear, cloud: null }), { verdict: null, reasons: [] });
+  assert.deepEqual(wx.verdict({ ...clear, cloud: null, gusts: 90 }), { verdict: 'no-go', reasons: ['gusts 90 km/h'] });
 });
 
 test('buildHours adds the Sun, the Moon and a verdict to each hour', () => {
@@ -113,6 +127,14 @@ test('buildHours adds the Sun, the Moon and a verdict to each hour', () => {
   assert.equal(hours[0].seeing, 5);
   assert.equal(hours[0].dew, 'low');
   assert.ok(hours.every((h) => h.moon_illumination >= 0 && h.moon_illumination <= 1 && Math.abs(h.moon_altitude) <= 90));
+
+  // Gusts and precipitation chance are given for the hour before each
+  // timestamp, so an hour takes them from the next entry.
+  const shifted = wx.buildHours(hourly(3, (i) => (i === 1 ? { wind_gusts_10m: 60, precipitation_probability: 80, wind_speed_10m: 33 } : {})), LAT, LON, new Date(T0));
+  assert.deepEqual(shifted.map((h) => h.gusts), [60, 10, 10]);
+  assert.deepEqual(shifted.map((h) => h.precipitation_probability), [80, 0, 0]);
+  assert.deepEqual(shifted.map((h) => h.wind), [5, 33, 5], 'wind speed is at the timestamp');
+  assert.equal(shifted[0].verdict, 'no-go');
 
   // Hours already over are dropped; the one in progress is kept.
   const later = wx.buildHours(hourly(24), LAT, LON, new Date(T0 + 2.5 * 3_600_000));
@@ -159,6 +181,24 @@ test('summariseNights finds each night, its usable hours and best run', () => {
   assert.equal(brief[0].verdict, 'marginal');
   assert.equal(brief[0].best.hours, 1);
   assert.deepEqual(wx.summariseNights([]), []);
+
+  // A night the forecast ends partway through is left out, not judged on
+  // its first half; so is a night with under two hours to go.
+  const cutOff = wx.summariseNights(wx.buildHours(hourly(30), LAT, LON, new Date(T0)));
+  assert.equal(cutOff.length, 1);
+  assert.equal(cutOff[0].start, '2026-11-17T23:00:00.000Z');
+  const nearDawn = wx.summariseNights(wx.buildHours(hourly(48), LAT, LON, new Date(T0 + 12.5 * 3_600_000)));
+  assert.equal(nearDawn.length, 1, 'the one hour left of the first night is not a night');
+  assert.equal(nearDawn[0].start, '2026-11-18T23:00:00.000Z');
+
+  // Polar night (Longyearbyen in December): no daylight to separate the
+  // nights, so they are cut every 24 hours.
+  const polarStart = Date.UTC(2026, 11, 16, 0);
+  const polarHourly = hourly(100);
+  polarHourly.time = polarHourly.time.map((_, i) => (polarStart + i * 3_600_000) / 1000);
+  const polar = wx.summariseNights(wx.buildHours(polarHourly, 78.2, 15.6, new Date(polarStart)));
+  assert.equal(polar.length, 4);
+  assert.ok(polar.every((n) => n.hours === 24));
 });
 
 test('forecasts are cached per 0.1° square for an hour', async () => {
@@ -170,11 +210,20 @@ test('forecasts are cached per 0.1° square for an hour', async () => {
   const first = await weather.forecast(42.06, -87.94);
   assert.equal(urls.length, 1);
   assert.match(urls[0], /\/v1\/forecast\?latitude=42\.1&longitude=-87\.9&/);
-  assert.match(urls[0], /cloud_cover_low/);
-  assert.match(urls[0], /wind_speed_250hPa/);
+  const asked = new URL(urls[0]).searchParams;
+  assert.equal(asked.get('timeformat'), 'unixtime', 'times are parsed as unix seconds');
+  assert.equal(asked.get('wind_speed_unit'), 'kmh', 'thresholds are in km/h');
+  assert.equal(asked.get('forecast_days'), String(wx.FORECAST_DAYS));
+  assert.equal(wx.FORECAST_DAYS, 8);
+  assert.deepEqual(asked.get('hourly').split(','), wx.HOURLY);
+  for (const name of ['cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_cover_high', 'temperature_2m', 'dew_point_2m',
+    'relative_humidity_2m', 'wind_speed_10m', 'wind_gusts_10m', 'visibility', 'precipitation_probability', 'wind_speed_250hPa']) {
+    assert.ok(wx.HOURLY.includes(name), name);
+  }
   assert.deepEqual(first.location, { lat: 42.1, lon: -87.9 });
   assert.equal(first.hours.length, 48);
   assert.equal(first.nights.length, 2);
+  assert.ok(urls[0].startsWith('https://api.open-meteo.com/v1/forecast?'));
   assert.equal(first.fetched_at, new Date(T0).toISOString());
 
   // Same square, within the hour: no new request.
@@ -205,30 +254,65 @@ test('concurrent requests share one fetch', async () => {
   assert.equal(a, b);
 });
 
-test('upstream failures: an error, or the last good forecast when there is one', async () => {
+test('upstream failures: an error, a pause before retrying, and the last good forecast', async () => {
   let clock = T0;
   let mode = 'down';
+  let calls = 0;
   const fetchImpl = async () => {
+    calls++;
     if (mode === 'down') throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } });
     if (mode === 'bad') return response({ error: true, reason: 'Latitude must be in range of -90 to 90°.' }, 400);
     if (mode === 'html') return new Response('<html>oops</html>', { status: 502 });
     return response({ hourly: hourly(24) });
   };
   const weather = wx.createAstroWeather({ fetchImpl, now: () => clock });
-  await assert.rejects(weather.forecast(LAT, LON), (err) => err instanceof wx.AstroWeatherError && err.status === 502 && /Couldn't reach the weather service \(ENOTFOUND\)/.test(err.message));
+  const unreachable = (err) => err instanceof wx.AstroWeatherError && err.status === 502
+    && /Couldn't reach the weather service \(ENOTFOUND\)/.test(err.message);
+  await assert.rejects(weather.forecast(LAT, LON), unreachable);
+  // For the next few minutes the service isn't asked again for that square.
+  mode = 'ok';
+  await assert.rejects(weather.forecast(LAT, LON), unreachable);
+  assert.equal(calls, 1);
+  // Other squares are, and each kind of failure says what happened.
   mode = 'bad';
-  await assert.rejects(weather.forecast(LAT, LON), /didn't return a forecast \(Latitude must be in range/);
+  await assert.rejects(weather.forecast(10, 10), /didn't return a forecast \(Latitude must be in range/);
   mode = 'html';
-  await assert.rejects(weather.forecast(LAT, LON), /didn't return a forecast \(HTTP 502\)/);
+  await assert.rejects(weather.forecast(20, 20), /didn't return a forecast \(HTTP 502\)/);
+  assert.equal(calls, 3);
 
-  // A failure is not cached: the next request tries again and succeeds.
+  // After the pause it is tried again, and succeeds.
+  clock += wx.RETRY_MS + 1000;
   mode = 'ok';
   const good = await weather.forecast(LAT, LON);
   assert.equal(good.hours.length, 24);
-  // Once the cache is stale and the service is down, the old forecast stands.
+  assert.equal(calls, 4);
+
+  // Once that is stale and the service is down, the old forecast stands —
+  // for everyone waiting on the same fetch — and the service gets a rest.
   clock += 2 * 3_600_000;
   mode = 'down';
+  const [a, b] = await Promise.all([weather.forecast(LAT, LON), weather.forecast(LAT, LON)]);
+  assert.equal(a, good);
+  assert.equal(b, good);
+  assert.equal(calls, 5);
   assert.equal(await weather.forecast(LAT, LON), good);
+  assert.equal(calls, 5, 'no retry inside the pause');
+
+  // A forecast too old to be useful is not served: the failure shows.
+  clock += wx.STALE_MAX_MS;
+  await assert.rejects(weather.forecast(LAT, LON), unreachable);
+  assert.equal(calls, 6);
+});
+
+test('both sides of the equator and meridian share the zero square', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return response({ hourly: hourly(24) }); };
+  const weather = wx.createAstroWeather({ fetchImpl, now: () => T0 });
+  const a = await weather.forecast(-0.01, -0.02);
+  assert.equal(await weather.forecast(0.01, 0.02), a);
+  assert.equal(urls.length, 1);
+  assert.match(urls[0], /latitude=0&longitude=0&/);
+  assert.deepEqual(a.location, { lat: 0, lon: 0 });
 });
 
 test('upstream requests are capped per hour', async () => {
@@ -276,6 +360,13 @@ test('GET /api/astro-weather', async (t) => {
   const fake = http.createServer((req, res) => {
     state.requests.push(req.url);
     if (state.fail) { res.writeHead(500); return res.end('boom'); }
+    // Like the real API, answer in what was asked for: without these two
+    // the fake's seconds and km/h would be wrong.
+    const asked = new URL(req.url, 'http://x').searchParams;
+    if (asked.get('timeformat') !== 'unixtime' || asked.get('wind_speed_unit') !== 'kmh') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: true, reason: 'fake: unexpected units' }));
+    }
     // A week of hours starting at the top of the current hour, as the real
     // API returns from midnight; hour 2 is clouded out.
     const start = Math.floor(Date.now() / 3_600_000) * 3_600_000;
@@ -310,7 +401,7 @@ test('GET /api/astro-weather', async (t) => {
     return { status: res.status, body: await res.json().catch(() => null) };
   };
 
-  for (const q of ['', '?lat=42', '?lat=abc&lon=1', '?lat=91&lon=0', '?lat=0&lon=181', '?lat=&lon=']) {
+  for (const q of ['', '?lat=42', '?lat=abc&lon=1', '?lat=91&lon=0', '?lat=0&lon=181', '?lat=&lon=', '?lat=%20&lon=%20', '?lat=1&lat=2&lon=3']) {
     const bad = await get(q);
     assert.equal(bad.status, 400, q);
     assert.match(bad.body.error, /lat and lon/);
@@ -344,4 +435,19 @@ test('GET /api/astro-weather', async (t) => {
   const down = await get('?lat=10&lon=10');
   assert.equal(down.status, 502);
   assert.match(down.body.error, /didn't return a forecast \(HTTP 500\)/);
+
+  // One visitor can't use up the server's allowance: after 40 requests in
+  // ten minutes they get 429 and nothing more goes upstream.
+  state.fail = false;
+  const before = state.requests.length;
+  let limited = null;
+  for (let i = 0; i < 45 && !limited; i++) {
+    const res = await fetch(`${app.base}/api/astro-weather?lat=42.06&lon=-87.94`);
+    if (res.status === 429) limited = res;
+    else assert.equal(res.status, 200);
+  }
+  assert.ok(limited, 'the per-visitor limit kicks in');
+  assert.ok(Number(limited.headers.get('retry-after')) > 0);
+  assert.match((await limited.json()).error, /Too many forecast requests/);
+  assert.equal(state.requests.length, before, 'cached square: no upstream requests at all');
 });

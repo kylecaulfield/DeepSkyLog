@@ -20,27 +20,33 @@ const SPEED_UNIT = IMPERIAL ? 'mph' : 'km/h';
 const temp = (c) => (c == null ? '—' : `${Math.round(IMPERIAL ? c * 9 / 5 + 32 : c)}°${IMPERIAL ? 'F' : 'C'}`);
 const pct = (v) => (v == null ? '—' : String(Math.round(v)));
 
-const hourLabel = (d) => d.toLocaleTimeString([], { hour: 'numeric' }).replace(/\s/g, ' ');
+// Forecast hours are whole UTC hours: in a half-hour time zone the label
+// keeps its minutes.
+const hourLabel = (d) => d.toLocaleTimeString([], d.getMinutes() ? { hour: 'numeric', minute: '2-digit' } : { hour: 'numeric' }).replace(/\s/g, '\u202f');
 const timeLabel = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const sameDay = (a, b) => a.toDateString() === b.toDateString();
+// The server's reasons are metric ("gusts 48 km/h").
+export const localReason = (reason) => (IMPERIAL
+  ? reason.replace(/(\d+) km\/h/, (_, n) => `${speed(Number(n))} mph`)
+  : reason);
 
-// "Tonight" for the first night when it is under way or starts within 18 h;
+// "Tonight" for the night that is under way or begins this evening;
 // otherwise the weekday of the evening it starts on.
-function nightName(start, now, isFirst) {
-  if (isFirst && start.getTime() - now.getTime() < 18 * 3_600_000) return 'Tonight';
+function nightName(start, now) {
   const evening = start.getHours() >= 12 ? start : new Date(start.getTime() - 86_400_000);
+  if (start <= now || sameDay(evening, now)) return 'Tonight';
   return `${evening.toLocaleDateString([], { weekday: 'long' })} night`;
 }
 
-function nightLine(night, now, isFirst) {
+function nightLine(night, now) {
   const v = VERDICTS[night.verdict];
   let detail;
-  if (night.best && night.best.hours >= night.hours - 1) detail = 'clear all night';
+  if (night.verdict === 'go' && night.best.hours >= night.hours - 1) detail = 'good all night';
   else if (night.best) detail = `best ${timeLabel(new Date(night.best.start))} – ${timeLabel(new Date(night.best.end))}`;
-  else if (night.marginal_hours) detail = `${night.marginal_hours} h of broken sky at best`;
-  else detail = 'clouded or rained out';
+  else if (night.marginal_hours) detail = `${night.marginal_hours} h marginal at best`;
+  else detail = 'no usable hours';
   return el('li', { class: `sky-night sky-${night.verdict}` },
-    el('strong', { text: nightName(new Date(night.start), now, isFirst) }),
+    el('strong', { text: nightName(new Date(night.start), now) }),
     el('span', { class: 'sky-pill', text: v.label }),
     el('span', { text: detail }),
   );
@@ -80,7 +86,7 @@ function grid(hours) {
     el('tbody', {},
       row('Verdict', each((h) => el('td', {
         class: h.verdict ? `sky-verdict sky-${h.verdict}` : '',
-        title: h.reasons && h.reasons.length ? h.reasons.join(', ') : null,
+        title: h.reasons && h.reasons.length ? h.reasons.map(localReason).join(', ') : null,
         text: h.verdict ? VERDICTS[h.verdict].label : '—',
       }))),
       row('Cloud %', each((h) => cloudCell(h.cloud))),
@@ -126,13 +132,13 @@ export function mountAstroWeather(container, { onUpdate } = {}) {
     const first = data.hours.findIndex((h) => new Date(h.time).getTime() + 3_600_000 > start.getTime());
     const hours = first < 0 ? [] : data.hours.slice(first, first + GRID_HOURS);
     if (!hours.length) {
-      body.replaceChildren(el('div', { class: 'empty-state', text: 'That date is beyond the 7-day forecast.' }));
+      body.replaceChildren(el('div', { class: 'empty-state', text: 'That date is beyond the week the forecast covers.' }));
       return;
     }
     const until = new Date(hours.at(-1).time).getTime() + 3_600_000;
     const nights = data.nights.filter((n) => new Date(n.end) > start && new Date(n.start).getTime() < until + 36 * 3_600_000).slice(0, 3);
     body.replaceChildren(
-      el('ul', { class: 'sky-nights' }, ...nights.map((n, i) => nightLine(n, now, i === 0))),
+      el('ul', { class: 'sky-nights' }, ...nights.map((n) => nightLine(n, now))),
       grid(hours),
       el('p', { class: 'dim sky-foot', text:
         `Seeing and transparency (Transp.) are estimates from jet-stream wind, humidity and visibility. Greyed hours are daylight. Forecast: ${data.source}, `
@@ -149,7 +155,14 @@ export function mountAstroWeather(container, { onUpdate } = {}) {
       if (onUpdate) onUpdate(data);
       return;
     }
-    if (!data || key !== lastKey) body.replaceChildren(el('span', { class: 'dim', text: 'Loading the forecast…' }));
+    if (!data || key !== lastKey) {
+      // Another place: nothing from the old one may be shown, or used to
+      // mark slots, while the new forecast is on its way.
+      data = null;
+      lastKey = '';
+      body.replaceChildren(el('span', { class: 'dim', text: 'Loading the forecast…' }));
+      if (onUpdate) onUpdate(null);
+    }
     try {
       const fresh = await fetchJson(`/api/astro-weather?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
       if (myGen !== gen) return;
@@ -173,14 +186,20 @@ export function mountAstroWeather(container, { onUpdate } = {}) {
     const start = new Date(startISO).getTime();
     const end = new Date(endISO).getTime();
     if (!(end > start)) return null;
-    const touched = data.hours.filter((h) => {
+    const overlap = (h) => {
       const t = new Date(h.time).getTime();
-      return t < end && t + 3_600_000 > start;
-    });
-    if (!touched.length || touched.some((h) => !h.verdict)) return null;
-    if (new Date(touched[0].time).getTime() > start || new Date(touched.at(-1).time).getTime() + 3_600_000 < end) return null;
+      return Math.min(end, t + 3_600_000) - Math.max(start, t);
+    };
+    const all = data.hours.filter((h) => overlap(h) > 0);
+    if (!all.length) return null;
+    if (new Date(all[0].time).getTime() > start || new Date(all.at(-1).time).getTime() + 3_600_000 < end) return null;
+    // An hour the span only clips (under 10 minutes) doesn't count, unless
+    // that would leave nothing.
+    const solid = all.filter((h) => overlap(h) >= 10 * 60_000);
+    const touched = solid.length ? solid : all;
+    if (touched.some((h) => !h.verdict)) return null;
     const worst = touched.reduce((a, b) => (VERDICTS[b.verdict].rank > VERDICTS[a.verdict].rank ? b : a));
-    return { verdict: worst.verdict, label: VERDICTS[worst.verdict].label, rank: VERDICTS[worst.verdict].rank, reasons: worst.reasons || [] };
+    return { verdict: worst.verdict, label: VERDICTS[worst.verdict].label, rank: VERDICTS[worst.verdict].rank, reasons: (worst.reasons || []).map(localReason) };
   }
 
   return { load, verdictFor };

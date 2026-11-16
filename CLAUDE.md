@@ -83,14 +83,14 @@ Each schedule on the Seestar planner page has a "Share to Seestar" button that t
 
 ### Sky forecast (`lib/astro_weather.js`, `public/js/astro-weather.js`)
 
-`GET /api/astro-weather?lat=&lon=` is weather for astronomy: 7 days of hours from Open-Meteo's forecast API (free, no key; `OPEN_METEO_BASE` overrides the host, and tests point it at a fake — no test may call Open-Meteo), each with cloud by layer, wind and gusts, temperature and dew point, the Sun's altitude (`darkness`: day above −6°, twilight to −18°, dark) and the Moon, plus:
+`GET /api/astro-weather?lat=&lon=` is weather for astronomy: about a week of hours (the rest of an 8-day request) from Open-Meteo's forecast API (free, no key; `OPEN_METEO_BASE` overrides the host, and tests point it at a fake — no test may call Open-Meteo), each with cloud by layer, wind and gusts, temperature and dew point, the Sun's altitude (`darkness`: day above −6°, twilight to −18°, dark) and the Moon, plus:
 
 - `seeing` and `transparency`, 1–5: **estimates**, since nothing free forecasts them. Seeing comes from the 250 hPa (jet stream) wind, less a point for gusts ≥ 35 km/h; transparency from humidity and visibility. Say "estimate" wherever they are shown.
 - `dew`: low / likely / high / frost, from the temperature − dew point gap.
-- `verdict` + `reasons`: no-go at ≥ 70% cloud, ≥ 50% precipitation chance or gusts ≥ 45 km/h; marginal above 25% cloud, 20% precipitation, 30 km/h gusts or with transparency ≤ 2; else go. Darkness is not part of it.
-- `nights`: each run of non-day hours with its go / marginal hours, longest run of go hours (`best`) and one verdict (go = that run ≥ 2 h).
+- `verdict` + `reasons`: no-go at ≥ 70% cloud, ≥ 50% precipitation chance or gusts ≥ 45 km/h; marginal above 25% cloud, at ≥ 20% precipitation chance, gusts ≥ 30 km/h or with transparency ≤ 2; else go. Darkness is not part of it. Gusts and precipitation chance are Open-Meteo's "preceding hour" figures, so each hour takes them from the next timestamp.
+- `nights`: each run of non-day hours with its go / marginal hours, longest run of go hours (`best`) and one verdict (go = that run ≥ 2 h). A night with under 2 h left, or one the forecast ends partway through, is left out; polar night is cut every 24 h.
 
-The endpoint is public, so the module protects Open-Meteo: forecasts are cached per 0.1° square for an hour (concurrent requests share one fetch, a stale forecast outlives an upstream failure) and upstream requests are capped at 120 an hour (429 beyond that). All values are metric; the page converts to mph / °F for US browsers. `mountAstroWeather()` draws the panel on Tonight and the Seestar planner, whose `fillSkyCells()` gives each slot the worst verdict of the hours it touches (`verdictFor()`). The older `/api/admin/weather` is a different thing: past weather for the upload form.
+The endpoint is public, so the module protects Open-Meteo: forecasts are cached per 0.1° square for an hour (concurrent requests share one fetch; after a failed fetch the square isn't retried for 5 minutes and a forecast up to 6 h old stands in), upstream requests are capped at 120 an hour, and the route allows each IP 40 requests per 10 minutes (429 beyond either). All values, including the `reasons` text, are metric; the page converts to mph / °F for US browsers (`localReason()` for the reasons). `mountAstroWeather()` draws the panel on Tonight and the Seestar planner, whose `fillSkyCells()` gives each slot the worst verdict of the hours it touches, ignoring an hour it clips by under 10 minutes (`verdictFor()`). The older `/api/admin/weather` is a different thing: past weather for the upload form.
 
 ### Frontend conventions
 

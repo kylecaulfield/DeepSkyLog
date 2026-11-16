@@ -61,7 +61,7 @@ async function load() {
   }
   localStorage.setItem(STORE_KEY, JSON.stringify({ lat, lon }));
   loadRan = true;
-  weather.load(lat, lon);
+  if (latInput.value.trim() !== '' && lonInput.value.trim() !== '') weather.load(lat, lon);
 
   status.textContent = 'Computing…';
   rows.innerHTML = '';

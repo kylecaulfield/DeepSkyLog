@@ -1085,10 +1085,28 @@ app.get('/api/seestar-planner', (req, res) => {
 // summary per night. Public, like /api/tonight; the module caches per
 // 0.1° square for an hour and caps upstream requests.
 const astroWeather = createAstroWeather();
+// One visitor can't spend the module's whole upstream budget: at most 40
+// forecast requests per IP in any 10 minutes.
+const weatherHits = new Map();
+const WEATHER_WINDOW_MS = 10 * 60 * 1000;
+const WEATHER_MAX_PER_WINDOW = 40;
 app.get('/api/astro-weather', async (req, res, next) => {
+  const ip = clientIp(req);
+  const nowMs = Date.now();
+  const hits = (weatherHits.get(ip) || []).filter((t) => nowMs - t < WEATHER_WINDOW_MS);
+  if (hits.length >= WEATHER_MAX_PER_WINDOW) {
+    weatherHits.set(ip, hits);
+    res.set('Retry-After', String(Math.ceil((hits[0] + WEATHER_WINDOW_MS - nowMs) / 1000)));
+    return res.status(429).json({ error: 'Too many forecast requests. Try again in a few minutes.' });
+  }
+  hits.push(nowMs);
+  weatherHits.set(ip, hits);
+  if (weatherHits.size > 5000) {
+    for (const [k, v] of weatherHits) if (!v.some((t) => nowMs - t < WEATHER_WINDOW_MS)) weatherHits.delete(k);
+  }
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
-  if (req.query.lat == null || req.query.lon == null || req.query.lat === '' || req.query.lon === ''
+  if (typeof req.query.lat !== 'string' || typeof req.query.lon !== 'string' || !req.query.lat.trim() || !req.query.lon.trim()
       || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
     return res.status(400).json({ error: 'lat and lon query params are required (decimal degrees)' });
   }

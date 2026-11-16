@@ -164,7 +164,7 @@ async function load() {
   const durParam = getDurationParam();
   if (durParam) params.set('durations', durParam);
 
-  weather.load(lat, lon, { from: new Date(startISO) });
+  if (latInput.value.trim() !== '' && lonInput.value.trim() !== '') weather.load(lat, lon, { from: new Date(startISO) });
 
   let data;
   try {
@@ -228,7 +228,7 @@ function fillSkyCells() {
     }
     const note = section.querySelector('.sky-note');
     if (note) {
-      note.textContent = blocked ? `Forecast: ${blocked} of ${rated} target${rated === 1 ? '' : 's'} clouded or rained out` : '';
+      note.textContent = blocked ? `Forecast: no-go weather for ${blocked} of ${rated} target${rated === 1 ? '' : 's'}` : '';
       note.hidden = !blocked;
     }
   }
@@ -241,6 +241,7 @@ function buildRow(slot) {
   return el('tr', { class: t.observed ? 'observed' : '' },
     el('td', { 'data-sort': slot.slot_start ? String(Date.parse(slot.slot_start)) : '', text: slotLabel }),
     el('td', { 'data-sort': slot.duration_minutes != null ? String(slot.duration_minutes) : '', text: dur }),
+    el('td', { class: 'sky-slot dim', 'data-start': slot.slot_start, 'data-end': slot.slot_end, 'data-sort': '', text: '—' }),
     el('td', { 'data-sort': catalogSortKey(t.catalog, t.catalog_number) },
       el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
     el('td', { text: t.name || '—' }),
@@ -251,12 +252,11 @@ function buildRow(slot) {
     el('td', { text: fmtDeg(t.altitude_at_end) }),
     el('td', { text: fmtDeg(t.azimuth_at_start) }),
     el('td', { class: 'dim list-cell', text: t.list_name }),
-    el('td', { class: 'sky-slot dim', 'data-start': slot.slot_start, 'data-end': slot.slot_end, 'data-sort': '', text: '—' }),
   );
 }
 
-const COLUMNS = ['Slot', 'Duration', 'Object', 'Name', 'Type', 'Constellation',
-  'Mag', 'Alt start', 'Alt end', 'Az start', 'List', 'Sky'];
+const COLUMNS = ['Slot', 'Duration', 'Sky', 'Object', 'Name', 'Type', 'Constellation',
+  'Mag', 'Alt start', 'Alt end', 'Az start', 'List'];
 
 function buildScheduleSection(scope) {
   const capBit = scope.max_magnitude != null
