@@ -191,6 +191,15 @@ test('a 5xx or non-JSON answer is an error and is not retried', async () => {
   );
   assert.equal(called, 1);
 
+  // An answer whose body can't be read is final too.
+  called = 0;
+  const cutOff = async () => { called++; return { ok: true, status: 200, text: async () => { throw new Error('terminated'); } }; };
+  await assert.rejects(
+    share.sharePlan({ name: 'x', slots: [slot()], tzOffsetMinutes: TZ }, { fetchImpl: cutOff }),
+    /answered \(HTTP 200\) but its reply couldn't be read/,
+  );
+  assert.equal(called, 1);
+
   // "OK" with no usable share id is still a failure.
   const noId = async () => jsonResponse(200, { code: 200, msg: 'OK', data: {} });
   await assert.rejects(
@@ -372,6 +381,10 @@ test('sharing a planner schedule through the API', async (t) => {
     [{ ...request, slots: [{ ...slots[0], object_id: sun.id }] }, /Slot 1 is the Sun/],
     [{ ...request, slots: [{ ...slots[0], duration_minutes: 0 }] }, /duration 0/],
     [{ ...request, tz_offset_minutes: undefined }, /time zone/],
+    [{ ...request, tz_offset_minutes: null }, /time zone/],
+    [{ ...request, tz_offset_minutes: '' }, /time zone/],
+    [{ ...request, slots: [{ ...slots[0], duration_minutes: true }] }, /duration NaN/],
+    [{ ...request, slots: [{ ...slots[0], slot_start: 0 }] }, /Slot 1/],
     [{ ...request, name: '' }, /needs a name/],
   ]) {
     const refused = await post(body);

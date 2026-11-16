@@ -314,6 +314,16 @@ async function adminJson(url, options) {
   throw Object.assign(new Error(message), { problems: body?.problems });
 }
 
+// The schedules are rebuilt whenever a planner input changes, which can
+// happen while a share is still being created. Its outcome then goes above
+// the schedules instead of into a panel that is no longer on the page.
+const strayShare = document.getElementById('share-result');
+function showShareResult(panel, content) {
+  const box = panel.isConnected ? panel : strayShare;
+  box.replaceChildren(content);
+  box.hidden = false;
+}
+
 async function shareSchedule(scope, btn, panel) {
   const first = new Date(scope.slots[0].slot_start);
   const night = first.toLocaleDateString([], { day: 'numeric', month: 'short' });
@@ -338,10 +348,10 @@ async function shareSchedule(scope, btn, panel) {
         })),
       }),
     });
-    panel.replaceChildren(shareCard(share));
+    showShareResult(panel, shareCard(share));
     if (pastShares.open) loadPastShares();
   } catch (err) {
-    panel.replaceChildren(shareError(err.message, err.problems));
+    showShareResult(panel, shareError(err.message, err.problems));
   } finally {
     btn.disabled = false;
     btn.textContent = 'Share to Seestar';

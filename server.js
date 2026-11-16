@@ -2121,7 +2121,7 @@ app.post('/api/admin/seestar/share', basicAuth, async (req, res, next) => {
   for (const [i, raw] of rawSlots.entries()) {
     const start = new Date(raw?.slot_start);
     const object = Number.isInteger(raw?.object_id) ? findObject.get(raw.object_id) : null;
-    if (!object || Number.isNaN(start.getTime())) {
+    if (!object || typeof raw.slot_start !== 'string' || Number.isNaN(start.getTime())) {
       return res.status(400).json({ error: `Slot ${i + 1} has no known target or no valid start time.` });
     }
     // A plan slews the telescope unattended, and the app can't be told here
@@ -2132,7 +2132,8 @@ app.post('/api/admin/seestar/share', basicAuth, async (req, res, next) => {
     const eph = object.ephemeris ? bodyPosition(object.ephemeris, start) : null;
     slots.push({
       start,
-      durationMinutes: Number(raw.duration_minutes),
+      // Anything but a number fails validation, by name.
+      durationMinutes: typeof raw.duration_minutes === 'number' ? raw.duration_minutes : NaN,
       object,
       // NaN when a target has no position: validation names it.
       raHours: eph ? eph.raHours : (object.ra_hours ?? NaN),
@@ -2143,25 +2144,42 @@ app.post('/api/admin/seestar/share', basicAuth, async (req, res, next) => {
     const shared = await seestarShare.sharePlan({
       name: body.name,
       slots,
-      tzOffsetMinutes: Number(body.tz_offset_minutes),
+      tzOffsetMinutes: typeof body.tz_offset_minutes === 'number' ? body.tz_offset_minutes : NaN,
     });
     const scope = typeof body.scope === 'string' ? body.scope.slice(0, 60) : null;
-    const info = db
-      .prepare(
-        `INSERT INTO seestar_shares (share_id, share_link, plan_name, scope, target_count, duration_minutes, targets_json)
-         VALUES (@shareId, @shareLink, @planName, @scope, @targetCount, @durationMinutes, @targetsJson)`,
-      )
-      .run({ ...shared, scope, targetsJson: JSON.stringify(shared.targets) });
-    const row = db.prepare('SELECT created_at FROM seestar_shares WHERE id = ?').get(info.lastInsertRowid);
+    // The share exists on ZWO's side by now: if it can't be recorded, the
+    // link still goes back, since there is no other way to get it again.
+    let id = null;
+    let createdAt = new Date().toISOString();
+    try {
+      const info = db
+        .prepare(
+          `INSERT INTO seestar_shares (share_id, share_link, plan_name, scope, target_count, duration_minutes, targets_json)
+           VALUES (@shareId, @shareLink, @planName, @scope, @targetCount, @durationMinutes, @targetsJson)`,
+        )
+        .run({
+          shareId: shared.shareId,
+          shareLink: shared.shareLink,
+          planName: shared.planName,
+          scope,
+          targetCount: shared.targetCount,
+          durationMinutes: shared.durationMinutes,
+          targetsJson: JSON.stringify(shared.targets),
+        });
+      id = Number(info.lastInsertRowid);
+      createdAt = db.prepare('SELECT created_at FROM seestar_shares WHERE id = ?').get(id).created_at;
+    } catch (err) {
+      console.error('Seestar share created but not recorded:', err);
+    }
     res.status(201).json({
-      id: Number(info.lastInsertRowid),
+      id,
       shareId: shared.shareId,
       shareLink: shared.shareLink,
       qrPngBase64: shared.qrPngBase64,
       planName: shared.planName,
       targetCount: shared.targetCount,
       durationMinutes: shared.durationMinutes,
-      createdAt: row.created_at,
+      createdAt,
     });
   } catch (err) {
     if (!(err instanceof seestarShare.SeestarShareError)) return next(err);
