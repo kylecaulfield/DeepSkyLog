@@ -1,4 +1,4 @@
-// Shared catalog-filter UI used by /planner.html, /seestar.html and
+// Shared catalog-filter UI used by /planner.html, /admin/seestar.html and
 // /tonight.html. Renders a <details> drop-down of checkboxes for each
 // seeded list; the selection persists in localStorage so picking
 // Messier + Caldwell on the planner page carries over to the Seestar

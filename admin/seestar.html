@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>DeepSkyLog &mdash; Seestar Planner</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/admin/admin.css" />
     <style>
       .fleet-control {
         display: inline-flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
@@ -48,16 +49,16 @@
     <header class="site-header">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-name">DeepSkyLog</span>
+        <span class="brand-name">DeepSkyLog · Admin</span>
       </div>
       <nav class="site-nav">
-        <a href="/" data-nav="home">Dashboard</a>
-        <a href="/tonight.html" data-nav="tonight">Tonight</a>
-        <a href="/planner.html" data-nav="planner">Planner</a>
-        <a href="/seestar.html" data-nav="seestar">Seestar planner</a>
-        <a href="/gallery.html" data-nav="gallery">Gallery</a>
-        <a href="/atlas.html" data-nav="atlas">Atlas</a>
-        <a href="/map.html" data-nav="map">Map</a>
+        <a href="/">Public site</a>
+        <a href="/admin/">Dashboard</a>
+        <a href="/admin/observations.html">Observations</a>
+        <a href="/admin/crossref.html">Cross-reference</a>
+        <a href="/admin/equipment.html">Equipment</a>
+        <a href="/admin/seestar.html" class="active">Seestar planner</a>
+        <a href="/admin/upload.html">Upload</a>
       </nav>
     </header>
     <main>
@@ -119,8 +120,9 @@
         <div id="past-shares-body"></div>
       </details>
     </main>
-    <script type="module" src="/js/seestar-plan.js"></script>
+    <script type="module" src="/admin/seestar-plan.js"></script>
     <script type="module" src="/js/sortable.js"></script>
+    <script type="module" src="/admin/version.js"></script>
     <script type="module" src="/js/site-name.js"></script>
   </body>
 </html>

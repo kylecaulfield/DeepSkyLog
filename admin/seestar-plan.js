@@ -1,11 +1,10 @@
-import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common.js';
-import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
-import { mountTypeFilter, typesToParam } from './type-filter.js';
+import { fetchJson, el, typeLabel, catalogSortKey } from '/js/common.js';
+import { mountCatalogFilter, selectionToParam } from '/js/catalog-filter.js';
+import { mountTypeFilter, typesToParam } from '/js/type-filter.js';
 import { mountDurationPicker } from './seestar-durations.js';
-import { mountAstroWeather } from './astro-weather.js';
-import { applyDefaultLocation } from './default-location.js';
+import { mountAstroWeather } from '/js/astro-weather.js';
+import { applyDefaultLocation } from '/js/default-location.js';
 
-highlightNav('seestar');
 
 let getCatalogSelection = () => [];
 let loadRan = false; // a load was kicked off before the filters mounted
@@ -169,7 +168,7 @@ async function load() {
 
   let data;
   try {
-    data = await fetchJson(`/api/seestar-planner?${params}`);
+    data = await fetchJson(`/api/admin/seestar-planner?${params}`);
   } catch (err) {
     if (myGen !== loadGen) return;
     status.textContent = `Failed: ${err.message}`;
@@ -298,7 +297,7 @@ function buildScheduleSection(scope) {
 // ---- Share to Seestar ------------------------------------------------------
 // Sends one scope's schedule to the server, which creates a Seestar Share
 // Plan (lib/seestar_share.js) and answers with a link and QR code the Seestar
-// app imports. Admin-only: the browser asks for the admin password once.
+// app imports.
 
 // What a share is and how to open it: the QR for a phone next to this
 // screen, the link for when this page is on the phone itself.

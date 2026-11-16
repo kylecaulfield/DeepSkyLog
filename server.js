@@ -370,6 +370,9 @@ function noStoreForCode(res, filePath) {
   }
 }
 
+// The Seestar planner used to be a public page; it now lives in the admin
+// area. Old bookmarks land on the new address (which asks for the password).
+app.get('/seestar.html', (_req, res) => res.redirect(302, '/admin/seestar.html'));
 app.use('/admin', basicAuth, express.static(path.join(__dirname, 'admin'), { setHeaders: noStoreForCode }));
 app.use('/uploads', express.static(UPLOAD_DIR));
 app.use(express.static(path.join(__dirname, 'public'), { setHeaders: noStoreForCode }));
@@ -783,7 +786,7 @@ function parseFleet(raw) {
   return counts;
 }
 
-app.get('/api/seestar-planner', (req, res) => {
+app.get('/api/admin/seestar-planner', basicAuth, (req, res) => {
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {

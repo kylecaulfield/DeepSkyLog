@@ -351,7 +351,7 @@ test('sharing a planner schedule through the API', async (t) => {
   });
 
   // A real schedule from the planner, shared the way the page does it.
-  const plan = await api('/api/seestar-planner?lat=42.06&lon=-87.94&start=2026-11-17T00:30:00Z&fleet=s50pro:1&min_alt=30&max_alt=85');
+  const plan = await api('/api/admin/seestar-planner?lat=42.06&lon=-87.94&start=2026-11-17T00:30:00Z&fleet=s50pro:1&min_alt=30&max_alt=85');
   assert.equal(plan.status, 200);
   const scope = plan.body.scopes[0];
   assert.ok(scope.slots.length >= 2, 'the planner found targets');
