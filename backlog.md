@@ -103,6 +103,10 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   after sunset for the location (never before the requested start), and
   Milky Way wide-field (MWWF) mosaics are scheduled only on the Pro models
   (originally S30 Pro only; the S50 Pro entry below extends the gate).
+- ✅ **Seestar planner moved to the admin area** — the page
+  (`/admin/seestar.html`) and its API (`/api/admin/seestar-planner`) need
+  the admin password; the public nav no longer links to it and the old
+  address redirects. A step toward per-user accounts later.
 - ✅ **Sky forecast** — weather for astronomy on Tonight and the Seestar
   planner (`/api/astro-weather`, Open-Meteo): hourly cloud by layer, seeing
   and transparency estimates, wind, dew, Moon, a go / marginal / no-go

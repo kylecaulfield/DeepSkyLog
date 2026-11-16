@@ -964,7 +964,7 @@ test('smoke', async (t) => {
     // Seestar planner same.
     const start = new Date('2026-01-15T22:00:00Z').toISOString();
     const seestarFiltered = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&lists=messier`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&lists=messier`,
     );
     for (const s of seestarFiltered.slots) {
       if (s.target) assert.equal(s.target.list_slug, 'messier');
@@ -994,7 +994,7 @@ test('smoke', async (t) => {
     // isn't ticked.
     const start = new Date('2026-01-15T22:00:00Z').toISOString();
     const seestarNoGC = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&types=GAL,DN,PN,SNR,OC,MW,AST,STAR,DS,COMET,PLAN,MOON`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&types=GAL,DN,PN,SNR,OC,MW,AST,STAR,DS,COMET,PLAN,MOON`,
     );
     for (const s of seestarNoGC.slots) {
       if (s.target) assert.notEqual(s.target.object_type, 'GC');
@@ -1013,7 +1013,7 @@ test('smoke', async (t) => {
     // S30 caps at mag 10. Every assigned target with a known magnitude
     // must respect that; nulls (planets etc.) pass through.
     const s30 = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80&telescope=s30`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80&telescope=s30`,
     );
     assert.equal(s30.scope?.key, 's30');
     assert.equal(s30.scope?.max_magnitude, 10.0);
@@ -1026,7 +1026,7 @@ test('smoke', async (t) => {
     }
     // Unknown scope falls back to "any" — no filter applied.
     const fallback = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80&telescope=skywatcher-150p`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80&telescope=skywatcher-150p`,
     );
     assert.equal(fallback.scope?.key, 'any');
     assert.equal(fallback.scope?.max_magnitude, null);
@@ -1038,7 +1038,7 @@ test('smoke', async (t) => {
     // observer at (51.5, 0) — guaranteed dark night in January.
     const start = new Date('2026-01-15T22:00:00Z').toISOString();
     const data = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=50&max_alt=80`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=50&max_alt=80`,
     );
     assert.ok(Array.isArray(data.slots), 'slots present');
     assert.ok(data.slots.length >= 4, `expected several slots, got ${data.slots.length}`);
@@ -1068,7 +1068,7 @@ test('smoke', async (t) => {
     // With huge custom durations (90 min for everything), we should get
     // fewer slots than the default mix.
     const huge = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=50&max_alt=80&durations=GAL:90,GC:90,OC:90,PN:90,DN:90,SNR:90,MW:90,AST:90,DS:90,STAR:90,MOON:90,PLAN:90,COMET:90`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=50&max_alt=80&durations=GAL:90,GC:90,OC:90,PN:90,DN:90,SNR:90,MW:90,AST:90,DS:90,STAR:90,MOON:90,PLAN:90,COMET:90`,
     );
     assert.ok(huge.slots.every((s) => !s.target || s.duration_minutes === 90),
       'all targeted slots use the custom 90-min duration');
@@ -1079,7 +1079,7 @@ test('smoke', async (t) => {
   await t.test('Seestar multi-scope fleet: one table per scope, no target overlap', async () => {
     const start = new Date('2026-01-15T22:00:00Z').toISOString();
     const data = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=40&max_alt=85&fleet=s30:1,s30pro:2,s50:1`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=40&max_alt=85&fleet=s30:1,s30pro:2,s50:1`,
     );
     assert.ok(Array.isArray(data.scopes), 'scopes array present');
     // 1 + 2 + 1 = 4 scope instances; duplicated models get #-suffixed labels.
@@ -1106,7 +1106,7 @@ test('smoke', async (t) => {
 
     // Back-compat: a fleet-free call still returns scope + slots.
     const single = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&telescope=s50`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&telescope=s50`,
     );
     assert.equal(single.scope.key, 's50');
     assert.ok(Array.isArray(single.slots));
@@ -1115,7 +1115,7 @@ test('smoke', async (t) => {
 
   await t.test('Seestar S50 Pro scope: cap 11.5, S50 Pro + S50 fleet, allocation order', async () => {
     const start = new Date('2026-01-15T22:00:00Z').toISOString();
-    const base = `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80`;
+    const base = `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(start)}&min_alt=10&max_alt=80`;
 
     // The older single-`telescope` path accepts the new key.
     const single = await fetchJsonAuthed(`${base}&telescope=s50pro`);
@@ -1171,7 +1171,7 @@ test('smoke', async (t) => {
     // exactly 30 minutes after that evening's sunset.
     const day = new Date('2026-01-15T12:00:00Z').toISOString();
     const data = await fetchJsonAuthed(
-      `/api/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(day)}&min_alt=20&max_alt=85`,
+      `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(day)}&min_alt=20&max_alt=85`,
     );
     assert.ok(data.sunset, 'sunset computed');
     assert.ok(data.sunrise, 'sunrise computed');
@@ -1185,7 +1185,7 @@ test('smoke', async (t) => {
   await t.test('Milky Way wide-field targets go to the Pro models only', async () => {
     const start = new Date('2026-07-15T20:00:00Z').toISOString();
     const q = (fleet) =>
-      `/api/seestar-planner?lat=40&lon=-100&start=${encodeURIComponent(start)}`
+      `/api/admin/seestar-planner?lat=40&lon=-100&start=${encodeURIComponent(start)}`
       + `&min_alt=15&max_alt=89&include_observed=1&lists=milky-way-wide&fleet=${fleet}`;
 
     // Both wide_field scopes (S30 Pro, S50 Pro) schedule MWWF mosaics.
@@ -1394,6 +1394,39 @@ test('smoke', async (t) => {
         minIllum = Math.min(minIllum, p.illumination);
       }
       assert.ok(minIllum < 0.05, `weekend near ${s} should bracket a new moon (min illum ${minIllum.toFixed(2)})`);
+    }
+  });
+
+  await t.test('the Seestar planner is admin-only', async () => {
+    const authHeader = { Authorization: 'Basic ' + Buffer.from(`admin:${PASSWORD}`).toString('base64') };
+    const q = '?lat=51.5&lon=0&start=2026-01-15T22:00:00.000Z';
+    // The API: gone from the public surface, behind the password in admin.
+    assert.equal((await fetch(`${baseUrl}/api/seestar-planner${q}`)).status, 404);
+    const anon = await fetch(`${baseUrl}/api/admin/seestar-planner${q}`);
+    assert.equal(anon.status, 401);
+    assert.match(anon.headers.get('www-authenticate') || '', /^Basic/);
+    assert.equal((await fetch(`${baseUrl}/api/admin/seestar-planner${q}`, { headers: authHeader })).status, 200);
+    // The page and its scripts.
+    for (const file of ['seestar.html', 'seestar-plan.js', 'seestar-durations.js']) {
+      assert.equal((await fetch(`${baseUrl}/admin/${file}`)).status, 401, file);
+      assert.equal((await fetch(`${baseUrl}/admin/${file}`, { headers: authHeader })).status, 200, file);
+    }
+    for (const gone of ['/js/seestar-plan.js', '/js/seestar-durations.js']) {
+      assert.equal((await fetch(`${baseUrl}${gone}`)).status, 404, gone);
+    }
+    // An old bookmark is sent to the new address, which asks for the password.
+    const old = await fetch(`${baseUrl}/seestar.html`, { redirect: 'manual' });
+    assert.equal(old.status, 302);
+    assert.equal(old.headers.get('location'), '/admin/seestar.html');
+    // No public page links to it; every admin page does.
+    for (const page of ['/', '/tonight.html', '/planner.html', '/gallery.html', '/atlas.html', '/map.html', '/list.html', '/object.html', '/observation.html']) {
+      const html = await (await fetch(`${baseUrl}${page}`)).text();
+      assert.ok(html.includes('site-nav'), `${page} is a page`);
+      assert.ok(!/seestar\.html|Seestar planner/i.test(html), `${page} must not link to the Seestar planner`);
+    }
+    for (const page of ['/admin/', '/admin/observations.html', '/admin/upload.html', '/admin/equipment.html', '/admin/crossref.html', '/admin/seestar.html']) {
+      const html = await (await fetch(`${baseUrl}${page}`, { headers: authHeader })).text();
+      assert.ok(html.includes('href="/admin/seestar.html"'), `${page} links to the Seestar planner`);
     }
   });
 

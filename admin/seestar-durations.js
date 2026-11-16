@@ -3,8 +3,8 @@
 // persist in localStorage. Returns a getter for the current selection in
 // the comma-separated 'GAL:90,GC:20,...' format the API expects.
 
-import { el } from './common.js';
-import { OBJECT_TYPES } from './common.js';
+import { el } from '/js/common.js';
+import { OBJECT_TYPES } from '/js/common.js';
 
 const STORE_KEY = 'deepskylog.seestar_durations';
 

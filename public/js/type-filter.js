@@ -1,4 +1,4 @@
-// Shared object-type filter used by /planner.html, /seestar.html and
+// Shared object-type filter used by /planner.html, /admin/seestar.html and
 // /tonight.html — companion to catalog-filter.js. Lets the user
 // uncheck e.g. "Open Cluster" to drop those types from the plans.
 // Selection persists in localStorage so it carries across pages.

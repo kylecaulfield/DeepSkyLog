@@ -17,6 +17,10 @@ list, and publish a public gallery and map of where you image from.
   date+time and location, with astronomical-dark and moon-up bands and
   a moon-distance filter so you can rule out targets too close to the
   moon at their best altitude.
+- **Seestar planner (admin).** `/admin/seestar.html` builds a night's
+  schedule per Seestar you own. It is behind the admin password, with its
+  API (`/api/admin/seestar-planner`); the public site doesn't link to it,
+  and the old `/seestar.html` address redirects there.
 - **Sky forecast.** `/tonight.html` and the Seestar planner show weather
   for astronomy for the coming nights: cloud by layer (low / mid / high),
   seeing, transparency, haze and smoke, wind and gusts, dew risk,
@@ -32,7 +36,7 @@ list, and publish a public gallery and map of where you image from.
   at the site's default location (Admin → Settings) for a first-time
   visitor; "Use my location" switches to the browser's position, which is
   remembered, and "Default location" switches back.
-- **Share to Seestar.** Each schedule on `/seestar.html` has a "Share to
+- **Share to Seestar.** Each schedule on the Seestar planner has a "Share to
   Seestar" button: it makes a Seestar Share Plan and shows its QR code
   (scan it from your phone) and link (tap it on your phone), which the
   Seestar app imports into Local Plans. Needs the admin password; past
@@ -221,6 +225,7 @@ drive the Leaflet map. An install-time backfill pulls coords from any existing
 | `DELETE /api/admin/stage/:id`| Basic | Discard an in-flight upload.                   |
 | `POST /api/admin/observations`| Basic | Finalize: move file, thumbnail, insert rows.  |
 | `PUT/DELETE /api/admin/observations/:id/moonmap` | Basic | Set / clear a Moon photo's orientation by hand. |
+| `GET /api/admin/seestar-planner` | Basic | A night's schedule per Seestar (`fleet=`, `lat=`, `lon=`, `start=`). |
 | `POST /api/admin/seestar/share` | Basic | Share a planner schedule to the Seestar app; returns link + QR. |
 | `GET /api/admin/seestar/shares[/:id]` | Basic | Past shares; one share with its QR. |
 
