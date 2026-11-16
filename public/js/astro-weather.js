@@ -1,0 +1,227 @@
+// The "Sky forecast" panel: weather for astronomy from /api/astro-weather —
+// a line per night and an hour-by-hour grid of cloud by layer, seeing,
+// transparency, wind, dew and the Moon. Seeing and transparency are
+// estimates (see lib/astro_weather.js).
+import { fetchJson, el } from './common.js';
+
+const VERDICTS = {
+  go: { label: 'Go', rank: 0 },
+  marginal: { label: 'Marginal', rank: 1 },
+  'no-go': { label: 'No-go', rank: 2 },
+};
+const SCALE = ['', 'Bad', 'Poor', 'Fair', 'Good', 'Great'];
+const DEW = { low: 'Low', likely: 'Likely', high: 'High', frost: 'Frost' };
+const HAZE = { clear: 'Clear', slight: 'Slight', hazy: 'Hazy', heavy: 'Heavy' };
+const GRID_HOURS = 36;
+
+// Miles and Fahrenheit for readers whose browser is set to the US.
+const IMPERIAL = /-US$/i.test(navigator.language || '');
+const speed = (kmh) => (kmh == null ? '—' : String(Math.round(IMPERIAL ? kmh / 1.609 : kmh)));
+const SPEED_UNIT = IMPERIAL ? 'mph' : 'km/h';
+const temp = (c) => (c == null ? '—' : `${Math.round(IMPERIAL ? c * 9 / 5 + 32 : c)}°${IMPERIAL ? 'F' : 'C'}`);
+const pct = (v) => (v == null ? '—' : String(Math.round(v)));
+
+// Forecast hours are whole UTC hours: in a half-hour time zone the label
+// keeps its minutes.
+const hourLabel = (d) => d.toLocaleTimeString([], d.getMinutes() ? { hour: 'numeric', minute: '2-digit' } : { hour: 'numeric' }).replace(/\s/g, '\u202f');
+const timeLabel = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const sameDay = (a, b) => a.toDateString() === b.toDateString();
+// The server's reasons are metric ("gusts 48 km/h").
+export const localReason = (reason) => (IMPERIAL
+  ? reason.replace(/(\d+) km\/h/, (_, n) => `${speed(Number(n))} mph`)
+  : reason);
+
+// "Tonight" for the night that is under way or begins this evening;
+// otherwise the weekday of the evening it starts on.
+function nightName(start, now) {
+  const evening = start.getHours() >= 12 ? start : new Date(start.getTime() - 86_400_000);
+  if (start <= now || sameDay(evening, now)) return 'Tonight';
+  return `${evening.toLocaleDateString([], { weekday: 'long' })} night`;
+}
+
+function nightLine(night, now) {
+  const v = VERDICTS[night.verdict];
+  let detail;
+  if (night.verdict === 'go' && night.best.hours >= night.hours - 1) detail = 'good all night';
+  else if (night.best) detail = `best ${timeLabel(new Date(night.best.start))} – ${timeLabel(new Date(night.best.end))}`;
+  else if (night.marginal_hours) detail = `${night.marginal_hours} h marginal at best`;
+  else detail = 'no usable hours';
+  return el('li', { class: `sky-night sky-${night.verdict}` },
+    el('strong', { text: nightName(new Date(night.start), now) }),
+    el('span', { class: 'sky-pill', text: v.label }),
+    el('span', { text: detail }),
+  );
+}
+
+// Cloud cells are shaded by how much sky is covered; the number is always
+// there too, so the shade is never the only cue.
+function cloudCell(value, small) {
+  const td = el('td', { class: small ? 'sky-cloud sky-small' : 'sky-cloud', text: pct(value) });
+  if (value != null) td.style.setProperty('--cover', String(Math.round(value)));
+  return td;
+}
+
+function scaleCell(score, { estimate = false, title = null } = {}) {
+  // A leading "~" marks a figure estimated here rather than forecast.
+  return el('td', { class: score ? `sky-scale sky-s${score}` : '', title, text: score ? `${estimate ? '~' : ''}${SCALE[score]}` : '—' });
+}
+
+function seeingCell(h) {
+  if (h.seeing_source === '7timer') return scaleCell(h.seeing, { title: `7Timer forecast: ${h.seeing_arcsec}` });
+  return scaleCell(h.seeing, { estimate: true, title: h.seeing ? 'Estimated from jet-stream wind and gusts' : null });
+}
+
+function hazeCell(h) {
+  const parts = [];
+  if (h.aerosol_optical_depth != null) parts.push(`aerosol optical depth ${h.aerosol_optical_depth.toFixed(2)}`);
+  if (h.pm2_5 != null) parts.push(`PM2.5 ${Math.round(h.pm2_5)} µg/m³`);
+  if (h.dust != null && h.dust >= 1) parts.push(`dust ${Math.round(h.dust)} µg/m³`);
+  return el('td', {
+    class: h.haze === 'heavy' ? 'sky-bad' : h.haze === 'hazy' ? 'sky-warn' : '',
+    title: parts.length ? parts.join(', ') : null,
+    text: h.haze ? HAZE[h.haze] : '—',
+  });
+}
+
+function grid(hours) {
+  const row = (label, cells, cls) => el('tr', { class: cls || '' }, el('th', { scope: 'row', text: label }), ...cells);
+  const dayClass = (h) => (h.darkness === 'day' ? 'sky-day' : h.darkness === 'twilight' ? 'sky-twilight' : '');
+  const each = (fn) => hours.map((h, i) => {
+    const td = fn(h, i);
+    if (dayClass(h)) td.classList.add(dayClass(h));
+    return td;
+  });
+  const table = el('table', { class: 'sky-grid' },
+    el('thead', {}, el('tr', {},
+      el('th', { scope: 'col', text: 'Hour' }),
+      ...hours.map((h, i) => {
+        const d = new Date(h.time);
+        const newDay = i === 0 || d.getHours() === 0;
+        return el('th', { scope: 'col', class: dayClass(h) },
+          newDay ? el('span', { class: 'sky-dayname', text: d.toLocaleDateString([], { weekday: 'short' }) }) : null,
+          hourLabel(d));
+      }),
+    )),
+    el('tbody', {},
+      row('Verdict', each((h) => el('td', {
+        class: h.verdict ? `sky-verdict sky-${h.verdict}` : '',
+        title: h.reasons && h.reasons.length ? h.reasons.map(localReason).join(', ') : null,
+        text: h.verdict ? VERDICTS[h.verdict].label : '—',
+      }))),
+      row('Cloud %', each((h) => cloudCell(h.cloud))),
+      row('· low', each((h) => cloudCell(h.cloud_low, true)), 'sky-sub'),
+      row('· mid', each((h) => cloudCell(h.cloud_mid, true)), 'sky-sub'),
+      row('· high', each((h) => cloudCell(h.cloud_high, true)), 'sky-sub'),
+      row('Seeing', each(seeingCell)),
+      row('Transp.', each((h) => scaleCell(h.transparency, { estimate: true, title: h.transparency ? 'Estimated from humidity, visibility and haze' : null }))),
+      row('Haze/smoke', each(hazeCell)),
+      row(`Wind/gust ${SPEED_UNIT}`, each((h) => el('td', {
+        class: h.gusts != null && h.gusts >= 45 ? 'sky-bad' : h.gusts != null && h.gusts >= 30 ? 'sky-warn' : '',
+        text: `${speed(h.wind)} / ${speed(h.gusts)}`,
+      }))),
+      row('Dew', each((h) => el('td', {
+        class: h.dew === 'high' || h.dew === 'frost' ? 'sky-bad' : h.dew === 'likely' ? 'sky-warn' : '',
+        title: h.temperature != null && h.dew_point != null ? `${temp(h.temperature)}, dew point ${temp(h.dew_point)}` : null,
+        text: h.dew ? DEW[h.dew] : '—',
+      }))),
+      row('Temp', each((h) => el('td', { text: temp(h.temperature) }))),
+      row('Moon', each((h) => el('td', {
+        class: h.moon_altitude > 0 ? '' : 'sky-muted',
+        title: `Moon ${h.moon_altitude > 0 ? `${Math.round(h.moon_altitude)}° up` : 'below the horizon'}, ${Math.round(h.moon_illumination * 100)}% lit`,
+        text: h.moon_altitude > 0 ? `${Math.round(h.moon_illumination * 100)}%` : 'Down',
+      }))),
+    ),
+  );
+  return el('div', { class: 'sky-scroll', tabindex: '0', role: 'region', 'aria-label': 'Hour-by-hour sky forecast' }, table);
+}
+
+// Mounts the panel in `container`. Returns { load(lat, lon, { from }),
+// verdictFor(startISO, endISO) }; `onUpdate` runs after each load, with the
+// forecast or null.
+export function mountAstroWeather(container, { onUpdate } = {}) {
+  let data = null;
+  let gen = 0;
+  let lastKey = '';
+  const body = el('div', { class: 'sky-body' });
+  container.classList.add('sky-forecast');
+  container.replaceChildren(el('h2', { text: 'Sky forecast' }), body);
+
+  function render(from) {
+    const now = new Date();
+    const start = from && from > now ? from : now;
+    const first = data.hours.findIndex((h) => new Date(h.time).getTime() + 3_600_000 > start.getTime());
+    const hours = first < 0 ? [] : data.hours.slice(first, first + GRID_HOURS);
+    if (!hours.length) {
+      body.replaceChildren(el('div', { class: 'empty-state', text: 'That date is beyond the week the forecast covers.' }));
+      return;
+    }
+    const until = new Date(hours.at(-1).time).getTime() + 3_600_000;
+    const nights = data.nights.filter((n) => new Date(n.end) > start && new Date(n.start).getTime() < until + 36 * 3_600_000).slice(0, 3);
+    body.replaceChildren(
+      el('ul', { class: 'sky-nights' }, ...nights.map((n) => nightLine(n, now))),
+      grid(hours),
+      el('p', { class: 'dim sky-foot', text:
+        `Seeing is ${data.sources && data.sources.includes('7Timer') ? '7Timer\'s forecast for about the first three days. Anything' : 'an estimate from jet-stream wind and gusts. Anything'} `
+        + 'marked ~ is an estimate made here. Haze/smoke is the aerosol forecast (smoke, haze and dust together). Greyed hours are daylight. '
+        + `Sources: ${data.source}; fetched ${timeLabel(new Date(data.fetched_at))} for ${data.location.lat.toFixed(1)}°, ${data.location.lon.toFixed(1)}°.` }),
+    );
+  }
+
+  async function load(lat, lon, { from } = {}) {
+    const myGen = ++gen;
+    const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
+    // Same place, forecast under 30 minutes old: just redraw from `from`.
+    if (data && key === lastKey && Date.now() - new Date(data.fetched_at).getTime() < 30 * 60_000) {
+      render(from);
+      if (onUpdate) onUpdate(data);
+      return;
+    }
+    if (!data || key !== lastKey) {
+      // Another place: nothing from the old one may be shown, or used to
+      // mark slots, while the new forecast is on its way.
+      data = null;
+      lastKey = '';
+      body.replaceChildren(el('span', { class: 'dim', text: 'Loading the forecast…' }));
+      if (onUpdate) onUpdate(null);
+    }
+    try {
+      const fresh = await fetchJson(`/api/astro-weather?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
+      if (myGen !== gen) return;
+      data = fresh;
+      lastKey = key;
+      render(from);
+    } catch (err) {
+      if (myGen !== gen) return;
+      data = null;
+      lastKey = '';
+      body.replaceChildren(el('div', { class: 'sky-error', role: 'alert', text:
+        /^429\b/.test(err.message) ? 'Too many forecast requests right now. Try again later.' : 'The forecast isn\'t available right now.' }));
+    }
+    if (onUpdate) onUpdate(data);
+  }
+
+  // The worst verdict among the forecast hours a time span touches, or null
+  // when the forecast doesn't cover all of it.
+  function verdictFor(startISO, endISO) {
+    if (!data) return null;
+    const start = new Date(startISO).getTime();
+    const end = new Date(endISO).getTime();
+    if (!(end > start)) return null;
+    const overlap = (h) => {
+      const t = new Date(h.time).getTime();
+      return Math.min(end, t + 3_600_000) - Math.max(start, t);
+    };
+    const all = data.hours.filter((h) => overlap(h) > 0);
+    if (!all.length) return null;
+    if (new Date(all[0].time).getTime() > start || new Date(all.at(-1).time).getTime() + 3_600_000 < end) return null;
+    // An hour the span only clips (under 10 minutes) doesn't count, unless
+    // that would leave nothing.
+    const solid = all.filter((h) => overlap(h) >= 10 * 60_000);
+    const touched = solid.length ? solid : all;
+    if (touched.some((h) => !h.verdict)) return null;
+    const worst = touched.reduce((a, b) => (VERDICTS[b.verdict].rank > VERDICTS[a.verdict].rank ? b : a));
+    return { verdict: worst.verdict, label: VERDICTS[worst.verdict].label, rank: VERDICTS[worst.verdict].rank, reasons: (worst.reasons || []).map(localReason) };
+  }
+
+  return { load, verdictFor };
+}

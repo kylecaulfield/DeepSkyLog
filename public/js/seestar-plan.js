@@ -2,6 +2,8 @@ import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 import { mountDurationPicker } from './seestar-durations.js';
+import { mountAstroWeather } from './astro-weather.js';
+import { applyDefaultLocation } from './default-location.js';
 
 highlightNav('seestar');
 
@@ -39,6 +41,8 @@ const status = document.getElementById('status');
 const moonLine = document.getElementById('moon-line');
 const windowLine = document.getElementById('window-line');
 const schedules = document.getElementById('schedules');
+// Sky forecast panel; fillSkyCells (below) marks each slot with its forecast.
+const weather = mountAstroWeather(document.getElementById('sky-forecast'), { onUpdate: fillSkyCells });
 
 // Per-model fleet counts. Keys match the SEESTAR_SCOPES keys on the server.
 const FLEET_MODELS = [
@@ -161,6 +165,8 @@ async function load() {
   const durParam = getDurationParam();
   if (durParam) params.set('durations', durParam);
 
+  if (latInput.value.trim() !== '' && lonInput.value.trim() !== '') weather.load(lat, lon, { from: new Date(startISO) });
+
   let data;
   try {
     data = await fetchJson(`/api/seestar-planner?${params}`);
@@ -203,6 +209,30 @@ async function load() {
     : `${totalTargets} target${totalTargets === 1 ? '' : 's'} scheduled`;
 
   for (const scope of scopes) schedules.appendChild(buildScheduleSection(scope));
+  fillSkyCells();
+}
+
+// The forecast for each slot (the worst hour it touches), filled in once
+// both the schedule and the forecast are on the page, in either order.
+function fillSkyCells() {
+  for (const section of schedules.querySelectorAll('section.schedule')) {
+    let blocked = 0;
+    let rated = 0;
+    for (const td of section.querySelectorAll('td.sky-slot')) {
+      const sky = weather.verdictFor(td.dataset.start, td.dataset.end);
+      td.className = sky ? `sky-slot sky-${sky.verdict}` : 'sky-slot dim';
+      td.textContent = sky ? sky.label : '—';
+      td.title = sky && sky.reasons.length ? sky.reasons.join(', ') : '';
+      td.dataset.sort = sky ? String(sky.rank) : '';
+      if (sky) rated += 1;
+      if (sky && sky.verdict === 'no-go') blocked += 1;
+    }
+    const note = section.querySelector('.sky-note');
+    if (note) {
+      note.textContent = blocked ? `Forecast: no-go weather for ${blocked} of ${rated} target${rated === 1 ? '' : 's'}` : '';
+      note.hidden = !blocked;
+    }
+  }
 }
 
 function buildRow(slot) {
@@ -212,6 +242,7 @@ function buildRow(slot) {
   return el('tr', { class: t.observed ? 'observed' : '' },
     el('td', { 'data-sort': slot.slot_start ? String(Date.parse(slot.slot_start)) : '', text: slotLabel }),
     el('td', { 'data-sort': slot.duration_minutes != null ? String(slot.duration_minutes) : '', text: dur }),
+    el('td', { class: 'sky-slot dim', 'data-start': slot.slot_start, 'data-end': slot.slot_end, 'data-sort': '', text: '—' }),
     el('td', { 'data-sort': catalogSortKey(t.catalog, t.catalog_number) },
       el('a', { href: `/object.html?id=${t.id}`, text: `${t.catalog}${t.catalog_number}` })),
     el('td', { text: t.name || '—' }),
@@ -225,7 +256,7 @@ function buildRow(slot) {
   );
 }
 
-const COLUMNS = ['Slot', 'Duration', 'Object', 'Name', 'Type', 'Constellation',
+const COLUMNS = ['Slot', 'Duration', 'Sky', 'Object', 'Name', 'Type', 'Constellation',
   'Mag', 'Alt start', 'Alt end', 'Az start', 'List'];
 
 function buildScheduleSection(scope) {
@@ -237,6 +268,7 @@ function buildScheduleSection(scope) {
     el('h2', { text: scope.label || scope.name }),
     el('span', { class: 'dim', text: `${capBit} · ${n} target${n === 1 ? '' : 's'}` }),
   );
+  head.appendChild(el('span', { class: 'sky-note', hidden: true }));
   if (scope.notes) head.appendChild(el('div', { class: 'dim schedule-notes', text: scope.notes }));
 
   const tbody = el('tbody');
@@ -432,6 +464,8 @@ runBtn.addEventListener('click', load);
 // Auto-run on page load if we already have coords cached. The user
 // expects the page to "just work" given the goal — a one-tap Seestar
 // session plan.
-if (Number.isFinite(Number(latInput.value)) && Number.isFinite(Number(lonInput.value))) {
-  load();
-}
+// It starts from the visitor's last place, else the site's default location.
+applyDefaultLocation(latInput, lonInput, locateBtn, load).then((ready) => {
+  if (ready) load();
+  else status.textContent = 'Enter latitude and longitude (or tap Use my location).';
+});

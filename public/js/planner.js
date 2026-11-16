@@ -1,4 +1,5 @@
 import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common.js';
+import { applyDefaultLocation } from './default-location.js';
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 
@@ -251,6 +252,7 @@ locateBtn.addEventListener('click', () => {
 
 runBtn.addEventListener('click', load);
 
-if (Number.isFinite(Number(latInput.value)) && Number.isFinite(Number(lonInput.value))) {
-  load();
-}
+// Start from the visitor's last place, else the site's default location.
+applyDefaultLocation(latInput, lonInput, locateBtn, load).then((ready) => {
+  if (ready) load();
+});

@@ -53,7 +53,7 @@ HTTP Basic Auth compares the submitted password to `ADMIN_PASSWORD` with `crypto
 
 ### Public vs admin surface
 
-- Public (no auth): `/api/lists`, `/api/lists/:slug`, `/api/observations` (filters: `telescope`, `object_type`, `has_image=1`), `/api/observations/map`, `/api/observations.csv`, `/api/observations/:id/moonmap`, `/api/objects/:id`, `/api/filters`, `/api/tonight` (requires `lat`/`lon`, uses `lib/astro.js` to compute altitude + moon phase).
+- Public (no auth): `/api/lists`, `/api/lists/:slug`, `/api/observations` (filters: `telescope`, `object_type`, `has_image=1`), `/api/observations/map`, `/api/observations.csv`, `/api/observations/:id/moonmap`, `/api/objects/:id`, `/api/filters`, `/api/tonight` (requires `lat`/`lon`, uses `lib/astro.js` to compute altitude + moon phase), `/api/astro-weather` (requires `lat`/`lon`).
 - Admin (Basic Auth): `/api/admin/stats`, `/api/admin/config`, `/api/admin/objects` (autocomplete), `/api/admin/stage`, `/api/admin/stage/:id/preview`, `/api/admin/stage/:id` (DELETE), `/api/admin/observations`, `/api/admin/observations/bulk-platesolve`, `/api/admin/observations/:id/platesolve` (POST queue / GET status), `/api/admin/platesolve/activity`, `/api/admin/observations/:id/moonmap` (PUT `{ rotation, mirrored }` / DELETE), `/api/admin/seestar/share` (POST), `/api/admin/seestar/shares` and `/shares/:id` (GET).
 
 ### Plate solving (`lib/solver.js`, `lib/astrometry.js`)
@@ -80,6 +80,31 @@ Each schedule on the Seestar planner page has a "Share to Seestar" button that t
 - `postShare()` has a 15 s timeout and retries once only when no response arrived; any response is final. Success needs HTTP 2xx **and** body `code === 200` **and** a share id — ZWO reports errors in the body, and its code and message go to the page verbatim (HTTP 502 from our route; 400 for a plan we refused).
 - The QR is drawn locally (`qrcode`) from the link: ZWO's `/v1/share/plan/qrcode` would create a second, different share.
 - Each share is recorded in `seestar_shares` (migration 19); the page's "Plans shared to Seestar" list reads it.
+
+### Sky forecast (`lib/astro_weather.js`, `public/js/astro-weather.js`)
+
+`GET /api/astro-weather?lat=&lon=` is weather for astronomy: about a week of hours, each with cloud by layer, wind and gusts, temperature and dew point, the Sun's altitude (`darkness`: day above −6°, twilight to −18°, dark) and the Moon. Three free, keyless sources, fetched together:
+
+| Source | Env override | Gives | Required |
+| --- | --- | --- | --- |
+| Open-Meteo forecast (8-day request) | `OPEN_METEO_BASE` | cloud, wind, humidity, temperature, visibility, 250 hPa wind | yes |
+| Open-Meteo air quality (CAMS, ~5 days) | `OPEN_METEO_AIR_BASE` | aerosol optical depth, PM2.5, dust | no |
+| 7Timer ASTRO (3 days, 3-hourly) | `SEVENTIMER_BASE` | seeing class 1–8 (arcseconds) | no |
+
+An optional source that is down, slow (8 s) or answers nonsense costs only its own figures — never an error. Tests point all three overrides at a fake; no test may call the real services.
+
+- `seeing`, 1–5 (5 best): 7Timer's class where it has one (`seeing_source: '7timer'`, `seeing_arcsec`; each 3-hourly point covers the hour before, of and after), else an **estimate** from the 250 hPa (jet stream) wind, less a point for gusts ≥ 35 km/h (`seeing_source: 'estimate'`).
+- `haze`: clear / slight / hazy / heavy from aerosol optical depth (0.1 / 0.2 / 0.4), raised by PM2.5 ≥ 35 / 55 µg/m³. It is smoke, haze and dust together — the data can't tell them apart.
+- `transparency`, 1–5: always an **estimate**, from humidity, visibility and haze. The page marks every estimate with `~`.
+- `dew`: low / likely / high / frost, from the temperature − dew point gap.
+- `verdict` + `reasons`: no-go at ≥ 70% cloud, ≥ 50% precipitation chance or gusts ≥ 45 km/h; marginal above 25% cloud, at ≥ 20% precipitation chance, gusts ≥ 30 km/h, with heavy haze or with transparency ≤ 2; else go. Darkness is not part of it. Gusts and precipitation chance are Open-Meteo's "preceding hour" figures, so each hour takes them from the next timestamp.
+- `nights`: each run of non-day hours with its go / marginal hours, longest run of go hours (`best`) and one verdict (go = that run ≥ 2 h). A night with under 2 h left, or one the forecast ends partway through, is left out; polar night is cut every 24 h.
+
+The endpoint is public, so the module protects the upstream services: forecasts are cached per 0.1° square for an hour (concurrent requests share one fetch; after a failed fetch the square isn't retried for 5 minutes and a forecast up to 6 h old stands in), upstream fetches are capped at 120 an hour, and the route allows each IP 40 requests per 10 minutes (429 beyond either). All values, including the `reasons` text, are metric; the page converts to mph / °F for US browsers (`localReason()` for the reasons). `mountAstroWeather()` draws the panel on Tonight and the Seestar planner, whose `fillSkyCells()` gives each slot the worst verdict of the hours it touches, ignoring an hour it clips by under 10 minutes (`verdictFor()`). The older `/api/admin/weather` is a different thing: past weather for the upload form.
+
+### Default location on the planning pages (`public/js/default-location.js`)
+
+Tonight, the planner and the Seestar planner keep the visitor's last coordinates in `localStorage` (`deepskylog.location`). With nothing saved — or the 0, 0 older versions saved from empty inputs — `applyDefaultLocation()` fills the inputs from the site's default location (`/api/settings`, public) before the first load, and adds a "Default location" button beside "Use my location".
 
 ### Frontend conventions
 
