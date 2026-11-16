@@ -3,6 +3,7 @@ import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 import { mountDurationPicker } from './seestar-durations.js';
 import { mountAstroWeather } from './astro-weather.js';
+import { applyDefaultLocation } from './default-location.js';
 
 highlightNav('seestar');
 
@@ -463,6 +464,8 @@ runBtn.addEventListener('click', load);
 // Auto-run on page load if we already have coords cached. The user
 // expects the page to "just work" given the goal — a one-tap Seestar
 // session plan.
-if (Number.isFinite(Number(latInput.value)) && Number.isFinite(Number(lonInput.value))) {
-  load();
-}
+// It starts from the visitor's last place, else the site's default location.
+applyDefaultLocation(latInput, lonInput, locateBtn, load).then((ready) => {
+  if (ready) load();
+  else status.textContent = 'Enter latitude and longitude (or tap Use my location).';
+});

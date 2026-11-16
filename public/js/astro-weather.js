@@ -11,6 +11,7 @@ const VERDICTS = {
 };
 const SCALE = ['', 'Bad', 'Poor', 'Fair', 'Good', 'Great'];
 const DEW = { low: 'Low', likely: 'Likely', high: 'High', frost: 'Frost' };
+const HAZE = { clear: 'Clear', slight: 'Slight', hazy: 'Hazy', heavy: 'Heavy' };
 const GRID_HOURS = 36;
 
 // Miles and Fahrenheit for readers whose browser is set to the US.
@@ -60,8 +61,26 @@ function cloudCell(value, small) {
   return td;
 }
 
-function scaleCell(score) {
-  return el('td', { class: score ? `sky-scale sky-s${score}` : '', text: score ? SCALE[score] : '—' });
+function scaleCell(score, { estimate = false, title = null } = {}) {
+  // A leading "~" marks a figure estimated here rather than forecast.
+  return el('td', { class: score ? `sky-scale sky-s${score}` : '', title, text: score ? `${estimate ? '~' : ''}${SCALE[score]}` : '—' });
+}
+
+function seeingCell(h) {
+  if (h.seeing_source === '7timer') return scaleCell(h.seeing, { title: `7Timer forecast: ${h.seeing_arcsec}` });
+  return scaleCell(h.seeing, { estimate: true, title: h.seeing ? 'Estimated from jet-stream wind and gusts' : null });
+}
+
+function hazeCell(h) {
+  const parts = [];
+  if (h.aerosol_optical_depth != null) parts.push(`aerosol optical depth ${h.aerosol_optical_depth.toFixed(2)}`);
+  if (h.pm2_5 != null) parts.push(`PM2.5 ${Math.round(h.pm2_5)} µg/m³`);
+  if (h.dust != null && h.dust >= 1) parts.push(`dust ${Math.round(h.dust)} µg/m³`);
+  return el('td', {
+    class: h.haze === 'heavy' ? 'sky-bad' : h.haze === 'hazy' ? 'sky-warn' : '',
+    title: parts.length ? parts.join(', ') : null,
+    text: h.haze ? HAZE[h.haze] : '—',
+  });
 }
 
 function grid(hours) {
@@ -93,8 +112,9 @@ function grid(hours) {
       row('· low', each((h) => cloudCell(h.cloud_low, true)), 'sky-sub'),
       row('· mid', each((h) => cloudCell(h.cloud_mid, true)), 'sky-sub'),
       row('· high', each((h) => cloudCell(h.cloud_high, true)), 'sky-sub'),
-      row('Seeing', each((h) => scaleCell(h.seeing))),
-      row('Transp.', each((h) => scaleCell(h.transparency))),
+      row('Seeing', each(seeingCell)),
+      row('Transp.', each((h) => scaleCell(h.transparency, { estimate: true, title: h.transparency ? 'Estimated from humidity, visibility and haze' : null }))),
+      row('Haze/smoke', each(hazeCell)),
       row(`Wind/gust ${SPEED_UNIT}`, each((h) => el('td', {
         class: h.gusts != null && h.gusts >= 45 ? 'sky-bad' : h.gusts != null && h.gusts >= 30 ? 'sky-warn' : '',
         text: `${speed(h.wind)} / ${speed(h.gusts)}`,
@@ -141,8 +161,9 @@ export function mountAstroWeather(container, { onUpdate } = {}) {
       el('ul', { class: 'sky-nights' }, ...nights.map((n) => nightLine(n, now))),
       grid(hours),
       el('p', { class: 'dim sky-foot', text:
-        `Seeing and transparency (Transp.) are estimates from jet-stream wind, humidity and visibility. Greyed hours are daylight. Forecast: ${data.source}, `
-        + `fetched ${timeLabel(new Date(data.fetched_at))}, for ${data.location.lat.toFixed(1)}°, ${data.location.lon.toFixed(1)}°.` }),
+        `Seeing is ${data.sources && data.sources.includes('7Timer') ? '7Timer\'s forecast for about the first three days. Anything' : 'an estimate from jet-stream wind and gusts. Anything'} `
+        + 'marked ~ is an estimate made here. Haze/smoke is the aerosol forecast (smoke, haze and dust together). Greyed hours are daylight. '
+        + `Sources: ${data.source}; fetched ${timeLabel(new Date(data.fetched_at))} for ${data.location.lat.toFixed(1)}°, ${data.location.lon.toFixed(1)}°.` }),
     );
   }
 

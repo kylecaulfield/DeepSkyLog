@@ -38,6 +38,9 @@ function hourly(n, at = () => ({})) {
   }
   return out;
 }
+// A fetch that serves only the main forecast: the two extra sources (air
+// quality, 7Timer) get a 404, which the module treats as "not available".
+const forecastOnly = (fn) => async (url, init) => (String(url).includes('/v1/forecast?') ? fn(url, init) : new Response('{}', { status: 404 }));
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 test('seeing follows the jet stream, less a point for strong gusts', () => {
@@ -67,6 +70,50 @@ test('transparency follows humidity and visibility', () => {
   assert.equal(wx.transparencyEstimate(null, null), null);
   assert.deepEqual([79, 80, 94, 95].map((rh) => wx.transparencyEstimate(rh, 30000)), [5, 4, 4, 3]);
   assert.deepEqual([20000, 19999, 10000, 9999, 5000, 4999].map((vis) => wx.transparencyEstimate(50, vis)), [5, 4, 4, 3, 3, 2]);
+});
+
+test('haze and smoke come from aerosol optical depth and fine particles', () => {
+  assert.deepEqual([0.05, 0.1, 0.19, 0.2, 0.39, 0.4, 1.2].map((aod) => wx.hazeLevel(aod, null)),
+    ['clear', 'slight', 'slight', 'hazy', 'hazy', 'heavy', 'heavy']);
+  // Thick smoke at the ground counts even under a clean column.
+  assert.deepEqual([10, 34, 35, 54, 55].map((pm) => wx.hazeLevel(0.05, pm)), ['clear', 'clear', 'hazy', 'hazy', 'heavy']);
+  assert.equal(wx.hazeLevel(null, 60), 'heavy');
+  assert.equal(wx.hazeLevel(0.5, 5), 'heavy');
+  assert.equal(wx.hazeLevel(null, null), null);
+  // Haze costs transparency.
+  assert.deepEqual(['clear', 'slight', 'hazy', 'heavy'].map((haze) => wx.transparencyEstimate(50, 30000, haze)), [5, 5, 4, 3]);
+  assert.equal(wx.transparencyEstimate(null, null, 'heavy'), 3);
+  assert.deepEqual(wx.verdict({ cloud: 0, precipitation_probability: 0, gusts: 5, transparency: 3, haze: 'heavy' }),
+    { verdict: 'marginal', reasons: ['heavy haze or smoke'] });
+});
+
+test('7Timer seeing classes become arcseconds and a 1-5 score per hour', () => {
+  const body = {
+    product: 'astro',
+    init: '2026111718', // 18:00 UTC
+    dataseries: [
+      { timepoint: 3, seeing: 2 },
+      { timepoint: 6, seeing: 4 },
+      { timepoint: 9, seeing: 8 },
+      { timepoint: 12, seeing: -9999 }, // their "no data"
+      { timepoint: 15 },
+    ],
+  };
+  const map = wx.parseSevenTimer(body);
+  const at = (h) => map.get(Date.UTC(2026, 10, 17, 18 + h));
+  // Each 3-hourly point covers the hour before, of and after it.
+  assert.deepEqual(at(2), { arcsec: '0.5–0.75″', score: 5 });
+  assert.equal(at(3), at(2));
+  assert.equal(at(4), at(2));
+  assert.deepEqual(at(5), { arcsec: '1–1.25″', score: 3 });
+  assert.deepEqual(at(10), { arcsec: 'over 2.5″', score: 1 });
+  assert.equal(at(1), undefined);
+  assert.equal(at(12), undefined);
+  assert.equal(map.size, 9);
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8].map((c) => wx.parseSevenTimer({ init: '2026111718', dataseries: [{ timepoint: 3, seeing: c }] }).get(Date.UTC(2026, 10, 17, 21)).score),
+    [5, 5, 4, 3, 3, 2, 1, 1]);
+  // Anything else is "no seeing forecast", never an error.
+  for (const junk of [null, {}, { init: 'soon', dataseries: [] }, { init: '2026111718' }, '<html>']) assert.equal(wx.parseSevenTimer(junk).size, 0);
 });
 
 test('dew risk is the temperature / dew point gap', () => {
@@ -135,6 +182,25 @@ test('buildHours adds the Sun, the Moon and a verdict to each hour', () => {
   assert.deepEqual(shifted.map((h) => h.precipitation_probability), [80, 0, 0]);
   assert.deepEqual(shifted.map((h) => h.wind), [5, 33, 5], 'wind speed is at the timestamp');
   assert.equal(shifted[0].verdict, 'no-go');
+
+  // The extras: aerosols by timestamp, and 7Timer's seeing where it has
+  // any, with the estimate everywhere else.
+  const air = { time: [T0 / 1000, T0 / 1000 + 3600], aerosol_optical_depth: [0.45, 0.05], pm2_5: [40, 8], dust: [0, 2] };
+  const seeing = wx.parseSevenTimer({ init: '2026111721', dataseries: [{ timepoint: 3, seeing: 6 }] }); // covers 23:00-01:00
+  const extra = wx.buildHours(hourly(5), LAT, LON, new Date(T0), { air, seeing });
+  assert.deepEqual(extra.map((h) => h.haze), ['heavy', 'clear', null, null, null]);
+  assert.deepEqual(extra.map((h) => h.aerosol_optical_depth), [0.45, 0.05, null, null, null]);
+  assert.equal(extra[0].pm2_5, 40);
+  assert.deepEqual(extra.map((h) => h.transparency), [3, 5, 5, 5, 5]);
+  assert.equal(extra[0].verdict, 'marginal');
+  assert.deepEqual(extra[0].reasons, ['heavy haze or smoke']);
+  assert.deepEqual(extra.map((h) => h.seeing_source), ['7timer', '7timer', '7timer', 'estimate', 'estimate']);
+  assert.deepEqual(extra.map((h) => h.seeing), [2, 2, 2, 5, 5]);
+  assert.equal(extra[0].seeing_arcsec, '1.5–2″');
+  assert.equal(extra[3].seeing_arcsec, null);
+  // Without extras: no haze figure, seeing estimated.
+  assert.equal(hours[0].haze, null);
+  assert.equal(hours[0].seeing_source, 'estimate');
 
   // Hours already over are dropped; the one in progress is kept.
   const later = wx.buildHours(hourly(24), LAT, LON, new Date(T0 + 2.5 * 3_600_000));
@@ -205,7 +271,7 @@ test('forecasts are cached per 0.1° square for an hour', async () => {
   let clock = T0;
   const urls = [];
   const fetchImpl = async (url) => { urls.push(url); return response({ hourly: hourly(48) }); };
-  const weather = wx.createAstroWeather({ fetchImpl, now: () => clock });
+  const weather = wx.createAstroWeather({ fetchImpl: forecastOnly(fetchImpl), now: () => clock });
 
   const first = await weather.forecast(42.06, -87.94);
   assert.equal(urls.length, 1);
@@ -241,12 +307,55 @@ test('forecasts are cached per 0.1° square for an hour', async () => {
   assert.equal(second.hours.length, 47, 'the hour that ended is gone');
 });
 
+test('the extra sources are asked alongside, and are optional', async () => {
+  const urls = [];
+  let extras = 'ok';
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    if (url.includes('/v1/forecast?')) return response({ hourly: hourly(48) });
+    if (extras === 'down') throw new TypeError('fetch failed');
+    if (extras === 'junk') return new Response('<html>busy</html>', { status: 200 });
+    if (url.includes('/v1/air-quality?')) {
+      return response({ hourly: { time: hourly(48).time, aerosol_optical_depth: Array(48).fill(0.3), pm2_5: Array(48).fill(9), dust: Array(48).fill(0) } });
+    }
+    return response({ init: '2026111718', dataseries: [{ timepoint: 6, seeing: 3 }, { timepoint: 9, seeing: 3 }] });
+  };
+  const weather = wx.createAstroWeather({ fetchImpl, now: () => T0 });
+  const full = await weather.forecast(LAT, LON);
+  assert.equal(urls.length, 3);
+  const air = new URL(urls.find((u) => u.includes('/v1/air-quality?')));
+  assert.equal(air.origin, 'https://air-quality-api.open-meteo.com');
+  assert.equal(air.searchParams.get('latitude'), '42.1');
+  assert.equal(air.searchParams.get('timeformat'), 'unixtime');
+  assert.deepEqual(air.searchParams.get('hourly').split(','), ['aerosol_optical_depth', 'pm2_5', 'dust']);
+  const seven = new URL(urls.find((u) => u.includes('/bin/astro.php?')));
+  assert.equal(seven.origin, 'https://www.7timer.info');
+  assert.equal(seven.searchParams.get('lat'), '42.1');
+  assert.equal(seven.searchParams.get('lon'), '-87.9');
+  assert.equal(seven.searchParams.get('output'), 'json');
+  assert.equal(seven.searchParams.get('tzshift'), '0');
+  assert.deepEqual(full.sources, ['Open-Meteo', 'Open-Meteo air quality (CAMS)', '7Timer']);
+  assert.equal(full.source, 'Open-Meteo, Open-Meteo air quality (CAMS), 7Timer');
+  assert.ok(full.hours.every((h) => h.haze === 'hazy'));
+  assert.equal(full.hours.filter((h) => h.seeing_source === '7timer').length, 6);
+  assert.equal(full.hours[1].seeing, 4);
+
+  // Either extra failing, or answering nonsense, costs only its own rows.
+  for (const mode of ['down', 'junk']) {
+    extras = mode;
+    const bare = await wx.createAstroWeather({ fetchImpl, now: () => T0 }).forecast(LAT, LON);
+    assert.deepEqual(bare.sources, ['Open-Meteo'], mode);
+    assert.equal(bare.hours.length, 48);
+    assert.ok(bare.hours.every((h) => h.haze === null && h.seeing_source === 'estimate' && h.verdict === 'go'), mode);
+  }
+});
+
 test('concurrent requests share one fetch', async () => {
   let calls = 0;
   let release;
   const gate = new Promise((r) => { release = r; });
   const fetchImpl = async () => { calls++; await gate; return response({ hourly: hourly(24) }); };
-  const weather = wx.createAstroWeather({ fetchImpl, now: () => T0 });
+  const weather = wx.createAstroWeather({ fetchImpl: forecastOnly(fetchImpl), now: () => T0 });
   const both = Promise.all([weather.forecast(LAT, LON), weather.forecast(LAT, LON)]);
   release();
   const [a, b] = await both;
@@ -265,7 +374,7 @@ test('upstream failures: an error, a pause before retrying, and the last good fo
     if (mode === 'html') return new Response('<html>oops</html>', { status: 502 });
     return response({ hourly: hourly(24) });
   };
-  const weather = wx.createAstroWeather({ fetchImpl, now: () => clock });
+  const weather = wx.createAstroWeather({ fetchImpl: forecastOnly(fetchImpl), now: () => clock });
   const unreachable = (err) => err instanceof wx.AstroWeatherError && err.status === 502
     && /Couldn't reach the weather service \(ENOTFOUND\)/.test(err.message);
   await assert.rejects(weather.forecast(LAT, LON), unreachable);
@@ -307,7 +416,7 @@ test('upstream failures: an error, a pause before retrying, and the last good fo
 test('both sides of the equator and meridian share the zero square', async () => {
   const urls = [];
   const fetchImpl = async (url) => { urls.push(url); return response({ hourly: hourly(24) }); };
-  const weather = wx.createAstroWeather({ fetchImpl, now: () => T0 });
+  const weather = wx.createAstroWeather({ fetchImpl: forecastOnly(fetchImpl), now: () => T0 });
   const a = await weather.forecast(-0.01, -0.02);
   assert.equal(await weather.forecast(0.01, 0.02), a);
   assert.equal(urls.length, 1);
@@ -319,7 +428,7 @@ test('upstream requests are capped per hour', async () => {
   let clock = T0;
   let calls = 0;
   const fetchImpl = async () => { calls++; return response({ hourly: hourly(24) }); };
-  const weather = wx.createAstroWeather({ fetchImpl, now: () => clock });
+  const weather = wx.createAstroWeather({ fetchImpl: forecastOnly(fetchImpl), now: () => clock });
   for (let i = 0; i < wx.UPSTREAM_MAX_PER_HOUR; i++) await weather.forecast(10 + i * 0.1, 20);
   assert.equal(calls, wx.UPSTREAM_MAX_PER_HOUR);
   await assert.rejects(weather.forecast(-40, 20), (err) => err.status === 429);
@@ -356,8 +465,21 @@ async function startApp(env) {
 }
 
 test('GET /api/astro-weather', async (t) => {
-  const state = { requests: [], fail: false };
+  const state = { requests: [], extras: [], fail: false };
   const fake = http.createServer((req, res) => {
+    const json = (body) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    const hourStart = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+    if (req.url.startsWith('/v1/air-quality?')) {
+      state.extras.push(req.url);
+      const time = Array.from({ length: 72 }, (_, i) => (hourStart + i * 3_600_000) / 1000);
+      return json({ hourly: { time, aerosol_optical_depth: time.map((_, i) => (i === 1 ? 0.6 : 0.05)), pm2_5: time.map(() => 6), dust: time.map(() => 0) } });
+    }
+    if (req.url.startsWith('/bin/astro.php?')) {
+      state.extras.push(req.url);
+      const d = new Date(hourStart);
+      const init = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}${String(d.getUTCHours()).padStart(2, '0')}`;
+      return json({ product: 'astro', init, dataseries: [{ timepoint: 3, seeing: 7 }] });
+    }
     state.requests.push(req.url);
     if (state.fail) { res.writeHead(500); return res.end('boom'); }
     // Like the real API, answer in what was asked for: without these two
@@ -385,6 +507,8 @@ test('GET /api/astro-weather', async (t) => {
     STAGE_DIR: path.join(dataDir, 'stage'),
     BACKUP_DIR: path.join(dataDir, 'backups'),
     OPEN_METEO_BASE: `http://127.0.0.1:${fake.address().port}`,
+    OPEN_METEO_AIR_BASE: `http://127.0.0.1:${fake.address().port}`,
+    SEVENTIMER_BASE: `http://127.0.0.1:${fake.address().port}`,
     DISABLE_OCR: '1',
   };
   delete env.ADMIN_PASSWORD; // public: works with no admin password set
@@ -412,13 +536,22 @@ test('GET /api/astro-weather', async (t) => {
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
   assert.equal(state.requests.length, 1);
   assert.match(state.requests[0], /latitude=42\.1&longitude=-87\.9/);
-  assert.equal(ok.body.source, 'Open-Meteo');
+  assert.equal(ok.body.source, 'Open-Meteo, Open-Meteo air quality (CAMS), 7Timer');
+  assert.equal(state.extras.length, 2);
+  // Haze and the seeing forecast land on the right hours.
+  assert.equal(ok.body.hours[0].haze, 'clear');
+  assert.equal(ok.body.hours[1].haze, 'heavy');
+  assert.equal(ok.body.hours[1].verdict, 'marginal');
+  assert.deepEqual(ok.body.hours[1].reasons, ['heavy haze or smoke']);
+  assert.deepEqual(ok.body.hours.slice(0, 6).map((h) => h.seeing_source), ['estimate', 'estimate', '7timer', '7timer', '7timer', 'estimate']);
+  assert.equal(ok.body.hours[3].seeing, 1);
+  assert.equal(ok.body.hours[3].seeing_arcsec, '2–2.5″');
   assert.deepEqual(ok.body.location, { lat: 42.1, lon: -87.9 });
   assert.equal(ok.body.hours.length, 72);
   assert.equal(ok.body.hours[0].verdict, 'go');
   assert.equal(ok.body.hours[2].verdict, 'no-go');
   assert.deepEqual(ok.body.hours[2].reasons, ['100% cloud']);
-  for (const key of ['time', 'cloud', 'cloud_low', 'cloud_mid', 'cloud_high', 'seeing', 'transparency', 'dew', 'wind', 'gusts',
+  for (const key of ['time', 'cloud', 'cloud_low', 'cloud_mid', 'cloud_high', 'seeing', 'seeing_source', 'seeing_arcsec', 'transparency', 'haze', 'aerosol_optical_depth', 'pm2_5', 'dew', 'wind', 'gusts',
     'temperature', 'darkness', 'sun_altitude', 'moon_altitude', 'moon_illumination', 'verdict', 'reasons']) {
     assert.ok(key in ok.body.hours[0], key);
   }

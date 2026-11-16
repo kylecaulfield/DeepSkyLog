@@ -19,12 +19,19 @@ list, and publish a public gallery and map of where you image from.
   moon at their best altitude.
 - **Sky forecast.** `/tonight.html` and the Seestar planner show weather
   for astronomy for the coming nights: cloud by layer (low / mid / high),
-  seeing and transparency estimates, wind and gusts, dew risk, temperature
-  and the Moon, hour by hour, with a go / marginal / no-go verdict per hour
-  and a one-line summary per night. The planner also marks each scheduled
-  target with the forecast for its slot. Data comes from Open-Meteo (free,
-  no key). Seeing and transparency are estimates derived from jet-stream
-  wind, humidity and visibility, not a seeing model.
+  seeing, transparency, haze and smoke, wind and gusts, dew risk,
+  temperature and the Moon, hour by hour, with a go / marginal / no-go
+  verdict per hour and a one-line summary per night. The planner also marks
+  each scheduled target with the forecast for its slot. All sources are
+  free and need no key: Open-Meteo (weather), Open-Meteo air quality
+  (aerosols: smoke, haze, dust) and 7Timer (a seeing forecast in
+  arcseconds for about three days). Past that, or if 7Timer is down,
+  seeing is estimated from jet-stream wind; transparency is always an
+  estimate. Estimates are marked `~`.
+- **Default location.** Tonight, the planner and the Seestar planner start
+  at the site's default location (Admin → Settings) for a first-time
+  visitor; "Use my location" switches to the browser's position, which is
+  remembered, and "Default location" switches back.
 - **Share to Seestar.** Each schedule on `/seestar.html` has a "Share to
   Seestar" button: it makes a Seestar Share Plan and shows its QR code
   (scan it from your phone) and link (tap it on your phone), which the

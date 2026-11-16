@@ -2,6 +2,7 @@ import { fetchJson, el, typeLabel, highlightNav, catalogSortKey } from './common
 import { mountCatalogFilter, selectionToParam } from './catalog-filter.js';
 import { mountTypeFilter, typesToParam } from './type-filter.js';
 import { mountAstroWeather } from './astro-weather.js';
+import { applyDefaultLocation } from './default-location.js';
 
 highlightNav('tonight');
 
@@ -133,8 +134,8 @@ refreshBtn.addEventListener('click', load);
 [latInput, lonInput, altInput, includeObserved].forEach((c) =>
   c.addEventListener('change', load));
 
-if (Number.isFinite(Number(latInput.value)) && Number.isFinite(Number(lonInput.value))) {
-  load();
-} else {
-  status.textContent = 'Enter coordinates or click "Use my location".';
-}
+// Start from the visitor's last place, else the site's default location.
+applyDefaultLocation(latInput, lonInput, locateBtn, load).then((ready) => {
+  if (ready) load();
+  else status.textContent = 'Enter coordinates or click "Use my location".';
+});
