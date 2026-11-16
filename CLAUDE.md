@@ -54,7 +54,7 @@ HTTP Basic Auth compares the submitted password to `ADMIN_PASSWORD` with `crypto
 ### Public vs admin surface
 
 - Public (no auth): `/api/lists`, `/api/lists/:slug`, `/api/observations` (filters: `telescope`, `object_type`, `has_image=1`), `/api/observations/map`, `/api/observations.csv`, `/api/observations/:id/moonmap`, `/api/objects/:id`, `/api/filters`, `/api/tonight` (requires `lat`/`lon`, uses `lib/astro.js` to compute altitude + moon phase).
-- Admin (Basic Auth): `/api/admin/stats`, `/api/admin/config`, `/api/admin/objects` (autocomplete), `/api/admin/stage`, `/api/admin/stage/:id/preview`, `/api/admin/stage/:id` (DELETE), `/api/admin/observations`, `/api/admin/observations/bulk-platesolve`, `/api/admin/observations/:id/platesolve` (POST queue / GET status), `/api/admin/platesolve/activity`, `/api/admin/observations/:id/moonmap` (PUT `{ rotation, mirrored }` / DELETE).
+- Admin (Basic Auth): `/api/admin/stats`, `/api/admin/config`, `/api/admin/objects` (autocomplete), `/api/admin/stage`, `/api/admin/stage/:id/preview`, `/api/admin/stage/:id` (DELETE), `/api/admin/observations`, `/api/admin/observations/bulk-platesolve`, `/api/admin/observations/:id/platesolve` (POST queue / GET status), `/api/admin/platesolve/activity`, `/api/admin/observations/:id/moonmap` (PUT `{ rotation, mirrored }` / DELETE), `/api/admin/seestar/share` (POST), `/api/admin/seestar/shares` and `/shares/:id` (GET).
 
 ### Plate solving (`lib/solver.js`, `lib/astrometry.js`)
 
@@ -70,6 +70,16 @@ A Moon observation (type `MOON`, the Solar System list's SOL 2, or `object_name`
 4. `projectFeatures()` places `lib/moon_features.json` (IAU gazetteer: maria with outlines traced from the LRO mosaic, craters ≥ 20 km, mountains, rilles, landing sites) orthographically in photo pixels. Each feature also carries its gazetteer id (`g`), where its name comes from (`o`; for craters "Named after <person from Wikidata>, <gazetteer description>") and its English Wikipedia article (`w`, via Wikidata's gazetteer-id links) for the page's tooltips; every feature is a link to its article, else its gazetteer entry. On touch screens the first tap shows the tooltip and a second follows the link.
 
 `createMoonMapStore()` caches results in `moon_maps` (migration 18) under a key of everything a map depends on (image path plus the file's size and mtime, capture instant, location, override, a fingerprint of the two data files, and `MOON_MAP_VERSION` — bump it when detection or projection code changes), sharing concurrent runs; a missing image file is never cached, and setting or clearing an override always recomputes. Finalize warms it for new Moon uploads. An admin override (`override_json`) pins the orientation; the admin Observations page has a "Moon map" button per Moon photo to check and turn the labels. The two data files are rebuilt by `scripts/build-moon-features.js` (gazetteer DBF + LRO mosaic + a Wikidata SPARQL export) and `scripts/build-moon-albedo.js` (sources, URLs and the query in their headers). Map responses are gzipped (`sendMoonMap()` in `server.js`; the app has no compression middleware).
+
+### Share to Seestar (`lib/seestar_share.js`)
+
+Each schedule on the Seestar planner page has a "Share to Seestar" button that turns it into a Seestar Share Plan: a link and QR code the official app imports into Local Plans. ZWO's share API is **undocumented** (reverse engineered, verified with `scripts/seestar-share-probe.js`); every detail of it — URL, body shape (JSON strings nested three deep), link form, per-target defaults — lives in `lib/seestar_share.js` and nowhere else. `SEESTAR_API_BASE` overrides the host (tests point it at a fake; no test may call ZWO).
+
+- The planner stores no plans, so `POST /api/admin/seestar/share` takes the slots from the page (`{ name, scope, tz_offset_minutes, slots: [{ object_id, slot_start, duration_minutes }] }`) and looks names and coordinates up itself (ephemeris bodies at the slot start; the Sun is refused).
+- `buildTargets()` maps slots to the app's TargetItems: `start_min` is minutes after local midnight in the browser's zone, counting past 1440 for slots between midnight and noon; `target_id` is a 31-bit hash of catalog + number, bumped on a clash; only M / C / NGC / IC / Sh2 numbers are used as names (the site's own list numbers aren't designations). `validateTargets()` refuses the whole plan for anything the app would silently drop.
+- `postShare()` has a 15 s timeout and retries once only when no response arrived; any response is final. Success needs HTTP 2xx **and** body `code === 200` **and** a share id — ZWO reports errors in the body, and its code and message go to the page verbatim (HTTP 502 from our route; 400 for a plan we refused).
+- The QR is drawn locally (`qrcode`) from the link: ZWO's `/v1/share/plan/qrcode` would create a second, different share.
+- Each share is recorded in `seestar_shares` (migration 19); the page's "Plans shared to Seestar" list reads it.
 
 ### Frontend conventions
 

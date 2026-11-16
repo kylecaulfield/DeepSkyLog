@@ -24,6 +24,24 @@
       }
       .schedule-head h2 { margin: 0; }
       .schedule-notes { flex-basis: 100%; font-size: 0.82rem; }
+      .share-btn { margin-left: auto; }
+      .schedule-notes { order: 1; }
+      .share-panel, #past-shares {
+        border: 1px solid var(--accent); border-radius: 12px;
+        padding: 0.8rem 1rem; margin-bottom: 0.75rem;
+      }
+      .share-card { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+      .share-qr { background: #fff; border-radius: 8px; max-width: 100%; height: auto; }
+      .share-info { flex: 1 1 16rem; min-width: 0; }
+      .share-info p { margin: 0.5rem 0 0.25rem; }
+      .share-link { overflow-wrap: anywhere; font-size: 1.05rem; }
+      .share-error { color: var(--danger); overflow-wrap: anywhere; }
+      .share-error ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+      #past-shares summary { cursor: pointer; color: var(--peach); font-weight: 700; }
+      #past-shares-body { margin-top: 0.6rem; }
+      .share-list { list-style: none; margin: 0; padding: 0; }
+      .share-list li + li { margin-top: 0.5rem; }
+      .share-row { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: baseline; }
     </style>
   </head>
   <body>
@@ -94,6 +112,10 @@
       <div id="window-line" class="dim" style="margin-bottom: 0.75rem;"></div>
 
       <div id="schedules"></div>
+      <details id="past-shares">
+        <summary>Plans shared to Seestar</summary>
+        <div id="past-shares-body"></div>
+      </details>
     </main>
     <script type="module" src="/js/seestar-plan.js"></script>
     <script type="module" src="/js/sortable.js"></script>
