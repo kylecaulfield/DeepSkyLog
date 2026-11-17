@@ -35,7 +35,8 @@
       .share-qr { background: #fff; border-radius: 8px; max-width: 100%; height: auto; }
       .share-info { flex: 1 1 16rem; min-width: 0; }
       .share-info p { margin: 0.5rem 0 0.25rem; }
-      .share-link { overflow-wrap: anywhere; font-size: 1.05rem; }
+      /* The id in the link is case-sensitive: never restyle its letters. */
+      .share-link { overflow-wrap: anywhere; font-size: 1.05rem; text-transform: none; letter-spacing: 0; }
       .share-error { color: var(--danger); overflow-wrap: anywhere; }
       .share-error ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
       #past-shares summary { cursor: pointer; color: var(--peach); font-weight: 700; }

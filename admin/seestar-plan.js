@@ -315,7 +315,7 @@ function shareCard(share) {
         `${share.targetCount} target${share.targetCount === 1 ? '' : 's'} · ${hours} h${made ? ` · shared ${made}` : ''}` }),
       el('p', { text: 'Scan the code with the Seestar app (or your phone camera), or on your phone tap:' }),
       el('a', { class: 'share-link', href: share.shareLink, target: '_blank', rel: 'noopener', text: share.shareLink }),
-      el('p', { class: 'dim', text: 'The plan is added to Local Plans in the app. Start times are for this device\'s time zone.' }),
+      el('p', { class: 'dim', text: 'The plan is added to Local Plans in the app. Times are rounded to the app\'s 10-minute steps, in this device\'s time zone.' }),
     ),
   );
 }

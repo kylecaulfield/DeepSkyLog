@@ -72,6 +72,34 @@ test('a plan that starts before noon or runs across it stays in order', () => {
   assert.match(swapped[0], /Target 2 \(M 42\): starts before the target ahead of it/);
 });
 
+test('times are moved onto the app\'s 10-minute grid', () => {
+  const snap = (...pairs) => share.snapToGrid(pairs.map(([start, duration]) => ({ start, duration }))).map((t) => [t.start, t.duration]);
+  // Already on the grid: untouched.
+  assert.deepEqual(snap([1260, 60], [1320, 60], [1380, 30]), [[1260, 60], [1320, 60], [1380, 30]]);
+  // The plan that imported empty: 17:57 for 15 min, 18:12 for 15 min, ...
+  assert.deepEqual(snap([1077, 15], [1092, 15], [1107, 15], [1122, 15]), [[1080, 10], [1090, 20], [1110, 10], [1120, 20]]);
+  // Nothing under 10 minutes, and no slot starts before the one ahead ends.
+  assert.deepEqual(snap([1262, 5], [1267, 5], [1272, 5], [1277, 45]), [[1260, 10], [1270, 10], [1280, 10], [1290, 30]]);
+  assert.deepEqual(snap([1772, 5]), [[1770, 10]]);
+  // A slot with no usable length is left for validation to refuse.
+  assert.deepEqual(snap([1260, 0], [1270, NaN]), [[1260, 0], [1270, NaN]]);
+  // Gaps between slots are kept, and so are times past midnight.
+  assert.deepEqual(snap([1152, 15], [1197, 90], [1502, 45]), [[1150, 20], [1200, 90], [1500, 50]]);
+  for (const [start, duration] of snap([1077, 15], [1092, 15], [1197, 90], [1332, 15], [1772, 5])) {
+    assert.equal(start % 10, 0);
+    assert.equal(duration % 10, 0);
+    assert.ok(duration >= 10);
+  }
+  // buildTargets applies it.
+  const targets = share.buildTargets([
+    slot({ start: at('17:57'), durationMinutes: 15 }),
+    slot({ start: at('18:12'), durationMinutes: 15, object: { catalog: 'M', catalog_number: '1', name: 'Crab Nebula' } }),
+    slot({ start: at('01:33', 17), durationMinutes: 5, object: { catalog: 'M', catalog_number: '2', name: '' } }),
+  ], TZ);
+  assert.deepEqual(targets.map((x) => [x.start_min, x.duration_min]), [[1080, 10], [1090, 20], [1530, 10]]);
+  assert.deepEqual(share.validateTargets(targets), []);
+});
+
 test('buildTargets maps planner slots onto TargetItems', () => {
   const targets = share.buildTargets([
     slot(),
@@ -150,7 +178,7 @@ test('validateTargets names everything the app would silently drop', () => {
 test('the request body nests JSON strings three deep, as the app writes it', () => {
   const targets = share.buildTargets([slot(), slot({ start: at('01:30', 17), durationMinutes: 45, object: { catalog: 'M', catalog_number: '1', name: 'Crab Nebula' } })], TZ);
   const body = share.buildRequestBody('Tonight', targets, 1_700_000_000_123);
-  assert.deepEqual(body.metadata, { planName: 'Tonight', targetCount: 2, shootingDurationMinutes: 105 });
+  assert.deepEqual(body.metadata, { planName: 'Tonight', targetCount: 2, shootingDurationMinutes: 110 });
   assert.equal(typeof body.payload, 'string');
   const plan = JSON.parse(body.payload);
   assert.equal(plan.name, 'Tonight');
@@ -384,8 +412,11 @@ test('sharing a planner schedule through the API', async (t) => {
   assert.equal(targets.length, slots.length);
   assert.deepEqual(share.validateTargets(targets), []);
   targets.forEach((target, i) => {
-    assert.equal(target.duration_min, slots[i].duration_minutes);
-    assert.equal(target.start_min, share.startMinutes(new Date(slots[i].slot_start), -360));
+    // On the app's 10-minute grid, within a few minutes of the planner's times.
+    assert.equal(target.start_min % 10, 0);
+    assert.equal(target.duration_min % 10, 0);
+    assert.ok(target.duration_min >= 10);
+    assert.ok(Math.abs(target.start_min - share.planStartMinutes(slots.map((s) => new Date(s.slot_start)), -360)[i]) <= 30);
     assert.equal(target.camera_mode, 'tele');
   });
   assert.ok(targets.every((x, i) => i === 0 || x.start_min > targets[i - 1].start_min), 'slots stay in order across midnight');
