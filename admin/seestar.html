@@ -35,7 +35,8 @@
       .share-qr { background: #fff; border-radius: 8px; max-width: 100%; height: auto; }
       .share-info { flex: 1 1 16rem; min-width: 0; }
       .share-info p { margin: 0.5rem 0 0.25rem; }
-      .share-link { overflow-wrap: anywhere; font-size: 1.05rem; }
+      /* The id in the link is case-sensitive: never restyle its letters. */
+      .share-link { overflow-wrap: anywhere; font-size: 1.05rem; text-transform: none; letter-spacing: 0; }
       .share-error { color: var(--danger); overflow-wrap: anywhere; }
       .share-error ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
       #past-shares summary { cursor: pointer; color: var(--peach); font-weight: 700; }
@@ -63,7 +64,7 @@
     </header>
     <main>
       <h1 class="page-title">Seestar session planner</h1>
-      <p class="page-subtitle" id="subtitle">Say how many of each Seestar you own and get a separate, non-overlapping schedule per scope for the night. Sessions begin 30 minutes after sunset and run until an hour before sunrise; targets are allocated by per-type imaging duration, each above your minimum altitude at the slot start and under the zenith-avoidance ceiling by the slot end. Fainter targets go to the deepest scope that can still reach them, and Milky Way wide-field mosaics are scheduled only on the Pro models (S30 Pro and S50 Pro).</p>
+      <p class="page-subtitle" id="subtitle">Say how many of each Seestar you own and get a separate, non-overlapping schedule per scope for the night. Sessions begin at least 30 minutes after sunset and run until an hour before sunrise, in 10-minute steps (the Seestar app plans in those); targets are allocated by per-type imaging duration, each above your minimum altitude at the slot start and under the zenith-avoidance ceiling by the slot end. Fainter targets go to the deepest scope that can still reach them, and Milky Way wide-field mosaics are scheduled only on the Pro models (S30 Pro and S50 Pro).</p>
 
       <div class="toolbar">
         <label>

@@ -856,32 +856,47 @@ app.get('/api/admin/seestar-planner', basicAuth, (req, res) => {
   // Sessions begin 30 minutes after sunset so the sky has darkened, but
   // never before the caller's requested start (so planning at 1 a.m. starts
   // from 1 a.m., not back at dusk).
+  //
+  // Every slot starts and ends on a 10-minute mark of the local clock
+  // (tz_offset: minutes east of UTC, sent by the page; UTC without it). The
+  // Seestar app's plan editor works in 10-minute steps and imports a shared
+  // plan with other times as empty, so the schedule is built on that grid:
+  // the session opens on the first mark at or after its start and closes on
+  // the last mark before its end.
+  const GRID_MS = 10 * 60_000;
+  const tzOffsetRaw = Number(req.query.tz_offset);
+  const gridShiftMs = (Number.isFinite(tzOffsetRaw) && Math.abs(tzOffsetRaw) <= 14 * 60 ? Math.round(tzOffsetRaw) : 0) * 60_000;
+  const gridUp = (ms) => Math.ceil((ms + gridShiftMs) / GRID_MS) * GRID_MS - gridShiftMs;
+  const gridDown = (ms) => Math.floor((ms + gridShiftMs) / GRID_MS) * GRID_MS - gridShiftMs;
   const duskStart = sunset ? new Date(sunset.getTime() + 30 * 60_000) : null;
-  const sessionStart = duskStart && duskStart.getTime() > start.getTime()
+  const sessionStart = new Date(gridUp((duskStart && duskStart.getTime() > start.getTime()
     ? duskStart
-    : start;
+    : start).getTime()));
 
-  const sessionEnd = sunrise
-    ? new Date(sunrise.getTime() - 3_600_000)
-    : new Date(sessionStart.getTime() + 12 * 3_600_000);
+  const sessionEnd = new Date(gridDown(sunrise
+    ? sunrise.getTime() - 3_600_000
+    : sessionStart.getTime() + 12 * 3_600_000));
 
   // Per-object-type recommended imaging durations (minutes). The defaults
   // are based on Seestar community conventions for f/4-5 smart-scope
   // stacks. Override via the durations query param, e.g.:
   //   durations=GAL:90,GC:20,OC:15
   // Anything not in the map (or set to <= 0) falls back to defaultDur.
+  // Durations are whole 10-minute steps, at least one: anything else is
+  // rounded to the nearest step.
   const DEFAULT_DURATIONS = {
-    GAL: 90, DN: 60, SNR: 90, PN: 45, MW: 30, COMET: 30,
-    GC: 20, OC: 15, PLAN: 10, AST: 10,
-    DS: 5, STAR: 5, MOON: 5,
+    GAL: 90, DN: 60, SNR: 90, PN: 50, MW: 30, COMET: 30,
+    GC: 20, OC: 20, PLAN: 10, AST: 10,
+    DS: 10, STAR: 10, MOON: 10,
   };
   const defaultDur = 60;
+  const toGridMinutes = (n) => Math.max(10, Math.round(n / 10) * 10);
   const userDurations = {};
   if (req.query.durations) {
     for (const piece of String(req.query.durations).split(',')) {
       const [k, v] = piece.split(':').map((s) => s.trim());
       const n = Number(v);
-      if (k && Number.isFinite(n) && n > 0 && n <= 360) userDurations[k.toUpperCase()] = n;
+      if (k && Number.isFinite(n) && n > 0 && n <= 360) userDurations[k.toUpperCase()] = toGridMinutes(n);
     }
   }
   const durationFor = (type) => {
@@ -986,7 +1001,7 @@ app.get('/api/admin/seestar-planner', basicAuth, (req, res) => {
         // last hours on a narrow types= filter (everything set, next batch
         // not yet risen); the loop is bounded by sessionEnd, so keep walking
         // instead of giving up on the rest of the night.
-        cursor += 15 * 60_000;
+        cursor += GRID_MS;
         continue;
       }
       assignedIds.add(best.row.id);

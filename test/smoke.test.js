@@ -1048,7 +1048,9 @@ test('smoke', async (t) => {
     assert.ok(data.sunrise, 'sunrise computed');
     const end = new Date(data.window.end).getTime();
     const sunrise = new Date(data.sunrise).getTime();
-    assert.equal(sunrise - end, 3_600_000, 'window ends an hour before sunrise');
+    // ... on the last 10-minute mark at or before that.
+    assert.ok(sunrise - end >= 3_600_000 && sunrise - end < 3_600_000 + 600_000, 'window ends an hour before sunrise');
+    assert.equal(end % 600_000, 0, 'window ends on a 10-minute mark');
     // Each slot's end equals start + duration_minutes, every target is
     // in the alt window, no duplicates, and no slot runs past session end.
     const seen = new Set();
@@ -1063,6 +1065,10 @@ test('smoke', async (t) => {
       const sEnd = new Date(s.slot_end).getTime();
       const sStart = new Date(s.slot_start).getTime();
       assert.equal((sEnd - sStart) / 60_000, s.duration_minutes, 'slot end matches duration');
+      // The Seestar app plans in 10-minute steps: every slot sits on them.
+      assert.equal(sStart % 600_000, 0, `slot starts on a 10-minute mark (${s.slot_start})`);
+      assert.equal(s.duration_minutes % 10, 0, 'duration is whole 10-minute steps');
+      assert.ok(s.duration_minutes >= 10, 'no slot under 10 minutes');
       assert.ok(sEnd <= end, 'slot ends at or before session end');
     }
     // With huge custom durations (90 min for everything), we should get
@@ -1168,7 +1174,7 @@ test('smoke', async (t) => {
 
   await t.test('Seestar session starts 30 min after sunset', async () => {
     // Request a daytime start; the planner should push the session start to
-    // exactly 30 minutes after that evening's sunset.
+    // the first 10-minute mark at least 30 minutes after that evening's sunset.
     const day = new Date('2026-01-15T12:00:00Z').toISOString();
     const data = await fetchJsonAuthed(
       `/api/admin/seestar-planner?lat=51.5&lon=0&start=${encodeURIComponent(day)}&min_alt=20&max_alt=85`,
@@ -1177,9 +1183,38 @@ test('smoke', async (t) => {
     assert.ok(data.sunrise, 'sunrise computed');
     const sunset = new Date(data.sunset).getTime();
     const winStart = new Date(data.window.start).getTime();
-    assert.equal(winStart - sunset, 30 * 60_000, 'window starts 30 min after sunset');
+    assert.ok(winStart - sunset >= 30 * 60_000 && winStart - sunset < 40 * 60_000, 'window starts 30-40 min after sunset');
+    assert.equal(winStart % 600_000, 0, 'window starts on a 10-minute mark');
     // The dusk start is later than the (daytime) requested start.
     assert.ok(winStart > new Date(data.requested_start).getTime());
+  });
+
+  await t.test('Seestar planner keeps to 10-minute steps', async () => {
+    const q = '/api/admin/seestar-planner?lat=51.5&lon=0&min_alt=20&max_alt=85';
+    // An awkward start time and awkward durations still land on the grid.
+    const odd = await fetchJsonAuthed(`${q}&start=${encodeURIComponent('2026-01-15T22:07:31Z')}&durations=OC:7,GC:14,GAL:33,DS:1`);
+    assert.equal(odd.window.start, '2026-01-15T22:10:00.000Z');
+    assert.equal(odd.durations.OC, 10);
+    assert.equal(odd.durations.GC, 10);
+    assert.equal(odd.durations.GAL, 30);
+    assert.equal(odd.durations.DS, 10);
+    assert.equal(odd.durations.PN, 50, 'defaults are whole steps too');
+    assert.ok(odd.slots.length >= 4);
+    for (const s of odd.slots) {
+      assert.equal(new Date(s.slot_start).getTime() % 600_000, 0, s.slot_start);
+      assert.equal(new Date(s.slot_end).getTime() % 600_000, 0, s.slot_end);
+      assert.ok(s.duration_minutes >= 10 && s.duration_minutes % 10 === 0);
+    }
+    // In a zone 5 h 45 min ahead (Nepal) the marks follow the local clock.
+    const nepal = await fetchJsonAuthed(`/api/admin/seestar-planner?lat=27.7&lon=85.3&min_alt=20&max_alt=85&tz_offset=345&start=${encodeURIComponent('2026-01-15T14:02:00Z')}`);
+    assert.ok(nepal.slots.length >= 4);
+    for (const s of nepal.slots) {
+      const localMinutes = new Date(s.slot_start).getTime() / 60_000 + 345;
+      assert.equal(localMinutes % 10, 0, `local start on a 10-minute mark (${s.slot_start})`);
+    }
+    // A nonsense offset is ignored.
+    const junk = await fetchJsonAuthed(`${q}&tz_offset=banana&start=${encodeURIComponent('2026-01-15T22:07:31Z')}`);
+    assert.equal(junk.window.start, '2026-01-15T22:10:00.000Z');
   });
 
   await t.test('Milky Way wide-field targets go to the Pro models only', async () => {

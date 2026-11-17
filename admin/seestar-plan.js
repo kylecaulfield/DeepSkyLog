@@ -155,6 +155,8 @@ async function load() {
     min_alt: String(minAlt), max_alt: String(maxAlt),
     start: startISO,
     fleet: fleetParam,
+    // The schedule sits on 10-minute marks of this clock.
+    tz_offset: String(-new Date(startISO).getTimezoneOffset()),
   });
   if (includeObserved.checked) params.set('include_observed', '1');
   const catParam = selectionToParam(getCatalogSelection());
@@ -195,7 +197,7 @@ async function load() {
   if (sunrise) {
     const sunsetBit = sunset ? `sunset ${hm(sunset)} · ` : '';
     windowLine.textContent =
-      `Session: ${hm(start)} – ${hm(end)} · ${sunsetBit}starts 30 min after sunset · sunrise ${hm(sunrise)}`;
+      `Session: ${hm(start)} – ${hm(end)} · ${sunsetBit}starts at least 30 min after sunset · sunrise ${hm(sunrise)} · 10-minute steps, as the Seestar app uses`;
   } else {
     windowLine.textContent =
       `Session: ${start.toLocaleString()} → ${end.toLocaleString()} (sun never sets in this window)`;
@@ -315,7 +317,7 @@ function shareCard(share) {
         `${share.targetCount} target${share.targetCount === 1 ? '' : 's'} · ${hours} h${made ? ` · shared ${made}` : ''}` }),
       el('p', { text: 'Scan the code with the Seestar app (or your phone camera), or on your phone tap:' }),
       el('a', { class: 'share-link', href: share.shareLink, target: '_blank', rel: 'noopener', text: share.shareLink }),
-      el('p', { class: 'dim', text: 'The plan is added to Local Plans in the app. Start times are for this device\'s time zone.' }),
+      el('p', { class: 'dim', text: 'The plan is added to Local Plans in the app. Times are in this device\'s time zone.' }),
     ),
   );
 }

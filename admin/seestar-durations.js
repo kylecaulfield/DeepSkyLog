@@ -12,11 +12,14 @@ const STORE_KEY = 'deepskylog.seestar_durations';
 // server's DEFAULT_DURATIONS map; if the server changes them and the
 // user hasn't customised, the server-side default still wins because
 // we only send the keys the user touched.
+// Whole 10-minute steps only: the Seestar app's plans work in those, and the
+// server rounds anything else.
 export const DEFAULT_DURATIONS = {
-  GAL: 90, DN: 60, SNR: 90, PN: 45, MW: 30, COMET: 30,
-  GC: 20, OC: 15, PLAN: 10, AST: 10,
-  DS: 5, STAR: 5, MOON: 5,
+  GAL: 90, DN: 60, SNR: 90, PN: 50, MW: 30, COMET: 30,
+  GC: 20, OC: 20, PLAN: 10, AST: 10,
+  DS: 10, STAR: 10, MOON: 10,
 };
+const toGrid = (n) => Math.max(10, Math.round(n / 10) * 10);
 
 // Order the inputs by length, then alpha, so the panel reads "long stuff
 // at the top".
@@ -26,7 +29,14 @@ const DISPLAY_ORDER = Object.keys(DEFAULT_DURATIONS)
 function loadStored() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-    return typeof raw === 'object' && raw ? raw : {};
+    if (typeof raw !== 'object' || !raw) return {};
+    // Values saved before durations moved to 10-minute steps.
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) out[k] = toGrid(n);
+    }
+    return out;
   } catch { return {}; }
 }
 
@@ -53,14 +63,15 @@ export async function mountDurationPicker(container, onChange) {
     });
     row.appendChild(document.createTextNode(label));
     const input = el('input', {
-      type: 'number', min: '0', max: '360', step: '5',
+      type: 'number', min: '10', max: '360', step: '10',
       value: String(stored[code] ?? DEFAULT_DURATIONS[code]),
       style: 'width:5rem; padding:0.15rem 0.4rem; font-size:0.85rem;',
     });
     input.addEventListener('change', () => {
       const map = {};
       for (const [k, el] of Object.entries(inputs)) {
-        const n = Number(el.value);
+        let n = Number(el.value);
+        if (Number.isFinite(n) && n > 0) { n = toGrid(n); el.value = String(n); }
         // Only persist values that differ from the default — keeps
         // future default changes effective for untouched types.
         if (Number.isFinite(n) && n > 0 && n !== DEFAULT_DURATIONS[k]) map[k] = n;
