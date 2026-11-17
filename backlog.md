@@ -103,6 +103,9 @@ Items prefixed with ✅ are shipped on `main`; the others are still open.
   after sunset for the location (never before the requested start), and
   Milky Way wide-field (MWWF) mosaics are scheduled only on the Pro models
   (originally S30 Pro only; the S50 Pro entry below extends the gate).
+- ✅ **Seestar planner works in 10-minute steps** — slots start and end on
+  10-minute marks and last whole steps, as the Seestar app's plans do; a
+  shared plan with other times imported with no targets.
 - ✅ **Seestar planner moved to the admin area** — the page
   (`/admin/seestar.html`) and its API (`/api/admin/seestar-planner`) need
   the admin password; the public nav no longer links to it and the old
